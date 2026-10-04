@@ -1,0 +1,390 @@
+﻿//@version=6
+indicator('Nadaraya-Watson Trend [QuantAlgo]', overlay = true, max_bars_back = 500)
+
+//              ╔════════════════════════════════╗              //
+//              ║      USER-DEFINED SETTINGS     ║              //
+//              ╚════════════════════════════════╝              //
+
+g_kernel = '════════ Kernel Settings ════════'
+g_visual = '════════ Visual Settings ════════'
+
+tooltip_preset       = 'Select a predefined configuration that loads a complete set of kernel parameters optimized for different trading styles and timeframes. Choosing a preset overrides the manual Lookback Window, Kernel Bandwidth, and Bandwidth Multiplier values below. Select Default to use those manual inputs instead.'
+tooltip_preset_det   = 'Default (Lookback 50, Bandwidth 8, Multiplier 2.0): Balanced configuration for swing trading on 1H and daily charts. The moderate window and smoothness produce a stable Nadaraya-Watson path that filters short lived noise while still responding to genuine directional turns within a few bars of the shift.\n\nFast Response (Lookback 25, Bandwidth 5, Multiplier 1.5): Aggressive configuration for intraday trading on 5 minute to 1H charts. A shorter estimation window and lower smoothness keep more weight on the most recent bars, so the path tracks local structure more tightly and flips earlier, at the cost of more frequent reversals in choppy conditions.\n\nSmooth Trend (Lookback 100, Bandwidth 12, Multiplier 2.5): Conservative configuration for position trading on daily and weekly charts. A longer window and higher smoothness distribute weight more broadly across history, forming a stable directional baseline that turns only when the kernel estimate itself changes with conviction.'
+tooltip_source       = 'Price series supplied to the Nadaraya-Watson estimator. Each bar in the lookback window is weighted by the selected kernel and combined into a single endpoint estimate for the current bar. Close is the standard choice for trend estimation because it reflects settlement. High or low bias the path toward extremes. HL2 or HLC3 produce a mid range estimate that can sit more smoothly inside the bar range.'
+tooltip_kernel       = 'Weighting function used to assign importance to each historical bar inside the lookback window. This is the core of the Nadaraya-Watson estimator and directly shapes how the trend path is formed.\n\nGaussian: Classic smooth kernel with infinite support. Every bar in the window receives some positive weight, with influence decaying exponentially as lag increases. Generally the most balanced default for trend tracking.\n\nEpanechnikov: Compact parabolic kernel. Weight falls to zero once lag exceeds the effective bandwidth scale, so distant bars are fully excluded rather than lightly included. Often slightly more local than Gaussian at the same bandwidth.\n\nTriangular: Compact linear kernel. Weight decreases in a straight line from the current bar to the bandwidth cutoff, then drops to zero. Simple decay profile that stays responsive near price.\n\nQuartic: Compact biweight kernel. Similar to Epanechnikov but with a flatter peak and steeper shoulders, putting relatively more emphasis on the nearest bars before cutting off.\n\nCosine: Compact cosine kernel. Smooth bell shaped weights over a finite support, offering another compact alternative when you want a hard cutoff beyond the bandwidth scale.\n\nRational Quadratic: Infinite support kernel with heavier tails than Gaussian. Farther bars retain more influence, which can produce a more persistent path. Controlled by Relative Weighting.'
+tooltip_lookback     = 'Number of historical bars available to the estimator, counting from the current bar backward. The kernel assigns a weight to each lag from 0 through this window, then normalizes those weights so they sum to one. Longer lookbacks allow more history into the estimate and usually produce a smoother, slower path. Shorter lookbacks restrict the estimator to recent structure and increase responsiveness. Compact kernels may already zero out distant bars before the full window is used, so very large lookbacks mainly matter for Gaussian and Rational Quadratic.'
+tooltip_bandwidth    = 'Base bandwidth parameter of the kernel, before the multiplier is applied. Bandwidth controls how quickly weight decays with lag. Higher bandwidth values spread weight more evenly across the window and smooth the path. Lower bandwidth values concentrate weight on the nearest bars and keep the path tighter to recent price. For compact kernels, bandwidth also determines the lag distance at which weights reach zero. This is the primary smoothness control of the estimator.'
+tooltip_h_mult       = 'Scales the base bandwidth into the effective bandwidth used by the kernel: h = Kernel Bandwidth x Bandwidth Multiplier. Use this when you want to fine tune smoothness without changing the raw bandwidth value or the lookback length. Raising the multiplier increases effective bandwidth and smooths the path. Lowering it sharpens the kernel and makes the path more sensitive to the most recent bars. Small steps are usually enough to notice a difference.'
+tooltip_rel_w        = 'Relative weighting parameter for the Rational Quadratic kernel only. It controls how quickly the rational quadratic weights decay relative to a Gaussian at the same bandwidth. Lower values increase the influence of farther bars and tend to produce a more persistent, slower moving path. Higher values reduce far bar influence and make Rational Quadratic behave more like a Gaussian kernel. This input has no effect when any other kernel type is selected.'
+tooltip_bands        = 'Show or hide residual bands drawn around the Nadaraya-Watson path. Band width is derived from the mean absolute residual between the selected source and the current NW estimate across the lookback window, then scaled by Band Multiplier. The result is an envelope that expands when price is dispersed around the kernel path and contracts when price is hugging the estimate. Useful for reading extension and compression relative to the same estimator that draws the trend path.'
+tooltip_band_mult    = 'Multiplier applied to the mean absolute residual when constructing the upper and lower residual bands. A value of 1.0 places the bands one average residual away from the path. Higher values widen the envelope and require larger deviations before price reaches the bands. Lower values tighten the envelope around the path. Only affects the chart when Show Residual Bands is enabled, and is also used by the band cross alerts.'
+tooltip_fill         = 'Show or hide the gradient fill between the Nadaraya-Watson trend path and the selected source. The fill is densest at the path and fades toward price, making the distance between the estimate and live price easier to read at a glance. Disable it when you want only the path, residual bands, and markers without the shaded region.'
+tooltip_markers      = 'Show or hide triangle markers that appear when the Nadaraya-Watson path reverses direction. An up triangle plots below the bar when the path turns from falling to rising. A down triangle plots above the bar when the path turns from rising to falling. These markers reflect slope changes of the kernel path itself rather than raw price pivots.'
+tooltip_color_preset = 'Pre-configured bullish and bearish color schemes for different chart themes and visual preferences. Classic uses traditional green and red. Aqua uses blue and orange. Cosmic uses cyan and purple. Cyber uses cool cyan against warm orange. Neon uses high contrast yellow and magenta. Custom uses the Bullish Color and Bearish Color inputs below. The active pair colors the path, gradient fill, residual bands, markers, optional bar coloring, and optional background coloring.'
+tooltip_bullish      = 'Bullish color used when Color Preset is set to Custom, and whenever the path slope is rising under a non Custom preset that resolves to this slot. Applied to the NW path, gradient fill, residual bands, bullish markers, bar coloring, and background coloring.'
+tooltip_bearish      = 'Bearish color used when Color Preset is set to Custom, and whenever the path slope is falling under a non Custom preset that resolves to this slot. Applied to the NW path, gradient fill, residual bands, bearish markers, bar coloring, and background coloring.'
+tooltip_candles      = 'When enabled, each price bar is tinted with the current bullish or bearish color according to the slope of the Nadaraya-Watson path. Rising path values tint bars bullish. Falling path values tint bars bearish. This makes trend state readable directly from the candles without relying only on the path line.'
+tooltip_bar_trans    = 'Transparency of the bar coloring overlay from 0 to 100. Lower values produce more opaque, vivid bar colors that make direction obvious. Higher values produce a lighter tint that signals state without covering price action as heavily. Only applies when Enable Bar Coloring is turned on.'
+tooltip_bgcolor      = 'When enabled, the chart background is tinted with the current bullish or bearish color according to the slope of the Nadaraya-Watson path. This reinforces trend state across the full pane and pairs well with a thinner path or disabled gradient fill.'
+tooltip_bg_trans     = 'Transparency of the background coloring overlay from 0 to 100. Lower values produce a stronger wash. Higher values produce a subtle tint that leaves candles and the path easier to read. Only applies when Enable Background Coloring is turned on.'
+
+preset          = input.string('Default', 'Preset Configuration', options = ['Default', 'Fast Response', 'Smooth Trend'], group = g_kernel, tooltip = tooltip_preset + '\n\n' + tooltip_preset_det)
+src             = input.source(close, 'Source', group = g_kernel, tooltip = tooltip_source)
+kernel_type     = input.string('Gaussian', 'Kernel Type', options = ['Gaussian', 'Epanechnikov', 'Triangular', 'Quartic', 'Cosine', 'Rational Quadratic'], group = g_kernel, tooltip = tooltip_kernel)
+lookback_input  = input.int(50, 'Lookback Window', minval = 1, maxval = 500, group = g_kernel, tooltip = tooltip_lookback)
+bandwidth_input = input.int(8, 'Kernel Bandwidth', minval = 1, group = g_kernel, tooltip = tooltip_bandwidth)
+h_mult_input    = input.float(2.0, 'Bandwidth Multiplier', minval = 0.1, step = 0.1, group = g_kernel, tooltip = tooltip_h_mult)
+rel_weight      = input.float(8.0, 'Relative Weighting (RQ)', minval = 0.1, step = 0.25, group = g_kernel, tooltip = tooltip_rel_w)
+show_bands      = input.bool(false, 'Show Residual Bands', group = g_kernel, tooltip = tooltip_bands)
+band_mult       = input.float(1.5, 'Band Multiplier', minval = 0.1, step = 0.1, group = g_kernel, tooltip = tooltip_band_mult)
+
+show_fill     = input.bool(true, 'Show Gradient Fill', group = g_visual, tooltip = tooltip_fill)
+show_markers  = input.bool(true, 'Show Reversal Markers', group = g_visual, tooltip = tooltip_markers)
+color_preset  = input.string('Custom', 'Color Preset', options = ['Classic', 'Aqua', 'Cosmic', 'Cyber', 'Neon', 'Custom'], group = g_visual, tooltip = tooltip_color_preset)
+bullish_input = input.color(#00ffaa, 'Bullish Color', group = g_visual, tooltip = tooltip_bullish)
+bearish_input = input.color(#ff0000, 'Bearish Color', group = g_visual, tooltip = tooltip_bearish)
+show_candles  = input.bool(false, 'Enable Bar Coloring', group = g_visual, tooltip = tooltip_candles)
+bar_trans     = input.int(0, 'Bar Color Transparency', minval = 0, maxval = 100, group = g_visual, tooltip = tooltip_bar_trans)
+show_bgcolor  = input.bool(false, 'Enable Background Coloring', group = g_visual, tooltip = tooltip_bgcolor)
+bg_trans      = input.int(90, 'Background Color Transparency', minval = 0, maxval = 100, group = g_visual, tooltip = tooltip_bg_trans)
+
+lookback  = preset == 'Fast Response' ? 25  : preset == 'Smooth Trend' ? 100 : lookback_input
+bandwidth = preset == 'Fast Response' ? 5   : preset == 'Smooth Trend' ? 12  : bandwidth_input
+h_mult    = preset == 'Fast Response' ? 1.5 : preset == 'Smooth Trend' ? 2.5 : h_mult_input
+
+[bullish_color, bearish_color] = switch color_preset
+    'Classic' => [#00ff00, #ff0000]
+    'Aqua'    => [#00d4ff, #ff8c00]
+    'Cosmic'  => [#49ffce, #9932cc]
+    'Cyber'   => [#00cccc, #ff6600]
+    'Neon'    => [#ffff00, #ff00ff]
+    'Custom'  => [bullish_input, bearish_input]
+
+//              ╔════════════════════════════════╗              //
+//              ║        CORE CALCULATION        ║              //
+//              ╚════════════════════════════════╝              //
+
+kernel_weight(float dist, float h, string ktype, float rq) =>
+    float w = 0.0
+    if h > 0.0
+        float u = dist / h
+        if ktype == 'Gaussian'
+            w := math.exp(-(dist * dist) / (2.0 * h * h))
+        else if ktype == 'Rational Quadratic'
+            w := math.pow(1.0 + (dist * dist) / (2.0 * rq * h * h), -rq)
+        else if math.abs(u) <= 1.0
+            if ktype == 'Epanechnikov'
+                w := 0.75 * (1.0 - u * u)
+            else if ktype == 'Triangular'
+                w := 1.0 - math.abs(u)
+            else if ktype == 'Quartic'
+                w := (15.0 / 16.0) * math.pow(1.0 - u * u, 2.0)
+            else if ktype == 'Cosine'
+                w := (math.pi / 4.0) * math.cos(math.pi * u / 2.0)
+    w
+
+float h = bandwidth * h_mult
+
+float sum_w = 0.0
+float sum_p = 0.0
+for i = 0 to lookback
+    float w = kernel_weight(i, h, kernel_type, rel_weight)
+    sum_w += w
+    sum_p += src[i] * w
+
+float nw_trend = sum_w != 0.0 ? sum_p / sum_w : na
+
+float sum_abs = 0.0
+float sum_res_w = 0.0
+for i = 0 to lookback
+    float w = kernel_weight(i, h, kernel_type, rel_weight)
+    if w > 0.0 and not na(src[i]) and not na(nw_trend)
+        sum_abs += w * math.abs(src[i] - nw_trend)
+        sum_res_w += w
+
+float residual = sum_res_w != 0.0 ? sum_abs / sum_res_w : na
+float upper = not na(nw_trend) and not na(residual) ? nw_trend + residual * band_mult : na
+float lower = not na(nw_trend) and not na(residual) ? nw_trend - residual * band_mult : na
+
+bool turned_bullish = not na(nw_trend) and not na(nw_trend[1]) and not na(nw_trend[2]) and nw_trend[1] < nw_trend[2] and nw_trend > nw_trend[1]
+bool turned_bearish = not na(nw_trend) and not na(nw_trend[1]) and not na(nw_trend[2]) and nw_trend[1] > nw_trend[2] and nw_trend < nw_trend[1]
+bool trend_changed  = turned_bullish or turned_bearish
+
+bool band_cross_up = not na(upper) and ta.crossover(src, upper)
+bool band_cross_dn = not na(lower) and ta.crossunder(src, lower)
+
+color trend_color = na(nw_trend) or na(nw_trend[1]) ? bullish_color : nw_trend > nw_trend[1] ? bullish_color : bearish_color
+
+//              ╔════════════════════════════════╗              //
+//              ║         VISUALIZATION          ║              //
+//              ╚════════════════════════════════╝              //
+
+p_band  = plot(nw_trend, 'NW Trend', color = color.new(trend_color, 0), linewidth = 3)
+p_price = plot(src, 'Price Anchor', color = na, display = display.none, editable = false)
+
+step  = not na(nw_trend) ? (src - nw_trend) / 6.0 : na
+grad1 = not na(step) ? nw_trend + step * 1.0 : na
+grad2 = not na(step) ? nw_trend + step * 2.0 : na
+grad3 = not na(step) ? nw_trend + step * 3.0 : na
+grad4 = not na(step) ? nw_trend + step * 4.0 : na
+grad5 = not na(step) ? nw_trend + step * 5.0 : na
+
+p_grad1 = plot(grad1, display = display.none, editable = false)
+p_grad2 = plot(grad2, display = display.none, editable = false)
+p_grad3 = plot(grad3, display = display.none, editable = false)
+p_grad4 = plot(grad4, display = display.none, editable = false)
+p_grad5 = plot(grad5, display = display.none, editable = false)
+
+fill(p_band, p_grad1, color = show_fill and not na(nw_trend) ? color.new(trend_color, 60) : na, title = 'Gradient 1')
+fill(p_grad1, p_grad2, color = show_fill and not na(nw_trend) ? color.new(trend_color, 68) : na, title = 'Gradient 2')
+fill(p_grad2, p_grad3, color = show_fill and not na(nw_trend) ? color.new(trend_color, 76) : na, title = 'Gradient 3')
+fill(p_grad3, p_grad4, color = show_fill and not na(nw_trend) ? color.new(trend_color, 84) : na, title = 'Gradient 4')
+fill(p_grad4, p_grad5, color = show_fill and not na(nw_trend) ? color.new(trend_color, 92) : na, title = 'Gradient 5')
+fill(p_grad5, p_price, color = show_fill and not na(nw_trend) ? color.new(trend_color, 96) : na, title = 'Gradient 6')
+
+p_upper = plot(show_bands ? upper : na, 'NW Upper Band', color = color.new(trend_color, 55), linewidth = 1)
+p_lower = plot(show_bands ? lower : na, 'NW Lower Band', color = color.new(trend_color, 55), linewidth = 1)
+fill(p_upper, p_lower, color = show_bands ? color.new(trend_color, 90) : na, title = 'Residual Band Fill')
+
+plotshape(show_markers and turned_bullish, 'Bullish Reversal', shape.triangleup, location.belowbar, color.new(bullish_color, 0), size = size.small)
+plotshape(show_markers and turned_bearish, 'Bearish Reversal', shape.triangledown, location.abovebar, color.new(bearish_color, 0), size = size.small)
+
+barcolor(show_candles and not na(nw_trend) ? color.new(trend_color, bar_trans) : na, title = 'Kernel Trend Bar Color')
+bgcolor(show_bgcolor and not na(nw_trend) ? color.new(trend_color, bg_trans) : na, title = 'Kernel Trend Background Color')
+
+//              ╔════════════════════════════════╗              //
+//              ║             ALERTS             ║              //
+//              ╚════════════════════════════════╝              //
+
+alertcondition(turned_bullish, title = 'Bullish Kernel Reversal', message = 'Nadaraya-Watson Trend: BULLISH kernel reversal on {{exchange}}:{{ticker}} - {{interval}}')
+alertcondition(turned_bearish, title = 'Bearish Kernel Reversal', message = 'Nadaraya-Watson Trend: BEARISH kernel reversal on {{exchange}}:{{ticker}} - {{interval}}')
+alertcondition(trend_changed, title = 'Any Kernel Reversal', message = 'Nadaraya-Watson Trend: Kernel path direction changed on {{exchange}}:{{ticker}} - {{interval}}')
+alertcondition(band_cross_up, title = 'Source Cross Above Upper Band', message = 'Nadaraya-Watson Trend: Source crossed above upper residual band on {{exchange}}:{{ticker}} - {{interval}}')
+alertcondition(band_cross_dn, title = 'Source Cross Below Lower Band', message = 'Nadaraya-Watson Trend: Source crossed below lower residual band on {{exchange}}:{{ticker}} - {{interval}}')
+
+//              ╔════════════════════════════════╗              //
+//              ║           CREATED BY           ║              //
+//              ╚════════════════════════════════╝              //
+
+// ██████╗ ██╗   ██╗ █████╗ ███╗   ██╗████████╗     █████╗ ██╗      ██████╗  ██████╗
+//██╔═══██╗██║   ██║██╔══██╗████╗  ██║╚══██╔══╝    ██╔══██╗██║     ██╔════╝ ██╔═══██╗
+//██║   ██║██║   ██║███████║██╔██╗ ██║   ██║       ███████║██║     ██║  ███╗██║   ██║
+//██║▄▄ ██║██║   ██║██╔══██║██║╚██╗██║   ██║       ██╔══██║██║     ██║   ██║██║   ██║
+//╚██████╔╝╚██████╔╝██║  ██║██║ ╚████║   ██║       ██║  ██║███████╗╚██████╔╝╚██████╔╝
+// ╚══▀▀═╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝       ╚═╝  ╚═╝╚══════╝ ╚═════╝  ╚═════╝
+
+在Pine编辑器查看・178行
+在图表上使用
+3.2 K
+23
+39 980
+🟢 Overview
+
+The Nadaraya-Watson Trend indicator estimates a smooth, adaptive trend path by applying non-parametric kernel regression directly to price. For each bar it weights historical values inside a configurable lookback window with a chosen kernel function, normalizes those weights, and returns a single endpoint estimate that forms the plotted trend line. Bandwidth and kernel type control how aggressively recent bars dominate the estimate, optional residual bands express how far price is dispersed around that path, and slope based coloring with reversal markers make direction and turning points readable at a glance across any timeframe or instrument.
+
+🟢 How It Works
+
+The indicator is built around a one sided Nadaraya-Watson (NW) estimator: only the current bar and past bars enter the calculation, so the path behaves as a causal smoother rather than a centered, repainting fit. The pipeline has three stages: kernel weighting over the lookback window, normalized regression into a single trend value, and optional residual band construction from the same estimate.
+
+First, effective bandwidth is formed from the configured bandwidth and multiplier. Each lag distance is then mapped to a kernel weight. Gaussian and Rational Quadratic keep infinite support with different decay shapes. Compact kernels (Epanechnikov, Triangular, Quartic, Cosine) only assign weight while the normalized lag stays inside the unit interval:
+
+Pine Script®
+kernel_weight(float dist, float h, string ktype, float rq) =>
+    float w = 0.0
+    if h > 0.0
+        float u = dist / h
+        if ktype == 'Gaussian'
+            w := math.exp(-(dist * dist) / (2.0 * h * h))
+        else if ktype == 'Rational Quadratic'
+            w := math.pow(1.0 + (dist * dist) / (2.0 * rq * h * h), -rq)
+        else if math.abs(u) <= 1.0
+            if ktype == 'Epanechnikov'
+                w := 0.75 * (1.0 - u * u)
+            else if ktype == 'Triangular'
+                w := 1.0 - math.abs(u)
+            else if ktype == 'Quartic'
+                w := (15.0 / 16.0) * math.pow(1.0 - u * u, 2.0)
+            else if ktype == 'Cosine'
+                w := (math.pi / 4.0) * math.cos(math.pi * u / 2.0)
+    w
+
+float h = bandwidth * h_mult
+
+展开第15行
+Next, the Nadaraya-Watson path is computed as the normalized weighted average of the selected source across the lookback window. Nearer bars dominate when bandwidth is low. Weight spreads more evenly when bandwidth is high, producing a smoother path:
+
+Pine Script®
+float sum_w = 0.0
+float sum_p = 0.0
+for i = 0 to lookback
+    float w = kernel_weight(i, h, kernel_type, rel_weight)
+    sum_w += w
+    sum_p += src * w
+
+float nw_trend = sum_w != 0.0 ? sum_p / sum_w : na
+
+展开第3行
+Finally, residual bands can be drawn from a kernel weighted mean absolute residual of the source versus the current NW estimate, scaled by the band multiplier. When price is tightly clustered around the path the envelope contracts. When price is dispersed the envelope expands, framing extension and compression relative to the same estimator that defines the trend:
+
+Pine Script®
+float sum_abs = 0.0
+float sum_res_w = 0.0
+for i = 0 to lookback
+    float w = kernel_weight(i, h, kernel_type, rel_weight)
+    if w > 0.0 and not na(src) and not na(nw_trend)
+        sum_abs += w * math.abs(src - nw_trend)
+        sum_res_w += w
+
+float residual = sum_res_w != 0.0 ? sum_abs / sum_res_w : na
+float upper = not na(nw_trend) and not na(residual) ? nw_trend + residual * band_mult : na
+float lower = not na(nw_trend) and not na(residual) ? nw_trend - residual * band_mult : na
+
+展开第6行
+🟢 Signal Interpretation
+
+▶ Bullish Path (Rising NW Line with Bullish Color): When the Nadaraya-Watson estimate is increasing bar to bar, the path and optional gradient fill plot in the bullish color, reading as an uptrend in the kernel smoothed series. Treat this as a long bias: strongest on the reversal marker with price holding above the path, or on pullbacks that respect the path while slope stays up. Bias weakens if price loses the path and the slope flattens or flips down.
+
+▶ Bearish Path (Falling NW Line with Bearish Color): When the estimate is decreasing bar to bar, the path and fill plot in the bearish color, reading as a downtrend in the kernel smoothed series. Treat this as a short bias: strongest on the reversal marker with price holding below the path, or on bounces that fail at the path while slope stays down. Bias weakens if price reclaims the path and the slope flattens or flips up.
+
+▶ Residual Bands (Optional Envelope Around the Path): With residual bands enabled, the upper and lower lines track a scaled kernel weighted residual around the NW path. Touches or closes beyond the outer band highlight price stretched away from the estimate. Returns toward the path after an extension often mark mean reversion relative to the kernel trend rather than a full regime change. Band width is derived from how widely the source has been scattered around the current NW estimate inside the lookback window
+
+🟢 Features
+
+▶ Preconfigured Presets: Three parameter sets tuned for different trading styles and timeframes. "Default" delivers balanced trend estimation for swing trading on 1H to daily charts, smoothing short lived noise while still responding to genuine directional turns. "Fast Response" is built for intraday work on 5 minute to 1H charts, keeping the path tighter to recent structure so turns register earlier at the cost of more frequent reversals in chop. "Smooth Trend" is aimed at position style reading on daily and weekly charts, forming a more stable baseline that flips only when the kernel path itself shifts with more conviction. Kernel type, residual bands, and visual options stay independently configurable under every preset.
+
+▶ Kernel Library: Six kernel functions expand how the same endpoint Nadaraya-Watson framework assigns weight across the window. Gaussian is the classic smooth default with infinite support. Epanechnikov, Triangular, Quartic, and Cosine are compact kernels that fully exclude bars beyond the bandwidth scale. Rational Quadratic keeps infinite support with heavier tails, and its Relative Weighting input controls how much influence farther bars retain versus a Gaussian like decay. Switching kernels changes the shape of the single plotted path without adding a second model or external oscillator.
+
+▶ Residual Bands: Optional envelope around the NW path built from kernel weighted mean absolute residuals of the source versus the estimate, scaled by Band Multiplier. Enable when you want extension and compression context around the same trend line. Disable when you want only the path, gradient, and markers.
+
+▶ Built-in Alerts: Five alert conditions support hands off monitoring. "Bullish Kernel Reversal" fires on the bar the path slope flips from down to up. "Bearish Kernel Reversal" fires on the bar the path slope flips from up to down. "Any Kernel Reversal" fires on either directional flip. "Source Cross Above Upper Band" and "Source Cross Below Lower Band" fire when the selected source crosses the residual envelope extremes. Alert messages include exchange, ticker, and timeframe for immediate context.
+
+▶ Visual Customisation: Six color presets (Classic, Aqua, Cosmic, Cyber, Neon, and Custom) apply coordinated bullish and bearish colors to the path, gradient fill, residual bands, markers, optional bar coloring, and optional background coloring. Custom unlocks independent bullish and bearish color pickers. Gradient fill, residual bands, reversal markers, bar coloring, and background coloring can each be toggled so the chart stays as clean or as expressive as the workflow requires.
+
+开源脚本
+
+秉承TradingView的精神，该脚本的作者将其开源，以便交易者可以查看和验证其功能。向作者致敬！您可以免费使用该脚本，但请记住，重新发布代码须遵守我们的网站规则。
+
+QuantAlgo
+关注
+🟢 Access our best trading & investing tools: joinquantalgo.com/plans
+
+
+🟢 Free Special Edition indicators: joinquantalgo.com/special-editions
+
+
+🟢 Discord: discord.gg/hJaFyGEAyX
+更多:
+Bands and Channels
+BTCUSD
+indicators
+kernel
+nadaraya-watson
+pinescript
+Pine utilities
+quantalgo
+scalping
+trend
+Trend Analysis
+XAUUSD
+免责声明
+这些信息和出版物并非旨在提供，也不构成TradingView提供或认可的任何形式的财务、投资、交易或其他类型的建议或推荐。请阅读使用条款了解更多信息。
+人类制造
+简体中文
+
+部分市场数据由ICE Data Services提供。
+部分参考数据由FactSet提供。版权所有 © 2026 FactSet Research Systems Inc.
+版权所有 © 2026 美国银行家协会。CUSIP数据库由FactSet Research Systems Inc.提供。保留所有权利。
+SEC文件和其他文件由Quartr提供。
+© 2026 TradingView, Inc.
+
+不仅是产品
+超级图表
+筛选器
+股票
+ETFs
+债券
+加密货币
+CEX对
+DEX对
+Pine
+热图
+股票
+ETFs
+加密货币
+日历
+经济
+收益
+股利
+IPO
+更多产品
+新闻流
+投资组合
+收益率曲线
+期权
+宏观地图
+Pine Script®
+MCP服务器
+应用程序
+移动版
+电脑版
+工具和订阅
+功能特色
+价格
+市场数据
+礼物方案
+交易
+概览
+经纪商
+经纪商比较
+The Leap
+特别优惠
+CME集团期货
+Eurex期货
+美国股票包
+关于公司
+我们是谁
+太空任务
+博客
+帮助中心
+职涯
+媒体工具包
+商品
+TradingView商店
+交易者塔罗牌
+C63 TradeTime
+政策和安全
+使用条款
+免责声明
+隐私政策
+Cookies政策
+无障碍声明
+安全提示
+漏洞赏金计划
+状态页面
+社区
+社交网络
+爱心墙
+推荐朋友
+创作者计划
+网站规则
+版主
+观点
+交易
+教学
+编辑精选
+PINE脚本
+指标和策略
+大师
+自由开发人员
+市场
+商业解决方案
+插件
+图表库
+Lightweight Charts™
+高级图表
+交易平台
+成长机会
+广告
+经纪业务集成
+合作伙伴计划
+教育计划

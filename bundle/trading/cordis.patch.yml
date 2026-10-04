@@ -1,0 +1,38 @@
+# The dsh-trading bundle: stacked on top of the stock `web` (or `headless`)
+# profile. One row per plugin; users patch rows by id from their profile's
+# cordis.patch.yml — e.g. replace `market-data-provider`'s config to point
+# `root` at their own candle store, or swap the row wholesale for their own
+# provider package. That row swap IS the bring-your-own-data mechanism.
+
+- insert:
+    - id: market-data
+      name: '@dsh-trading/market-data'
+
+    - id: market-data-provider
+      name: '@dsh-trading/provider-csv'
+      config:
+        root: ./data
+
+    - id: tool-market
+      name: '@dsh-trading/tool-market'
+      config:
+        chartDir: ./charts
+
+    # The evaluation harness: audit_backtest / lint_strategy_code judge
+    # backtest artifacts against real candles — deterministic checks whose
+    # verdict is allowed to be NOT PROVEN.
+    - id: verdict
+      name: '@dsh-trading/verdict'
+
+    # Refuses order-execution and fund-movement tool names from ANY plugin in
+    # this profile, not just ours. Remove this row to opt out deliberately.
+    - id: risk-guard
+      name: '@dsh-trading/risk-guard'
+
+    # Candlestick cards for market_snapshot / get_ohlcv results, plus the
+    # persistent chart column and the loopback channel that feeds it. Those
+    # are web-only; under a headless profile the row still registers
+    # `get_chart_view` and the per-turn context line, which simply report a
+    # closed panel. Remove the row for the generic text cards.
+    - id: client-chart
+      name: '@dsh-trading/client-chart'

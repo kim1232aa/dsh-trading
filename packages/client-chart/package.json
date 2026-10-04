@@ -1,0 +1,83 @@
+{
+  "name": "@dsh-trading/client-chart",
+  "version": "0.2.0",
+  "description": "Interactive candlestick cards for dsh web: market_snapshot and get_ohlcv results render as K-line charts with MA overlays, volume, and the indicator regime the model actually read",
+  "type": "module",
+  "license": "MIT",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-tool",
+        "@deepseek-ai/dsh-client-connection"
+      ]
+    }
+  },
+  "dependencies": {
+    "klinecharts": "^9.8.12"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
+    "react": "^18.2.0",
+    "@dsh-trading/client-frame": "^0.2.0",
+    "@dsh-trading/market-data": "workspace:^",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-client-connection": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-store": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-tool": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@dsh-trading/client-frame": "workspace:*",
+    "@dsh-trading/market-data": "workspace:^",
+    "@types/react": "^18.3.0",
+    "esbuild": "^0.24.0",
+    "react": "^18.3.1",
+    "typescript": "^5.7.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maddogfinance/dsh-trading.git",
+    "directory": "packages/client-chart"
+  },
+  "homepage": "https://github.com/maddogfinance/dsh-trading#readme",
+  "bugs": "https://github.com/maddogfinance/dsh-trading/issues",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "trading",
+    "market-data",
+    "technical-analysis",
+    "research"
+  ],
+  "peerDependenciesMeta": {
+    "@dsh-trading/client-frame": {
+      "optional": true
+    }
+  }
+}

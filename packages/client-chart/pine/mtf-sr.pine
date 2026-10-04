@@ -1,0 +1,794 @@
+﻿//@version=6
+indicator("Intraday MTF SR Zones", overlay = true,
+     max_boxes_count = 500, max_labels_count = 500, max_lines_count = 100, max_bars_back = 5000)
+
+string G_TF = "①  Timeframe Levels (pivot core)"
+bool   i_en1 = input.bool(true,  "Slot 1", inline = "t1", group = G_TF)
+string i_tf1 = input.timeframe("30",  "", inline = "t1", group = G_TF)
+bool   i_en2 = input.bool(true,  "Slot 2", inline = "t2", group = G_TF)
+string i_tf2 = input.timeframe("60",  "", inline = "t2", group = G_TF)
+bool   i_en3 = input.bool(true,  "Slot 3", inline = "t3", group = G_TF)
+string i_tf3 = input.timeframe("120", "", inline = "t3", group = G_TF)
+bool   i_en4 = input.bool(true,  "Slot 4", inline = "t4", group = G_TF)
+string i_tf4 = input.timeframe("240", "", inline = "t4", group = G_TF)
+int    i_pL  = input.int(5, "Pivot Strength (left)",  minval = 1, maxval = 60, group = G_TF)
+int    i_pR  = input.int(5, "Pivot Strength (right)", minval = 1, maxval = 60, group = G_TF)
+bool   i_res = input.bool(true, "Resistance (pivot highs)", inline = "d", group = G_TF)
+bool   i_sup = input.bool(true, "Support (pivot lows)", inline = "d", group = G_TF)
+
+string G_SES = "②  Session Handling"
+string i_sesTf   = input.timeframe("D", "Session Timeframe", group = G_SES, tooltip = "A fresh session of levels begins on each new bar of this timeframe. 'D' = daily.")
+int    i_keepN   = input.int(3, "Sessions Of Zones To Keep", minval = 1, maxval = 10, group = G_SES, tooltip = "How many recent sessions keep their full stack of zones drawn.")
+int    i_capSes  = input.int(14, "Max Zones Per Session", minval = 2, maxval = 30, group = G_SES, tooltip = "Weakest levels in a session are dropped past this so the stack stays clean.")
+int    i_extendR = input.int(10, "Extend Latest Session (bars)", minval = 0, maxval = 200, group = G_SES)
+
+string G_SHP = "③  Zone Shape"
+string i_thMode = input.string("ATR ×", "Thickness Method", options = ["ATR ×", "% of Price"], group = G_SHP)
+float  i_thATR  = input.float(0.28, "Thickness (ATR ×)", minval = 0.05, maxval = 3.0, step = 0.05, group = G_SHP)
+float  i_thPct  = input.float(0.10, "Thickness (% of Price)", minval = 0.02, maxval = 2.0, step = 0.02, group = G_SHP)
+int    i_atrLen = input.int(14, "ATR Length", minval = 1, maxval = 200, group = G_SHP)
+
+string G_MRG = "④  Confluence Merge"
+bool   i_merge    = input.bool(true, "Merge Overlapping Levels", group = G_MRG, tooltip = "Same-side levels in a session whose bands overlap fuse into one confluence zone tagged with every timeframe involved.")
+float  i_mergeATR = input.float(0.35, "Merge Distance (ATR ×)", minval = 0.0, maxval = 3.0, step = 0.05, group = G_MRG)
+float  i_confBonus= input.float(0.9, "Confluence Bonus / Extra TF", minval = 0.0, maxval = 2.0, step = 0.1, group = G_MRG)
+
+string G_STR = "⑤  Strength Engine (0-10)"
+float  i_minStr = input.float(0.0, "Hide Zones Below Score", minval = 0.0, maxval = 10.0, step = 0.5, group = G_STR)
+float  i_wTF    = input.float(0.40, "  Weight · Timeframe Rank",  minval = 0, maxval = 1, step = 0.02, group = G_STR)
+float  i_wConf  = input.float(0.28, "  Weight · Confluence",      minval = 0, maxval = 1, step = 0.02, group = G_STR)
+float  i_wWick  = input.float(0.18, "  Weight · Rejection Wick",  minval = 0, maxval = 1, step = 0.02, group = G_STR)
+float  i_wPro   = input.float(0.14, "  Weight · Pivot Prominence",minval = 0, maxval = 1, step = 0.02, group = G_STR)
+float  i_strongTh = input.float(7.0, "Strong-Zone Threshold", minval = 3.0, maxval = 10.0, step = 0.5, group = G_STR)
+
+string G_LAB = "⑥  Labels"
+bool   i_showLab  = input.bool(true, "Show Labels", group = G_LAB)
+bool   i_showStar = input.bool(true, "Show Stars & Tier", group = G_LAB)
+bool   i_latest   = input.bool(false, "Labels On Latest Session Only", group = G_LAB)
+string i_labSize  = input.string("Small", "Label Size", options = ["Tiny", "Small", "Normal", "Large"], group = G_LAB)
+
+string G_COL = "⑦  Theme · Std-Dev Palette"
+color  i_r1 = input.color(#158362, "Resistance ►", inline = "r1", group = G_COL, tooltip = "Four shades graded weak → elite (upper / +SD teal family).")
+color  i_r2 = input.color(#196c64, "", inline = "r1", group = G_COL)
+color  i_r3 = input.color(#005950, "", inline = "r1", group = G_COL)
+color  i_r4 = input.color(#00322a, "", inline = "r1", group = G_COL)
+color  i_s1 = input.color(#851793, "Support   ►", inline = "s1", group = G_COL, tooltip = "Four shades graded weak → elite (lower / -SD magenta-red-purple family).")
+color  i_s2 = input.color(#771212, "", inline = "s1", group = G_COL)
+color  i_s3 = input.color(#580933, "", inline = "s1", group = G_COL)
+color  i_s4 = input.color(#300d5b, "", inline = "s1", group = G_COL)
+color  i_confCol = input.color(#7458a6, "Confluence", group = G_COL)
+int    i_baseTr  = input.int(60, "Weakest Transparency", minval = 30, maxval = 96, group = G_COL)
+int    i_span    = input.int(34, "Strength Opacity Span", minval = 0, maxval = 55, group = G_COL)
+bool   i_border  = input.bool(true, "Show Zone Borders", group = G_COL)
+
+string G_DASH = "⑧  Dashboard"
+bool   i_showDash = input.bool(true, "Show Dashboard", group = G_DASH)
+string i_dashPos  = input.string("Top Right", "Position", options = ["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right"], group = G_DASH)
+string i_dashSize = input.string("Small", "Text Size", options = ["Tiny", "Small", "Normal"], group = G_DASH)
+
+color C_PANEL = color.rgb(16, 20, 28)
+color C_ALT   = color.rgb(23, 28, 38)
+color C_HDR   = color.rgb(30, 37, 48)
+color C_SUB   = color.rgb(12, 16, 23)
+color C_EDGE  = color.rgb(48, 56, 70)
+color C_TXT   = color.rgb(228, 233, 242)
+color C_LO    = color.rgb(138, 147, 163)
+color C_NEU   = color.rgb(96, 104, 118)
+color C_AMB   = color.rgb(25, 108, 100)
+color C_AZ    = color.rgb(133, 23, 147)
+color C_GOLD  = color.rgb(116, 88, 166)
+
+f_clamp(float v, float lo, float hi) => math.max(lo, math.min(hi, v))
+
+f_lab(string s) =>
+    switch s
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        "Large"  => size.large
+        => size.small
+
+f_dpos(string p) =>
+    switch p
+        "Top Left"     => position.top_left
+        "Bottom Right" => position.bottom_right
+        "Bottom Left"  => position.bottom_left
+        "Middle Right" => position.middle_right
+        => position.top_right
+
+f_stars(float s) => s >= 8 ? "★★★★★" : s >= 6.5 ? "★★★★" : s >= 5 ? "★★★" : s >= 3.5 ? "★★" : s >= 2 ? "★" : "·"
+f_tier(float s)  => s >= 8 ? "ELITE" : s >= 6.5 ? "STRONG" : s >= 5 ? "MODERATE" : s >= 3.5 ? "WEAK" : "FORMING"
+
+f_tfLabel(string tf) =>
+    int s = timeframe.in_seconds(tf)
+    s % 86400 == 0 ? "D" + str.tostring(s / 86400) : s >= 3600 and s % 3600 == 0 ? "H" + str.tostring(s / 3600) : s >= 60 ? "M" + str.tostring(s / 60) : "S" + str.tostring(s)
+
+f_tfWeight(int sec) => sec >= 14400 ? 1.0 : sec >= 3600 ? 0.78 : sec >= 900 ? 0.55 : sec >= 300 ? 0.38 : sec >= 60 ? 0.30 : 0.25
+
+f_sess() =>
+    int m = hour(time, "GMT") * 60 + minute(time, "GMT")
+    m >= 480 and m < 780 ? "London" : m >= 780 and m < 1320 ? "NY" : m >= 0 and m < 540 ? "Asian" : "Other"
+
+int lenRef = i_pL + i_pR
+int chartMs = timeframe.in_seconds() * 1000
+int sec1 = timeframe.in_seconds(i_tf1)
+int sec2 = timeframe.in_seconds(i_tf2)
+int sec3 = timeframe.in_seconds(i_tf3)
+int sec4 = timeframe.in_seconds(i_tf4)
+string L1 = f_tfLabel(i_tf1)
+string L2 = f_tfLabel(i_tf2)
+string L3 = f_tfLabel(i_tf3)
+string L4 = f_tfLabel(i_tf4)
+
+f_tfset(bool h1, bool h2, bool h3, bool h4) =>
+    string s = ""
+    if h1
+        s := L1
+    if h2
+        s := s == "" ? L2 : s + "·" + L2
+    if h3
+        s := s == "" ? L3 : s + "·" + L3
+    if h4
+        s := s == "" ? L4 : s + "·" + L4
+    s == "" ? "—" : s
+
+detect() =>
+    float atrv = ta.atr(i_atrLen)
+    float refMid = ta.sma(hl2, lenRef)
+    float ph = ta.pivothigh(high, i_pL, i_pR)
+    float pl = ta.pivotlow(low, i_pL, i_pR)
+    float phWk = na
+    float plWk = na
+    float phPro = na
+    float plPro = na
+    if not na(ph)
+        phWk := math.max(high[i_pR] - math.max(open[i_pR], close[i_pR]), 0.0)
+        phPro := math.max(ph - refMid, 0.0)
+    if not na(pl)
+        plWk := math.max(math.min(open[i_pR], close[i_pR]) - low[i_pR], 0.0)
+        plPro := math.max(refMid - pl, 0.0)
+    [ph, pl, atrv, phWk, plWk, phPro, plPro]
+
+[ph1, pl1, atr1, pw1, lw1, pp1, lp1] = request.security(syminfo.tickerid, i_tf1, detect(), lookahead = barmerge.lookahead_off)
+[ph2, pl2, atr2, pw2, lw2, pp2, lp2] = request.security(syminfo.tickerid, i_tf2, detect(), lookahead = barmerge.lookahead_off)
+[ph3, pl3, atr3, pw3, lw3, pp3, lp3] = request.security(syminfo.tickerid, i_tf3, detect(), lookahead = barmerge.lookahead_off)
+[ph4, pl4, atr4, pw4, lw4, pp4, lp4] = request.security(syminfo.tickerid, i_tf4, detect(), lookahead = barmerge.lookahead_off)
+
+float atrChart = ta.atr(i_atrLen)
+
+f_transp(float sc) => int(f_clamp(i_baseTr - (sc / 10.0) * i_span, 30.0, 96.0))
+
+f_score(float tfW, int cc, float wickAvg, float prom, float atrv) =>
+    float tfF  = f_clamp(tfW, 0.0, 1.0)
+    float cnfF = f_clamp((cc - 1) / 2.0, 0.0, 1.0)
+    float wkF  = atrv > 0 ? f_clamp(wickAvg / (atrv * 0.6), 0.0, 1.0) : 0.0
+    float prF  = atrv > 0 ? f_clamp(prom / (atrv * 3.0), 0.0, 1.0) : 0.0
+    float wSum = math.max(i_wTF + i_wConf + i_wWick + i_wPro, 1e-6)
+    float raw  = (tfF * i_wTF + cnfF * i_wConf + wkF * i_wWick + prF * i_wPro) / wSum
+    f_clamp(raw * 10.0 + i_confBonus * (cc - 1), 0.0, 10.0)
+
+type SRZone
+    box    body
+    label  tag
+    bool   isRes
+    bool   hasTf1
+    bool   hasTf2
+    bool   hasTf3
+    bool   hasTf4
+    float  level
+    float  topP
+    float  botP
+    float  tfW
+    int    maxSec
+    float  wickSum
+    int    wickN
+    float  prom
+    float  score
+    int    sesId
+    int    sesStart
+    string tier
+
+var SRZone[] zones = array.new<SRZone>()
+var int sessionId = 0
+var int curSesStart = na
+var float lph1 = na
+var float lph2 = na
+var float lph3 = na
+var float lph4 = na
+var float lpl1 = na
+var float lpl2 = na
+var float lpl3 = na
+var float lpl4 = na
+
+f_thick() => i_thMode == "ATR ×" ? atrChart * i_thATR : close * i_thPct / 100.0
+
+f_shade(bool isRes, float s) =>
+    isRes ? (s >= 6.5 ? i_r4 : s >= 5 ? i_r3 : s >= 3.5 ? i_r2 : i_r1) : (s >= 6.5 ? i_s4 : s >= 5 ? i_s3 : s >= 3.5 ? i_s2 : i_s1)
+
+f_zc(SRZone z) =>
+    int cc = (z.hasTf1 ? 1 : 0) + (z.hasTf2 ? 1 : 0) + (z.hasTf3 ? 1 : 0) + (z.hasTf4 ? 1 : 0)
+    cc > 1 ? i_confCol : f_shade(z.isRes, z.score)
+
+f_build(bool isRes, int tfIdx, float lvl, float atrv, float wick, float prom) =>
+    float h = f_thick()
+    float top = lvl + h / 2.0
+    float bot = lvl - h / 2.0
+    bool h1 = tfIdx == 1
+    bool h2 = tfIdx == 2
+    bool h3 = tfIdx == 3
+    bool h4 = tfIdx == 4
+    int sec = tfIdx == 1 ? sec1 : tfIdx == 2 ? sec2 : tfIdx == 3 ? sec3 : sec4
+    float tfW = f_tfWeight(sec)
+    float pr = na(prom) ? 0.0 : prom
+    float wk = na(wick) ? 0.0 : wick
+    float sc = f_score(tfW, 1, wk, pr, atrv)
+    color zc = f_shade(isRes, sc)
+    int right = time + (barstate.islast ? i_extendR * chartMs : 0)
+    box body = box.new(curSesStart, top, right, bot, xloc = xloc.bar_time, bgcolor = color.new(zc, f_transp(sc)), border_color = i_border ? color.new(zc, 30) : color.new(zc, 100), border_width = i_border ? 1 : 0)
+    label tag = label.new(int(math.round((curSesStart + right) / 2.0)), lvl, "", xloc = xloc.bar_time, style = label.style_none, textcolor = C_TXT, size = f_lab(i_labSize), textalign = text.align_center)
+    SRZone.new(body, tag, isRes, h1, h2, h3, h4, lvl, top, bot, tfW, sec, wk, wk > 0 ? 1 : 0, pr, sc, sessionId, curSesStart, f_tier(sc))
+
+f_spawn(bool isRes, int tfIdx, float lvl, float atrv, float wick, float prom) =>
+    if not na(lvl) and not na(curSesStart)
+        zones.push(f_build(isRes, tfIdx, lvl, na(atrv) ? atrChart : atrv, wick, prom))
+
+f_absorb(SRZone a, SRZone b) =>
+    a.hasTf1 := a.hasTf1 or b.hasTf1
+    a.hasTf2 := a.hasTf2 or b.hasTf2
+    a.hasTf3 := a.hasTf3 or b.hasTf3
+    a.hasTf4 := a.hasTf4 or b.hasTf4
+    float wkA = math.max(a.wickN, 1)
+    float wkB = math.max(b.wickN, 1)
+    a.level := (a.level * wkA + b.level * wkB) / (wkA + wkB)
+    a.wickSum += b.wickSum
+    a.wickN   += b.wickN
+    a.prom := math.max(a.prom, b.prom)
+    a.tfW := math.max(a.tfW, b.tfW)
+    a.maxSec := math.max(a.maxSec, b.maxSec)
+    float h = f_thick()
+    a.topP := a.level + h / 2.0
+    a.botP := a.level - h / 2.0
+    int cc = (a.hasTf1 ? 1 : 0) + (a.hasTf2 ? 1 : 0) + (a.hasTf3 ? 1 : 0) + (a.hasTf4 ? 1 : 0)
+    float wickAvg = a.wickSum / math.max(a.wickN, 1)
+    a.score := f_score(a.tfW, cc, wickAvg, a.prom, atrChart)
+    a.tier := f_tier(a.score)
+    b.body.delete()
+    b.tag.delete()
+
+f_consolidate() =>
+    bool didMerge = false
+    int n = zones.size()
+    if n > 1
+        for i = 0 to n - 2
+            if didMerge
+                break
+            for j = i + 1 to n - 1
+                SRZone A = zones.get(i)
+                SRZone B = zones.get(j)
+                if A.sesId == sessionId and B.sesId == sessionId and A.isRes == B.isRes
+                    float tol = atrChart * i_mergeATR
+                    if A.botP <= B.topP + tol and B.botP <= A.topP + tol
+                        f_absorb(A, B)
+                        zones.remove(j)
+                        didMerge := true
+                        break
+    didMerge
+
+f_capSession() =>
+    int cnt = 0
+    if zones.size() > 0
+        for i = 0 to zones.size() - 1
+            if zones.get(i).sesId == sessionId
+                cnt += 1
+    int guard = 0
+    while cnt > i_capSes and guard < 60
+        int worst = -1
+        float ws = 1e18
+        for i = 0 to zones.size() - 1
+            SRZone z = zones.get(i)
+            if z.sesId == sessionId and z.score < ws
+                ws := z.score
+                worst := i
+        if worst < 0
+            break
+        SRZone o = zones.get(worst)
+        o.body.delete()
+        o.tag.delete()
+        zones.remove(worst)
+        cnt -= 1
+        guard += 1
+
+f_pruneOld() =>
+    if zones.size() > 0
+        for i = zones.size() - 1 to 0
+            SRZone z = zones.get(i)
+            if z.sesId <= sessionId - i_keepN
+                z.body.delete()
+                z.tag.delete()
+                zones.remove(i)
+
+newSes = ta.change(time(i_sesTf)) != 0
+
+if barstate.isconfirmed and newSes
+    int prevEnd = time[1]
+    if zones.size() > 0
+        for i = 0 to zones.size() - 1
+            SRZone z = zones.get(i)
+            if z.sesId == sessionId
+                z.body.set_right(prevEnd)
+                z.tag.set_x(int(math.round((z.sesStart + prevEnd) / 2.0)))
+                if i_latest
+                    z.tag.set_text("")
+    sessionId += 1
+    curSesStart := time
+    f_pruneOld()
+
+bool spawned = false
+if barstate.isconfirmed and not na(curSesStart)
+    if i_res
+        if i_en1 and not na(ph1) and (na(lph1) or ph1 != lph1)
+            f_spawn(true, 1, ph1, atr1, pw1, pp1)
+            lph1 := ph1
+            spawned := true
+        if i_en2 and not na(ph2) and (na(lph2) or ph2 != lph2)
+            f_spawn(true, 2, ph2, atr2, pw2, pp2)
+            lph2 := ph2
+            spawned := true
+        if i_en3 and not na(ph3) and (na(lph3) or ph3 != lph3)
+            f_spawn(true, 3, ph3, atr3, pw3, pp3)
+            lph3 := ph3
+            spawned := true
+        if i_en4 and not na(ph4) and (na(lph4) or ph4 != lph4)
+            f_spawn(true, 4, ph4, atr4, pw4, pp4)
+            lph4 := ph4
+            spawned := true
+    if i_sup
+        if i_en1 and not na(pl1) and (na(lpl1) or pl1 != lpl1)
+            f_spawn(false, 1, pl1, atr1, lw1, lp1)
+            lpl1 := pl1
+            spawned := true
+        if i_en2 and not na(pl2) and (na(lpl2) or pl2 != lpl2)
+            f_spawn(false, 2, pl2, atr2, lw2, lp2)
+            lpl2 := pl2
+            spawned := true
+        if i_en3 and not na(pl3) and (na(lpl3) or pl3 != lpl3)
+            f_spawn(false, 3, pl3, atr3, lw3, lp3)
+            lpl3 := pl3
+            spawned := true
+        if i_en4 and not na(pl4) and (na(lpl4) or pl4 != lpl4)
+            f_spawn(false, 4, pl4, atr4, lw4, lp4)
+            lpl4 := pl4
+            spawned := true
+
+    if spawned and i_merge
+        int g = 0
+        while f_consolidate() and g < 40
+            g += 1
+
+    if spawned
+        f_capSession()
+
+if barstate.isconfirmed and zones.size() > 0
+    int rightT = time + (barstate.islast ? i_extendR * chartMs : 0)
+    for i = 0 to zones.size() - 1
+        SRZone z = zones.get(i)
+        if z.sesId != sessionId
+            continue
+        bool vis = z.score >= i_minStr
+        color zc = f_zc(z)
+        z.body.set_left(z.sesStart)
+        z.body.set_right(rightT)
+        z.body.set_top(z.topP)
+        z.body.set_bottom(z.botP)
+        z.body.set_bgcolor(vis ? color.new(zc, f_transp(z.score)) : color.new(zc, 100))
+        z.body.set_border_color(vis and i_border ? color.new(zc, 30) : color.new(zc, 100))
+        if i_showLab and vis
+            int cc = (z.hasTf1 ? 1 : 0) + (z.hasTf2 ? 1 : 0) + (z.hasTf3 ? 1 : 0) + (z.hasTf4 ? 1 : 0)
+            string dir = cc > 1 ? "◆ " : z.isRes ? "▲ " : "▼ "
+            string ts = f_tfset(z.hasTf1, z.hasTf2, z.hasTf3, z.hasTf4)
+            string sTxt = i_showStar ? "  " + f_stars(z.score) + " " + str.tostring(z.score, "#.0") + "/10 (" + z.tier + ")" : "  " + str.tostring(z.score, "#.0") + "/10"
+            z.tag.set_x(int(math.round((z.sesStart + rightT) / 2.0)))
+            z.tag.set_y(z.level)
+            z.tag.set_text(dir + ts + sTxt)
+            z.tag.set_textcolor(C_TXT)
+        else
+            z.tag.set_text("")
+
+var table d = table.new(f_dpos(i_dashPos), 4, 17, bgcolor = C_PANEL, frame_color = C_EDGE, frame_width = 1, border_color = color.new(C_EDGE, 62), border_width = 1)
+f_c(int col, int row, string t, color tc, color bg, string al) => table.cell(d, col, row, t, text_color = tc, bgcolor = bg, text_size = f_lab(i_dashSize), text_halign = al == "r" ? text.align_right : al == "c" ? text.align_center : text.align_left)
+
+f_biasTxt(int nr, int ns) => nr + ns == 0 ? "—" : nr > ns ? "▲ RES" : ns > nr ? "▼ SUP" : "● BAL"
+f_biasCol(int nr, int ns) => nr + ns == 0 ? C_NEU : nr > ns ? C_AMB : ns > nr ? C_AZ : C_NEU
+
+if barstate.islast and i_showDash
+    int t1r = 0
+    int t1s = 0
+    int t2r = 0
+    int t2s = 0
+    int t3r = 0
+    int t3s = 0
+    int t4r = 0
+    int t4s = 0
+    float nearUp = na
+    string nearUpTf = ""
+    float nearUpS = na
+    float nearDn = na
+    string nearDnTf = ""
+    float nearDnS = na
+    float bestS = 0.0
+    float bestPx = na
+    bool bestRes = true
+    string bestTf = ""
+    int bestCC = 0
+    int active = 0
+    int confl = 0
+    int curCount = 0
+    float scoreSum = 0.0
+
+    if zones.size() > 0
+        for i = 0 to zones.size() - 1
+            SRZone z = zones.get(i)
+            if z.score < i_minStr
+                continue
+            active += 1
+            if z.sesId == sessionId
+                curCount += 1
+            int cc = (z.hasTf1 ? 1 : 0) + (z.hasTf2 ? 1 : 0) + (z.hasTf3 ? 1 : 0) + (z.hasTf4 ? 1 : 0)
+            if cc > 1
+                confl += 1
+            scoreSum += z.score
+            if z.hasTf1
+                if z.isRes
+                    t1r += 1
+                else
+                    t1s += 1
+            if z.hasTf2
+                if z.isRes
+                    t2r += 1
+                else
+                    t2s += 1
+            if z.hasTf3
+                if z.isRes
+                    t3r += 1
+                else
+                    t3s += 1
+            if z.hasTf4
+                if z.isRes
+                    t4r += 1
+                else
+                    t4s += 1
+            if z.level >= close and (na(nearUp) or z.level < nearUp)
+                nearUp := z.level
+                nearUpTf := f_tfset(z.hasTf1, z.hasTf2, z.hasTf3, z.hasTf4)
+                nearUpS := z.score
+            if z.level <= close and (na(nearDn) or z.level > nearDn)
+                nearDn := z.level
+                nearDnTf := f_tfset(z.hasTf1, z.hasTf2, z.hasTf3, z.hasTf4)
+                nearDnS := z.score
+            if z.score > bestS
+                bestS := z.score
+                bestPx := z.level
+                bestRes := z.isRes
+                bestTf := f_tfset(z.hasTf1, z.hasTf2, z.hasTf3, z.hasTf4)
+                bestCC := cc
+
+    float avgScore = active > 0 ? scoreSum / active : na
+
+    f_c(0, 0, "◆ INTRADAY S/R · MTF", C_GOLD, C_HDR, "l")
+    f_c(1, 0, "", C_GOLD, C_HDR, "l")
+    f_c(2, 0, "", C_LO, C_HDR, "r")
+    f_c(3, 0, timeframe.period + " · " + syminfo.ticker, C_LO, C_HDR, "r")
+
+    f_c(0, 1, "TIMEFRAMES", C_TXT, C_ALT, "l")
+    f_c(1, 1, "RES", C_LO, C_ALT, "r")
+    f_c(2, 1, "SUP", C_LO, C_ALT, "r")
+    f_c(3, 1, "BIAS", C_LO, C_ALT, "r")
+
+    f_c(0, 2, (i_en1 ? "● " : "○ ") + L1, i_en1 ? C_TXT : C_NEU, C_PANEL, "l")
+    f_c(1, 2, i_en1 ? str.tostring(t1r) : "—", C_AMB, C_PANEL, "r")
+    f_c(2, 2, i_en1 ? str.tostring(t1s) : "—", C_AZ, C_PANEL, "r")
+    f_c(3, 2, i_en1 ? f_biasTxt(t1r, t1s) : "off", i_en1 ? f_biasCol(t1r, t1s) : C_NEU, C_PANEL, "r")
+
+    f_c(0, 3, (i_en2 ? "● " : "○ ") + L2, i_en2 ? C_TXT : C_NEU, C_SUB, "l")
+    f_c(1, 3, i_en2 ? str.tostring(t2r) : "—", C_AMB, C_SUB, "r")
+    f_c(2, 3, i_en2 ? str.tostring(t2s) : "—", C_AZ, C_SUB, "r")
+    f_c(3, 3, i_en2 ? f_biasTxt(t2r, t2s) : "off", i_en2 ? f_biasCol(t2r, t2s) : C_NEU, C_SUB, "r")
+
+    f_c(0, 4, (i_en3 ? "● " : "○ ") + L3, i_en3 ? C_TXT : C_NEU, C_PANEL, "l")
+    f_c(1, 4, i_en3 ? str.tostring(t3r) : "—", C_AMB, C_PANEL, "r")
+    f_c(2, 4, i_en3 ? str.tostring(t3s) : "—", C_AZ, C_PANEL, "r")
+    f_c(3, 4, i_en3 ? f_biasTxt(t3r, t3s) : "off", i_en3 ? f_biasCol(t3r, t3s) : C_NEU, C_PANEL, "r")
+
+    f_c(0, 5, (i_en4 ? "● " : "○ ") + L4, i_en4 ? C_TXT : C_NEU, C_SUB, "l")
+    f_c(1, 5, i_en4 ? str.tostring(t4r) : "—", C_AMB, C_SUB, "r")
+    f_c(2, 5, i_en4 ? str.tostring(t4s) : "—", C_AZ, C_SUB, "r")
+    f_c(3, 5, i_en4 ? f_biasTxt(t4r, t4s) : "off", i_en4 ? f_biasCol(t4r, t4s) : C_NEU, C_SUB, "r")
+
+    f_c(0, 6, "KEY LEVELS", C_TXT, C_ALT, "l")
+    f_c(1, 6, "PRICE", C_LO, C_ALT, "r")
+    f_c(2, 6, "TF", C_LO, C_ALT, "r")
+    f_c(3, 6, "SCORE", C_LO, C_ALT, "r")
+
+    f_c(0, 7, bestCC > 1 ? "★ Strongest ◆" : "★ Strongest", C_GOLD, C_PANEL, "l")
+    f_c(1, 7, na(bestPx) ? "—" : str.tostring(bestPx, format.mintick), bestRes ? C_AMB : C_AZ, C_PANEL, "r")
+    f_c(2, 7, na(bestPx) ? "—" : bestTf, C_TXT, C_PANEL, "r")
+    f_c(3, 7, na(bestPx) ? "—" : str.tostring(bestS, "#.0") + " " + f_tier(bestS), C_GOLD, C_PANEL, "r")
+
+    f_c(0, 8, "▲ Nearest Res", C_AMB, C_SUB, "l")
+    f_c(1, 8, na(nearUp) ? "—" : str.tostring(nearUp, format.mintick), C_TXT, C_SUB, "r")
+    f_c(2, 8, na(nearUp) ? "—" : nearUpTf, C_TXT, C_SUB, "r")
+    f_c(3, 8, na(nearUp) ? "—" : str.tostring(nearUpS, "#.0"), C_LO, C_SUB, "r")
+
+    f_c(0, 9, "▼ Nearest Sup", C_AZ, C_PANEL, "l")
+    f_c(1, 9, na(nearDn) ? "—" : str.tostring(nearDn, format.mintick), C_TXT, C_PANEL, "r")
+    f_c(2, 9, na(nearDn) ? "—" : nearDnTf, C_TXT, C_PANEL, "r")
+    f_c(3, 9, na(nearDn) ? "—" : str.tostring(nearDnS, "#.0"), C_LO, C_PANEL, "r")
+
+    f_c(0, 10, "STRUCTURE", C_TXT, C_ALT, "l")
+    f_c(1, 10, "", C_LO, C_ALT, "l")
+    f_c(2, 10, "", C_LO, C_ALT, "l")
+    f_c(3, 10, "", C_LO, C_ALT, "r")
+
+    string posTxt = na(nearUp) or na(nearDn) ? "—" : (close - nearDn) < (nearUp - close) ? "Near SUP" : "Near RES"
+    color posCol = posTxt == "Near SUP" ? C_AZ : posTxt == "Near RES" ? C_AMB : C_NEU
+    f_c(0, 11, "Price Position", C_LO, C_PANEL, "l")
+    f_c(1, 11, posTxt, posCol, C_PANEL, "l")
+    f_c(2, 11, "Room", C_LO, C_PANEL, "r")
+    f_c(3, 11, na(nearUp) or na(nearDn) ? "—" : str.tostring((nearUp - nearDn) / math.max(atrChart, 1e-9), "#.0") + " ATR", C_TXT, C_PANEL, "r")
+
+    f_c(0, 12, "Zones · This / Kept", C_LO, C_SUB, "l")
+    f_c(1, 12, str.tostring(curCount) + " / " + str.tostring(active), C_TXT, C_SUB, "l")
+    f_c(2, 12, "Confluence", C_LO, C_SUB, "r")
+    f_c(3, 12, str.tostring(confl), C_GOLD, C_SUB, "r")
+
+    f_c(0, 13, "Avg Score", C_LO, C_PANEL, "l")
+    f_c(1, 13, na(avgScore) ? "—" : str.tostring(avgScore, "#.0") + "/10", C_TXT, C_PANEL, "l")
+    f_c(2, 13, "Sessions", C_LO, C_PANEL, "r")
+    f_c(3, 13, str.tostring(i_keepN), C_TXT, C_PANEL, "r")
+
+    f_c(0, 14, "Pivot", C_LO, C_SUB, "l")
+    f_c(1, 14, str.tostring(i_pL) + "/" + str.tostring(i_pR), C_TXT, C_SUB, "l")
+    f_c(2, 14, "Session", C_LO, C_SUB, "r")
+    f_c(3, 14, f_sess(), C_TXT, C_SUB, "r")
+
+    f_c(0, 15, "Merge", C_LO, C_PANEL, "l")
+    f_c(1, 15, i_merge ? "on" : "off", C_TXT, C_PANEL, "l")
+    f_c(2, 15, "Cap / Ses", C_LO, C_PANEL, "r")
+    f_c(3, 15, str.tostring(i_capSes), C_NEU, C_PANEL, "r")
+
+    f_c(0, 16, "Engine", C_NEU, C_HDR, "l")
+    f_c(1, 16, "MTF Pivot", C_NEU, C_HDR, "l")
+    f_c(2, 16, "Strong ≥", C_NEU, C_HDR, "r")
+    f_c(3, 16, str.tostring(i_strongTh, "#.0"), C_NEU, C_HDR, "r")
+
+bool anyNewRes = barstate.isconfirmed and i_res and ((i_en1 and not na(ph1) and (na(lph1[1]) or ph1 != lph1[1])) or (i_en2 and not na(ph2) and (na(lph2[1]) or ph2 != lph2[1])) or (i_en3 and not na(ph3) and (na(lph3[1]) or ph3 != lph3[1])) or (i_en4 and not na(ph4) and (na(lph4[1]) or ph4 != lph4[1])))
+bool anyNewSup = barstate.isconfirmed and i_sup and ((i_en1 and not na(pl1) and (na(lpl1[1]) or pl1 != lpl1[1])) or (i_en2 and not na(pl2) and (na(lpl2[1]) or pl2 != lpl2[1])) or (i_en3 and not na(pl3) and (na(lpl3[1]) or pl3 != lpl3[1])) or (i_en4 and not na(pl4) and (na(lpl4[1]) or pl4 != lpl4[1])))
+
+bool nearRes = false
+bool nearSup = false
+bool touchStrong = false
+if zones.size() > 0
+    for i = 0 to zones.size() - 1
+        SRZone z = zones.get(i)
+        if z.score < i_minStr
+            continue
+        if high >= z.botP and low <= z.topP
+            if z.isRes
+                nearRes := true
+            else
+                nearSup := true
+            if z.score >= i_strongTh
+                touchStrong := true
+
+alertcondition(anyNewRes, "New Resistance Level (MTF)", "Intraday S/R: new resistance level formed on {{ticker}} @ {{close}}")
+alertcondition(anyNewSup, "New Support Level (MTF)", "Intraday S/R: new support level formed on {{ticker}} @ {{close}}")
+alertcondition(nearRes, "Price At Resistance Zone", "Intraday S/R: price testing a resistance zone on {{ticker}} @ {{close}}")
+alertcondition(nearSup, "Price At Support Zone", "Intraday S/R: price testing a support zone on {{ticker}} @ {{close}}")
+alertcondition(touchStrong, "Price At STRONG Zone", "Intraday S/R: price testing a strong zone on {{ticker}} @ {{close}}")
+
+在Pine编辑器查看・587行
+在图表上使用
+1.5 K
+6
+13 410
+Intraday MTF S/R Zones · Reaction Matrix builds the session's support and resistance from real pivot structure on four timeframes at once, then power-ranks every level so you know which ones actually deserve a trade. Each session it pulls confirmed pivot highs and lows from M30, H1, H2 and H4 by default, wraps each one in a uniform ATR-scaled band, fuses overlapping levels into single confluence zones tagged with every timeframe involved, and grades all of them 0–10. The whole tool runs on one idea: not all levels are equal — a level that four timeframes agree on, that rejected price with a violent wick, and that stands far out from the local mean is a different animal from a shallow M30 pivot, and it should not look the same on your chart.
+
+This is a reaction matrix, not a signal generator. It tells you where the auction has previously reacted, how many timeframes are stacked at that price, how hard price was rejected there, and which zone is the strongest one on the chart right now. The read is directional only in the sense that you can see, at a glance, whether the session's structure is stacked with resistance above or support below.
+
+🟢🔴 Summary how to trade this more details below, read entire guide. Two clean approaches: react at the zone, or trade the break of it. Prefer STRONG / ELITE grades and ◆ confluence zones — the shallow low-graded zones tag constantly and mean little. The dashboard's Nearest Res / Nearest Sup and Room in ATR tell you instantly whether a trade from here has space to work. Runs on any intraday timeframe, i.e. M1 M5 M10 M15 M30 H1 H2 H4 +.
+
+🧱 The Pivot Core the only source of truth — Every zone in this tool descends from a confirmed swing pivot, never from an indicator line, a moving average or a projected level. Pivot strength is set left/right 5/5 by default, so a pivot must be the highest high or lowest low of its neighborhood before it counts. Each of the four timeframe slots runs its own pivot scan independently and reports back. Nothing is drawn from a guess.
+
+📐 Four-Timeframe Stacking — Four independent slots, each toggleable, defaulted to M30 · H1 · H2 · H4. A pivot found on H4 spawns a zone; so does one on M30. They are graded very differently — timeframe rank is the heaviest input to the score — but they all live on the same chart, in the same session, in one coherent ladder. Every zone is labeled with the exact timeframe set that produced it, so an M30·H1·H4 zone announces itself as such.
+
+BTCUSD
+
+
+◆ Confluence Merge the signature feature — This is where the tool separates from a stack of plain pivot lines. Within a session, same-side zones whose bands overlap within a 0.35 ATR tolerance are fused into a single confluence zone. The merged zone inherits a wick-weighted average level, the deepest prominence, the highest timeframe rank, and the union of every timeframe that contributed to it. It is then re-scored, tagged with a ◆ marker, painted in the dedicated confluence color, and given a scoring bonus for every extra timeframe present. Instead of four near-identical lines cluttering the same price, you get one zone that reads M30·H1·H2·H4 and grades near-elite. Merging repeats until the session settles, so three or four overlapping levels collapse cleanly into one.
+
+🏷️ The 0–10 Strength Engine — Every zone carries a live grade with stars and a tier word FORMING → WEAK → MODERATE → STRONG → ELITE. The score is a weighted blend of four independently measurable properties, and all four weights are user-adjustable:
+▪️ Timeframe Rank 0.40 — an H4 pivot outranks an M30 pivot. The dominant term.
+▪️ Confluence 0.28 — how many timeframes are stacked at this price, plus a flat bonus per extra timeframe.
+▪️ Rejection Wick 0.18 — the actual wick beyond the candle body at the pivot, normalized against ATR. A pivot that speared price and snapped back scores higher than a soft rounded turn.
+▪️ Pivot Prominence 0.14 — how far the pivot stands out from the local mean, normalized against ATR. An isolated extreme outranks a pivot buried inside congestion.
+Read the grade as a descriptive conviction ranking for which zone deserves your attention — it is not a backtested win-rate. A score filter hides everything below a level you choose, so you can strip the chart down to STRONG and ELITE only.
+
+GBPUSD
+
+
+🗓️ Session Engine & Auto-Cleanup — A fresh stack of zones is born on every new bar of the session timeframe daily by default. Zones span exactly their own session and close cleanly at the boundary — no bleed into the next day. The current session extends a configurable number of bars to the right so live price has room to interact with it. The last N sessions are kept 3 by default and older ones are deleted automatically. Within each session a hard cap 14 by default keeps the stack clean: once it is hit, the weakest-scoring zones are dropped first, so what survives on your chart is by construction the strongest structure of that session.
+
+🎨 Strength-Graded Shading — Four shades per side, graded weak → elite, with opacity scaling directly off the score. Weak zones stay faint, elite zones render solid, and confluence zones take the dedicated confluence color regardless of side. You are reading conviction with your peripheral vision before you read a single number. Resistance runs the teal family, support the magenta-red-purple family, and the whole palette plus transparency floor, opacity span and borders are fully user-editable.
+
+🔎 In-Zone Labels — Each zone is labeled at its center with a ▲ resistance / ▼ support / ◆ confluence marker, the exact timeframe set, the star grade, the X.X/10 score and the tier word. Labels can be restricted to the latest session only, or turned off entirely for a pure heatmap look. Four label sizes.
+
+XAUUSD
+
+
+📋 Live Dashboard — A compact panel that answers the questions you actually ask a levels tool:
+▪️ Per-timeframe breakdown — how many resistance and how many support zones each of the four timeframes currently holds, with a ▲ RES / ▼ SUP / ● BAL bias tag per timeframe. Structure stacked above or below, at a glance, timeframe by timeframe.
+▪️ ★ Strongest — the single highest-graded zone on the chart: its price, its timeframe set, its score and tier, marked ◆ when it is a confluence zone.
+▪️ ▲ Nearest Res / ▼ Nearest Sup — the closest zone above and below price, each with its price, timeframe set and score. Your immediate context.
+▪️ Price Position & Room — whether price sits nearer support or nearer resistance, and the distance between the two nearest zones expressed in ATR. Room tells you whether there is anything to trade for.
+▪️ Session state — zones this session vs total kept, confluence count, average score, current session Asian / London / NY, pivot setting, merge state, per-session cap and the strong-zone threshold.
+
+🔒 Non-Repainting — Higher-timeframe data is requested with lookahead disabled, and zones only spawn on confirmed bars. A pivot is only a pivot once its right-hand bars have printed, so a level appears after its confirmation delay and then never moves, never repaints, and never disappears retroactively. Past sessions are frozen exactly as they were drawn. This is the honest tradeoff of pivot structure: confirmation costs you bars, and in exchange the level is real.
+
+🔔 Native Alerts — New Resistance Level and New Support Level fire the moment a fresh pivot zone forms on any enabled timeframe. Price At Resistance Zone and Price At Support Zone fire on a touch. Price At STRONG Zone fires only when price tests a zone above your strong-zone threshold — the one alert most people will actually run.
+
+ES
+
+
+🔧 Fully Customizable — Four timeframe slots and their toggles, pivot strength left/right, resistance/support toggles, session timeframe, sessions kept, per-session zone cap, right-extension, zone thickness by ATR multiple or percent of price, ATR length, merge toggle and merge distance, confluence bonus, all four scoring weights, the score filter, the strong-zone threshold, label visibility/size/scope, the full eight-shade palette, confluence color, transparency floor, opacity span, borders, and dashboard position and size — all adjustable.
+
+🎯 Why this is different — Most S/R tools draw every pivot they find and leave you staring at forty identical lines, all weighted the same, with no way to tell the H4 confluence shelf apart from an M30 blip. This one grades them, merges them, caps them and shades them by conviction, so the chart itself does the filtering. You read the level, the timeframes stacked at it, and the conviction score — at a glance.
+
+🚀 Apply to Gold XAUUSD, Silver, Forex, Crypto and Indices on any intraday timeframe.
+
+🎯 How To Trade It — Two Approaches
+Everything hinges on the grade. A FORMING or WEAK zone is noise you can see; a STRONG or ELITE ◆ confluence zone is where multiple timeframes have already fought. Trade the graded zones, and use Room in ATR to confirm the trade has somewhere to go.
+
+◾ 1 REACT at the zone — trade the rejection
+This is the tool's core use. Price arrives at a high-graded zone and you fade the touch back toward the opposite side of the ladder.
+▪️ Setup: wait for price to reach a STRONG / ELITE zone — ideally a ◆ confluence zone carrying three or four timeframes. Check the dashboard: is it the ★ Strongest zone? Is Room to the opposite zone worth the risk?
+▪️ Entry: on rejection out of the zone, with your own confirmation — a wick, an engulfing close, a lower-timeframe structure break. The zone is the location; it is not the trigger.
+▪️ Stop: on the far side of the zone band. The band has real thickness for exactly this reason. A decisive close through the zone means the level failed and the thesis is wrong.
+▪️ Targets: the Nearest Sup / Nearest Res on the opposite side, then step through the ladder tier by tier, banking partials at each graded zone.
+⚖️ The cleanest version: price runs into a ◆ confluence zone that four timeframes share, grades ELITE, sits at the top of an empty stretch of Room, and rejects on the first touch. First touches of fresh high-graded zones are the setup; the fifth retest of the same zone is not.
+
+◾ 2 TRADE THE BREAK — the zone flips role
+The mirror case, and the one that saves you when approach 1 fails.
+▪️ Setup: a decisive close through a high-graded zone — especially a ◆ confluence zone — is meaningful information. It took real displacement to break a level that many timeframes were defending.
+▪️ Entry: on the retest of the broken zone from the other side, once it has flipped from resistance to support or support to resistance.
+▪️ Stop: back on the original side of the zone. If price reclaims it, the break failed.
+▪️ Targets: the next graded zone in the direction of travel, then the next. Use the per-timeframe bias tags on the dashboard: breaking into a region where every timeframe shows ▼ SUP means thin structure ahead.
+⚖️ Watch the ★ Strongest readout. When the strongest zone on the chart breaks and holds as a flip, that is the session's structural event.
+Rule of thumb: ⭐ First touch of a fresh STRONG / ELITE ◆ zone with Room behind it → look for the rejection trade. ⭐ Decisive close through a high-graded zone → stop fading it, wait for the retest and trade the flip. ⭐ Low grades, no Room, or a zone already tested repeatedly → no trade. The score exists to tell you when to do nothing.
+
+⚠️ IMPORTANT NOTICE: Intraday MTF S/R Zones · Reaction Matrix maps and ranks pivot-derived support and resistance across four timeframes. The 0–10 score is a descriptive conviction ranking built from timeframe rank, confluence, rejection wick and pivot prominence — it is not a backtested win-rate, and this indicator tracks no trade outcomes and reports no performance statistics. Zones are locations, not entries. Pivot confirmation means a level appears only after its right-hand bars have printed. These zones are decision support, not a standalone trade trigger. Always combine them with your own strategy, price-action confirmation and risk management. Past behavior does not guarantee future results.
+开源脚本
+
+秉承TradingView的精神，该脚本的作者将其开源，以便交易者可以查看和验证其功能。向作者致敬！您可以免费使用该脚本，但请记住，重新发布代码须遵守我们的网站规则。
+
+ProjectSyndicate
+关注
+Institutional-desk · 10+ yrs building trading algos
+Syndicate Ultimate · 4 systems · 1 bundle
+· 1 payment · lifetime access
+Gold · FX · NQ/ES · private systems
+syndicate001.com
+
+TG channel
+t.me/aisyndicate001
+更多:
+Chart patterns
+elite
+Gold
+levels
+mtfanalysis
+projectsyndicate
+srzones
+strong
+supportandresitance
+免责声明
+这些信息和出版物并非旨在提供，也不构成TradingView提供或认可的任何形式的财务、投资、交易或其他类型的建议或推荐。请阅读使用条款了解更多信息。
+人类制造
+简体中文
+
+部分市场数据由ICE Data Services提供。
+部分参考数据由FactSet提供。版权所有 © 2026 FactSet Research Systems Inc.
+版权所有 © 2026 美国银行家协会。CUSIP数据库由FactSet Research Systems Inc.提供。保留所有权利。
+SEC文件和其他文件由Quartr提供。
+© 2026 TradingView, Inc.
+
+不仅是产品
+超级图表
+筛选器
+股票
+ETFs
+债券
+加密货币
+CEX对
+DEX对
+Pine
+热图
+股票
+ETFs
+加密货币
+日历
+经济
+收益
+股利
+IPO
+更多产品
+新闻流
+投资组合
+收益率曲线
+期权
+宏观地图
+Pine Script®
+MCP服务器
+应用程序
+移动版
+电脑版
+工具和订阅
+功能特色
+价格
+市场数据
+礼物方案
+交易
+概览
+经纪商
+经纪商比较
+The Leap
+特别优惠
+CME集团期货
+Eurex期货
+美国股票包
+关于公司
+我们是谁
+太空任务
+博客
+帮助中心
+职涯
+媒体工具包
+商品
+TradingView商店
+交易者塔罗牌
+C63 TradeTime
+政策和安全
+使用条款
+免责声明
+隐私政策
+Cookies政策
+无障碍声明
+安全提示
+漏洞赏金计划
+状态页面
+社区
+社交网络
+爱心墙
+推荐朋友
+创作者计划
+网站规则
+版主
+观点
+交易
+教学
+编辑精选
+PINE脚本
+指标和策略
+大师
+自由开发人员
+市场
+商业解决方案
+插件
+图表库
+Lightweight Charts™
+高级图表
+交易平台
+成长机会
+广告
+经纪业务集成
+合作伙伴计划
+教育计划
