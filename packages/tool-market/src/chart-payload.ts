@@ -164,7 +164,11 @@ export function chartSeries(series: ChartSeries, cap: number = CHART_META_BARS):
  */
 export function roundSeries(values: (number | null)[], digits: number): (number | null)[] {
   const f = 10 ** digits
-  return values.map(v => v === null || !Number.isFinite(v) ? null : Math.round(v * f) / f)
+  return values.map((v) => {
+    if (v === null || !Number.isFinite(v)) return null
+    const r = Math.round(v * f) / f
+    return r === 0 ? 0 : r
+  })
 }
 
 /**

@@ -32,7 +32,10 @@ export type RsiDiffReport = {
   lastCross: RsiDiffCross | null
 }
 
-const r2 = (v: number): number => Math.round(v * 100) / 100
+const r2 = (v: number): number => {
+  const r = Math.round(v * 100) / 100
+  return r === 0 ? 0 : r
+}
 
 /**
  * Compute the element-wise difference series: RSI(fast) − RSI(slow).

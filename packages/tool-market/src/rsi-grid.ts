@@ -87,7 +87,10 @@ export type RsiGridReport = {
   record: { closed: number; wins: number; avgPct: number | null }
 }
 
-const r2 = (v: number): number => Math.round(v * 100) / 100
+const r2 = (v: number): number => {
+  const r = Math.round(v * 100) / 100
+  return r === 0 ? 0 : r
+}
 
 export function rsiGridReport(bars: readonly Bar[], params: readonly number[] = RSI_GRID_DEFAULTS): RsiGridReport {
   const [len, low, high, th] = params as [number, number, number, number]
