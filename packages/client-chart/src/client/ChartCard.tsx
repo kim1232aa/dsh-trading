@@ -29,6 +29,7 @@ import { nadarayaWatsonTrend, nadarayaWatsonIndicator } from './indicators/nadar
 import { orderBlockBreaker, orderBlockIndicator } from './indicators/order-blocks.js'
 import { mtfSRZones, mtfSRIndicator } from './indicators/mtf-sr.js'
 import { entrySignalIndicator } from './indicators/entry-signal.js'
+import { rsiGridIndicator } from './indicators/rsi-grid.js'
 
 export { evasiveSuperTrend } from './indicators/evasive-st.js'
 export { nadarayaWatsonTrend } from './indicators/nadaraya-watson.js'
@@ -323,7 +324,6 @@ function ensureRegistered(): void {
     ({ key, title: `${title}: `, type: 'line' })
   const defs: { name: string; shortName: string; figures: { key: string; title: string; type: string; baseValue?: number }[] }[] = [
     { name: 'TM_RSI', shortName: 'RSI14*', figures: [line('rsi', 'RSI14')] },
-    { name: 'TM_RSI_DIFF', shortName: 'RSI网格(7)*', figures: [{ key: 'cum', title: '累计差值: ', type: 'bar', baseValue: 0 }, line('rsi7', 'RSI7')] },
     { name: 'TM_STOCH', shortName: 'STOCH*', figures: [line('k', 'K'), line('d', 'D')] },
     { name: 'TM_ADX', shortName: 'ADX*', figures: [line('adx', 'ADX'), line('pdi', '+DI'), line('mdi', '-DI')] },
     { name: 'TM_MACD', shortName: 'MACD*', figures: [{ key: 'hist', title: '柱: ', type: 'bar', baseValue: 0 }, line('macd', 'MACD'), line('signal', '信号')] },
@@ -432,6 +432,7 @@ function ensureRegistered(): void {
   registerIndicator(orderBlockIndicator as never)
   registerIndicator(mtfSRIndicator as never)
   registerIndicator(entrySignalIndicator as never)
+  registerIndicator(rsiGridIndicator as never)
   // Overlay shapes for the draw primitives. extendData: { color, dashed, label }.
   registerOverlay({
     name: 'tm_hline',
@@ -654,7 +655,10 @@ const CHIP_DEFS: ChipDef[] = [
   },
   {
     id: 'rsi',
-    indicator: { name: 'TM_RSI_DIFF', figures: { cum: 'rsi_cum_diff', rsi7: 'rsi7' } },
+    // Same pane as the Pine script: RSI + 累计差值 as lines, 30/60 hlines,
+    // fill markers. Computed from the chart's own candles, so it tracks a
+    // live column instead of a frozen payload series.
+    indicator: { name: 'RSI_GRID', figures: {}, builtIn: true },
     label: ind => {
       const rg = ind['rsiGrid'] as Record<string, unknown> | undefined
       if (!rg) return { text: 'RSI网格', state: '—' }
@@ -845,7 +849,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, onEditParam
       const def = CHIP_DEFS.find(d => d.id === id)
       if (!def?.indicator) continue
       if (def.indicator.builtIn === true) {
-        chart.createIndicator(def.indicator.name, false, { id: 'pane_vol', height: PANE_HEIGHT })
+        chart.createIndicator(def.indicator.name, false, { id: `pane_${def.id}`, height: PANE_HEIGHT })
         continue
       }
       if (!hasSeries(data, def.indicator.figures)) continue

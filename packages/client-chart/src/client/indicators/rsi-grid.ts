@@ -14,6 +14,7 @@ const RSI_C = '#539bf5'
 const CUM_C = '#ffa726'
 const LOW_C = '#f47067'
 const HIGH_C = '#3ddc97'
+const FONT = '11px system-ui, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif'
 
 export function rsiGridRows(list: readonly K[], p: readonly number[]): Row[] {
   const [len, low, high, th] = p.length === 4 ? p : RSI_GRID_DEFAULTS
@@ -28,7 +29,7 @@ export function rsiGridRows(list: readonly K[], p: readonly number[]): Row[] {
 
 export const rsiGridIndicator = {
   name: 'RSI_GRID',
-  shortName: 'RSI网格(未验证)',
+  shortName: 'RSI策略网格现货',
   precision: 2,
   calcParams: [...RSI_GRID_DEFAULTS],
   figures: [
@@ -78,12 +79,12 @@ export const rsiGridIndicator = {
       ctx.lineTo(bounding.width, y)
       ctx.stroke()
       ctx.fillStyle = c
-      ctx.font = '10px sans-serif'
+      ctx.font = FONT
       ctx.textAlign = 'right'
       ctx.fillText(t, bounding.width - 4, y - 3)
     }
     ctx.setLineDash([])
-    ctx.font = '10px sans-serif'
+    ctx.font = FONT
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     // Fills happen on the bar after the signal; mark the fill bar, as strategy() does.
