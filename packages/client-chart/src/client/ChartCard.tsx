@@ -40,6 +40,21 @@ const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFra
 const CHART_HEIGHT = 320
 const PANE_HEIGHT = 90
 
+/**
+ * klinecharts defaults to 'Helvetica Neue', which Windows lacks — CJK captions
+ * then fall back to whatever the canvas picks. Name real UI faces per platform.
+ */
+const FONT_FAMILY = 'system-ui, -apple-system, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif'
+
+/** Mark captions: legible size, and a backing so they read over candles. */
+function labelStyle(color: string): Record<string, unknown> {
+  return {
+    color, size: 11, weight: 500, family: FONT_FAMILY,
+    backgroundColor: 'rgba(22,24,28,0.72)', borderRadius: 2,
+    paddingLeft: 3, paddingRight: 3, paddingTop: 1, paddingBottom: 1,
+  }
+}
+
 type Palette = {
   text: string
   faint: string
@@ -447,7 +462,7 @@ function ensureRegistered(): void {
         figures.push({
           type: 'text',
           attrs: { x: 6 + lane * LABEL_LANE_WIDTH, y: y - 4, text: ext['label'], baseline: 'bottom' },
-          styles: { color, size: 10, backgroundColor: 'transparent' },
+          styles: labelStyle(color),
           ignoreEvent: true,
         })
       }
@@ -471,11 +486,15 @@ function ensureRegistered(): void {
         styles: { style: 'fill', color: `${color}26` },
         ignoreEvent: true,
       }]
-      if (typeof ext['label'] === 'string' && ext['label'] !== '') {
+      // Same lane pass as hlines: a zone edge often shares a price with a
+      // scenario trigger, and two captions at x=6 on one y print over each other.
+      const lane = typeof ext['lane'] === 'number' ? ext['lane'] : 0
+      const usableLanes = Math.max(1, Math.floor((bounding.width - 6) / LABEL_LANE_WIDTH))
+      if (lane >= 0 && lane < usableLanes && typeof ext['label'] === 'string' && ext['label'] !== '') {
         figures.push({
           type: 'text',
-          attrs: { x: 6, y: top - 4, text: ext['label'], baseline: 'bottom' },
-          styles: { color, size: 10, backgroundColor: 'transparent' },
+          attrs: { x: 6 + lane * LABEL_LANE_WIDTH, y: top - 4, text: ext['label'], baseline: 'bottom' },
+          styles: labelStyle(color),
           ignoreEvent: true,
         })
       }
@@ -534,7 +553,7 @@ function ensureRegistered(): void {
         figures.push({
           type: 'text',
           attrs: { x: labelX, y: labelY, text: ext['label'], baseline: 'middle' },
-          styles: { color, size: 10, backgroundColor: 'transparent' },
+          styles: labelStyle(color),
           ignoreEvent: true,
         })
       }
@@ -556,7 +575,7 @@ function useDark(): boolean {
 }
 
 function klineStyles(p: Palette): Record<string, unknown> {
-  const tick = { color: p.faint }
+  const tick = { color: p.faint, family: FONT_FAMILY }
   return {
     grid: { horizontal: { color: p.line }, vertical: { color: p.line } },
     candle: {
@@ -570,15 +589,15 @@ function klineStyles(p: Palette): Record<string, unknown> {
         low: { color: p.faint },
         last: { upColor: p.up, downColor: p.down, noChangeColor: p.faint },
       },
-      tooltip: { text: { color: p.text }, icons: [FOLD] },
+      tooltip: { text: { color: p.text, family: FONT_FAMILY }, icons: [FOLD] },
     },
-    indicator: { tooltip: { text: { color: p.text }, showRule: 'none' } },
+    indicator: { tooltip: { text: { color: p.text, family: FONT_FAMILY }, showRule: 'none' } },
     xAxis: { axisLine: { color: p.line }, tickText: tick, tickLine: { color: p.line } },
     yAxis: { axisLine: { color: p.line }, tickText: tick, tickLine: { color: p.line } },
     separator: { color: p.line },
     crosshair: {
-      horizontal: { line: { color: p.faint }, text: { backgroundColor: p.faint } },
-      vertical: { line: { color: p.faint }, text: { backgroundColor: p.faint } },
+      horizontal: { line: { color: p.faint }, text: { backgroundColor: p.faint, family: FONT_FAMILY } },
+      vertical: { line: { color: p.faint }, text: { backgroundColor: p.faint, family: FONT_FAMILY } },
     },
   }
 }
@@ -732,7 +751,7 @@ function drawPrimitive(chart: Pick<Chart, 'createOverlay'>, prim: DrawPrimitive,
     chart.createOverlay({
       name: 'tm_region', lock: true,
       points: [{ value: prim.low }, { value: prim.high }],
-      extendData: { color: prim.color, label: prim.label ?? '' },
+      extendData: { color: prim.color, label: prim.label ?? '', lane },
     })
   } else {
     chart.createOverlay({
@@ -862,20 +881,24 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, onEditParam
       if (c.low < lowest) lowest = c.low
       if (c.high > highest) highest = c.high
     }
-    const hlines = primitives.filter((prim): prim is Extract<DrawPrimitive, { kind: 'hline' }> => prim.kind === 'hline')
-    // Fold the lines' own prices into the range. A target above every candle
+    // Every caption pinned to a price — hline labels and zone labels (drawn at
+    // the zone's top edge) — goes through one lane pass, so they dodge each other.
+    const anchorOf = (prim: DrawPrimitive): number | undefined =>
+      prim.kind === 'hline' ? prim.price : prim.kind === 'region' ? Math.max(prim.low, prim.high) : undefined
+    const anchors = primitives.map(anchorOf)
+    // Fold the captions' own prices into the range. A target above every candle
     // sits outside the candle range, and measuring collisions against a range
     // that excludes it puts it at a fraction beyond 0..1 — comparable, but not
     // to the same scale the chart will use once it makes room for the line.
-    for (const h of hlines) {
-      if (h.price < lowest) lowest = h.price
-      if (h.price > highest) highest = h.price
+    for (const a of anchors) {
+      if (a === undefined) continue
+      if (a < lowest) lowest = a
+      if (a > highest) highest = a
     }
-    const lanes = assignLabelLanes(hlines.map(h => h.price), lowest, highest)
-    let hlineSeen = 0
-    for (const prim of primitives) {
-      drawPrimitive(chart, prim, prim.kind === 'hline' ? lanes[hlineSeen++]! : 0)
-    }
+    const anchored = anchors.flatMap((a, i) => (a === undefined ? [] : [{ a, i }]))
+    const lanes = assignLabelLanes(anchored.map(x => x.a), lowest, highest)
+    const laneByIndex = new Map(anchored.map((x, k) => [x.i, lanes[k]!]))
+    primitives.forEach((prim, i) => drawPrimitive(chart, prim, laneByIndex.get(i) ?? 0))
     const observer = new ResizeObserver(() => chart.resize())
     observer.observe(container)
     return () => {
