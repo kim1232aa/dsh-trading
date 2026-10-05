@@ -33,7 +33,7 @@ export {
   readOhlcvRequest,
   serveMarketEndpoint,
 } from './market-rpc.js'
-export type { ChartView, DerivativesResponse, MarketDataLike, OhlcvRequest, OhlcvResponse, SymbolsResponse } from './market-rpc.js'
+export type { ChartView, DerivativesResponse, MarketDataLike, OhlcvRequest, OhlcvResponse, ProvidersResponse, SymbolsResponse } from './market-rpc.js'
 
 export const name = 'client-chart'
 

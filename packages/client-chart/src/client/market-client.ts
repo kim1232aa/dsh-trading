@@ -36,10 +36,11 @@ export interface PanelInstrument {
 
 /** What the panel needs from the host; the whole surface the UI may touch. */
 export interface MarketClient {
+  listProviders?(signal?: AbortSignal): Promise<{ id: string; description: string }[]>
   listSymbols(signal?: AbortSignal): Promise<{ providerId: string; description: string; symbols: PanelInstrument[] }>
-  getPayload(symbol: string, timeframe: string, signal?: AbortSignal): Promise<ChartPayload>
+  getPayload(symbol: string, timeframe: string, providerId?: string, signal?: AbortSignal): Promise<ChartPayload>
   /** The last few bars only — what a live refresh needs, without refetching the series. */
-  getTail(symbol: string, timeframe: string, bars: number, signal?: AbortSignal): Promise<Candle[]>
+  getTail(symbol: string, timeframe: string, bars: number, providerId?: string, signal?: AbortSignal): Promise<Candle[]>
   /**
    * Tell the host what the panel is showing, so the agent sitting beside this
    * chart can see it. Fire-and-forget: a failed publication must never disturb
@@ -388,6 +389,17 @@ export function candlesToPayload(
  */
 export function createMarketClient(rpc: RpcCaller): MarketClient {
   return {
+    async listProviders(signal) {
+      try {
+        const value = await unwrap(rpc.call(CHANNEL, 'providers', {}, signal)) as {
+          providers: { id: string; description: string }[]
+        }
+        return value.providers ?? []
+      } catch {
+        return []
+      }
+    },
+
     async listSymbols(signal) {
       const value = await unwrap(rpc.call(CHANNEL, 'symbols', {}, signal)) as {
         providerId: string
@@ -397,8 +409,9 @@ export function createMarketClient(rpc: RpcCaller): MarketClient {
       return value
     },
 
-    async getPayload(symbol, timeframe, signal) {
-      const value = await unwrap(rpc.call(CHANNEL, 'ohlcv', { symbol, timeframe }, signal)) as {
+    async getPayload(symbol, timeframe, providerId, signal) {
+      const body = providerId ? { symbol, timeframe, providerId } : { symbol, timeframe }
+      const value = await unwrap(rpc.call(CHANNEL, 'ohlcv', body, signal)) as {
         providerId: string
         symbol: string
         timeframe: string
@@ -414,8 +427,9 @@ export function createMarketClient(rpc: RpcCaller): MarketClient {
       void rpc.call(CHANNEL, 'view', view).catch(() => { /* presentation only */ })
     },
 
-    async getTail(symbol, timeframe, bars, signal) {
-      const value = await unwrap(rpc.call(CHANNEL, 'ohlcv', { symbol, timeframe, limit: bars }, signal)) as {
+    async getTail(symbol, timeframe, bars, providerId, signal) {
+      const body = providerId ? { symbol, timeframe, limit: bars, providerId } : { symbol, timeframe, limit: bars }
+      const value = await unwrap(rpc.call(CHANNEL, 'ohlcv', body, signal)) as {
         candles: Candle[]
       }
       return value.candles

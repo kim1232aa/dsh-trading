@@ -36,7 +36,13 @@ export const ENDPOINTS = {
   view: 'view',
   derivatives: 'derivatives',
   moneyflow: 'moneyflow',
+  providers: 'providers',
 } as const
+
+/** The `providers` answer: list of registered providers and their descriptions. */
+export interface ProvidersResponse {
+  providers: { id: string; description: string }[]
+}
 
 /** The `derivatives` answer: null when the provider has no futures data at all (spot/equity/CSV). */
 export interface DerivativesResponse {
@@ -219,6 +225,7 @@ export function describeChartView(view: ChartView | undefined): string {
 export interface MarketDataLike {
   provider(id?: string): MarketDataProvider
   resolveProvider?(symbol?: string, explicitId?: string): MarketDataProvider
+  list?(): string[]
 }
 
 /**
@@ -235,11 +242,24 @@ export async function serveMarketEndpoint(
   endpoint: string,
   payload: unknown,
   onView?: (view: ChartView) => void,
-): Promise<SymbolsResponse | OhlcvResponse | DerivativesResponse | MoneyFlowResponse | { ok: true }> {
+): Promise<SymbolsResponse | OhlcvResponse | DerivativesResponse | MoneyFlowResponse | ProvidersResponse | { ok: true }> {
   const getProvider = (sym?: string, id?: string) => {
     return typeof marketData.resolveProvider === 'function'
       ? marketData.resolveProvider(sym, id)
       : marketData.provider(id)
+  }
+
+  if (endpoint === ENDPOINTS.providers) {
+    const ids = typeof marketData.list === 'function' ? marketData.list() : []
+    const providers = ids.map(id => {
+      try {
+        const p = marketData.provider(id)
+        return { id: p.id, description: p.description }
+      } catch {
+        return { id, description: id }
+      }
+    })
+    return { providers }
   }
 
   if (endpoint === ENDPOINTS.view) {

@@ -12,8 +12,8 @@
  * go through the same registry; unknown types without a renderer fall back
  * to a textual row in the annotations table.
  */
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import type { CSSProperties } from 'react'
+import { Component, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import type { CSSProperties, ErrorInfo, ReactNode } from 'react'
 import { ActionType, TooltipShowRule, dispose, init, registerIndicator, registerOverlay } from 'klinecharts'
 import type { Chart, OverlayCreateFiguresCallbackParams } from 'klinecharts'
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
@@ -37,6 +37,7 @@ export { orderBlockBreaker } from './indicators/order-blocks.js'
 export { mtfSRZones } from './indicators/mtf-sr.js'
 
 const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 })
+let chartDomSeq = 0
 
 const CHART_HEIGHT = 320
 const PANE_HEIGHT = 90
@@ -788,6 +789,11 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, onEditParam
   fill?: boolean
 }): JSX.Element {
   const el = useRef<HTMLDivElement>(null)
+  // klinecharts 9.8 keys its instance cache on the container's DOM id and
+  // falls back to '' when there is none, so every id-less chart on the page
+  // shares one slot: init() then hands back a chart whose container was
+  // already unmounted. One id per mount.
+  const chartDomId = useRef(`dsh-kline-${++chartDomSeq}`)
   const chartRef = useRef<Chart | null>(null)
   const latest = useRef(data)
   latest.current = data
@@ -810,6 +816,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, onEditParam
   useEffect(() => {
     const container = el.current
     if (container === null) return
+    container.id = chartDomId.current
     ensureRegistered()
     const palette = dark ? DARK : LIGHT
     const chart = init(container, { locale: 'zh-CN' })
@@ -980,9 +987,59 @@ const SHELL: CSSProperties = {
   lineHeight: 1.5,
 }
 
-function Fallback({ text, error }: { text: string; error: boolean }): JSX.Element {
+/**
+ * A render throw inside the chart used to blank the whole panel, because
+ * nothing above ChartBody catches. This keeps the toolbar and prints the
+ * error instead. ponytail: class component because React error boundaries
+ * still have no hook equivalent; upgrade when one ships.
+ */
+export class ChartErrorBoundary extends Component<{ children: ReactNode; onReset?: () => void }, { message: string | null }> {
+  state = { message: null as string | null }
+  static getDerivedStateFromError(error: unknown): { message: string } {
+    return { message: error instanceof Error ? error.message : String(error) }
+  }
+  override componentDidCatch(error: unknown, info: ErrorInfo): void {
+    console.error('[client-chart] chart render failed', error, info.componentStack)
+  }
+  override render(): ReactNode {
+    return this.state.message === null
+      ? this.props.children
+      : (
+        <Fallback
+          text={`图表渲染失败：${this.state.message}`}
+          error
+          onReset={() => {
+            this.setState({ message: null })
+            this.props.onReset?.()
+          }}
+        />
+      )
+  }
+}
+
+function Fallback({ text, error, onReset }: { text: string; error: boolean; onReset?: () => void }): JSX.Element {
   return (
     <div style={SHELL}>
+      {onReset !== undefined ? (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <strong style={{ color: 'var(--dsw-alias-state-error-primary, #e0563f)' }}>图表渲染异常</strong>
+          <button
+            type="button"
+            onClick={onReset}
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--dsw-alias-border, rgba(128,128,128,0.3))',
+              borderRadius: 4,
+              padding: '2px 8px',
+              fontSize: 11,
+              cursor: 'pointer',
+              color: 'inherit',
+            }}
+          >
+            重试
+          </button>
+        </div>
+      ) : null}
       <pre style={{
         margin: 0, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap', fontSize: 12,
         color: error ? 'var(--dsw-alias-state-error-primary, #e0563f)' : 'inherit',
@@ -1239,6 +1296,7 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
       </div>
       {editing ? <ParamEditor settings={settings} palette={palette} onClose={() => setEditing(false)} /> : null}
       <Kline
+        key={seriesKey}
         data={tf}
         scenarios={scenarios}
         dark={dark}

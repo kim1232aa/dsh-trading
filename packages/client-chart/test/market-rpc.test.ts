@@ -47,10 +47,9 @@ describe('channel identity', () => {
   })
 
   it('exposes exactly the endpoints it means to', () => {
-    // Three data reads plus the panel's own view publication. Anything appearing
-    // here that is not one of these four deserves a second look: this channel
-    // is reachable from a browser.
-    expect(Object.values(ENDPOINTS).sort()).toEqual(['derivatives', 'moneyflow', 'ohlcv', 'symbols', 'view'])
+    // Data reads (ohlcv, derivatives, moneyflow, symbols, providers) plus view publication.
+    // Anything appearing here deserves a second look: this channel is reachable from a browser.
+    expect(Object.values(ENDPOINTS).sort()).toEqual(['derivatives', 'moneyflow', 'ohlcv', 'providers', 'symbols', 'view'])
   })
 })
 
@@ -175,6 +174,20 @@ describe('serveMarketEndpoint', () => {
       },
     })
     expect(resolveProvider).toHaveBeenCalledWith('600519', undefined)
+  })
+
+  it('serves registered providers list', async () => {
+    const h = {
+      list: vi.fn(() => ['binance', 'cn']),
+      provider: vi.fn((id: string) => ({ id, description: `${id} market data` })),
+    } as unknown as MarketDataLike
+    const res = await serveMarketEndpoint(h, ENDPOINTS.providers, {})
+    expect(res).toEqual({
+      providers: [
+        { id: 'binance', description: 'binance market data' },
+        { id: 'cn', description: 'cn market data' },
+      ],
+    })
   })
 
   it('refuses an unknown endpoint', async () => {

@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
 import type { ChartOwnerProps } from '@dsh-trading/client-frame/client'
-import { ChartBody } from './ChartCard.js'
+import { ChartBody, ChartErrorBoundary } from './ChartCard.js'
 import { getLatestChart, subscribeLatestChart } from './latest.js'
 import { decideFollow } from './follow.js'
 import { mergeMarks, mergeTail, postureColor, readMarks, recallMarks, rememberMarks, withCandles } from './market-client.js'
@@ -95,6 +95,48 @@ const INPUT: CSSProperties = {
   fontFamily: 'inherit',
 }
 
+const SELECT_PROVIDER: CSSProperties = {
+  background: 'var(--dsw-alias-bg-l1, transparent)',
+  color: 'inherit',
+  border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.35))',
+  borderRadius: 6,
+  padding: '3px 6px',
+  fontSize: 11.5,
+  fontFamily: 'inherit',
+  cursor: 'pointer',
+}
+
+const PRESET_ROW: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '4px 14px 6px',
+  borderBottom: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.25))',
+  overflowX: 'auto',
+  fontSize: 11.5,
+}
+
+const PRESET_BUTTON = (on: boolean): CSSProperties => ({
+  background: on ? 'var(--dsw-alias-bg-l2, rgba(128,128,128,0.2))' : 'transparent',
+  color: on ? 'var(--dsw-alias-text-1, inherit)' : 'var(--dsw-alias-text-3, rgba(128,128,128,0.85))',
+  border: `1px solid ${on ? 'var(--dsw-alias-border-l3, rgba(128,128,128,0.6))' : 'var(--dsw-alias-border-l1, rgba(128,128,128,0.2))'}`,
+  borderRadius: 4,
+  padding: '1px 6px',
+  fontSize: 11,
+  cursor: 'pointer',
+  fontWeight: on ? 600 : 400,
+  whiteSpace: 'nowrap',
+})
+
+const PRESET_SYMBOLS = [
+  { label: 'ETH', symbol: 'ETHUSDT' },
+  { label: 'BTC', symbol: 'BTCUSDT' },
+  { label: 'SOL', symbol: 'SOLUSDT' },
+  { label: '上证', symbol: 'sh000001' },
+  { label: '茅台', symbol: '600519' },
+  { label: '平安', symbol: '000001' },
+] as const
+
 const TF_BUTTON = (on: boolean): CSSProperties => ({
   background: 'transparent',
   color: on ? 'var(--dsw-alias-text-1, inherit)' : 'var(--dsw-alias-text-3, rgba(128,128,128,0.9))',
@@ -156,6 +198,8 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
   onData?: (data: PanelDerivatives | null) => void
   hoveredTime?: number | null
 }): JSX.Element | null {
+  if (providerId === 'cn') return null
+
   const [data, setData] = useState<PanelDerivatives | null | undefined>(undefined)
   const [failed, setFailed] = useState<string | null>(null)
 
@@ -289,6 +333,8 @@ function MoneyFlowStrip({ market, symbol, providerId, live }: {
   providerId: string
   live: boolean
 }): JSX.Element | null {
+  if (providerId !== 'cn') return null
+
   const [data, setData] = useState<PanelMoneyFlow | null | undefined>(undefined)
 
   useEffect(() => {
@@ -376,7 +422,7 @@ export interface ChartPanelInject {
  * @param market - the host-backed data client.
  * @returns the chart, or an invitation to name a symbol.
  */
-export function ChartPanel({ width, market }: ChartOwnerProps & ChartPanelInject): JSX.Element | null {
+function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject): JSX.Element | null {
   const fromAgent = useSyncExternalStore(subscribeLatestChart, getLatestChart, getLatestChart)
 
   const [draft, setDraft] = useState('')
@@ -394,6 +440,17 @@ export function ChartPanel({ width, market }: ChartOwnerProps & ChartPanelInject
   const [dismissed, setDismissed] = useState<string | null>(null)
   const [pinned, setPinned] = useState(false)
   const [stalled, setStalled] = useState(false)
+  const [availableProviders, setAvailableProviders] = useState<{ id: string; description: string }[]>([
+    { id: 'binance', description: 'Binance' },
+    { id: 'cn', description: '东财/新浪 A股' },
+  ])
+  const [manualProvider, setManualProvider] = useState<string>(() => {
+    try {
+      return localStorage.getItem('dsh-trading.manual-provider') || 'auto'
+    } catch {
+      return 'auto'
+    }
+  })
   const [panelDerivatives, setPanelDerivatives] = useState<PanelDerivatives | null>(null)
   const [hoveredTime, setHoveredTime] = useState<number | null>(null)
   const followTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -403,6 +460,18 @@ export function ChartPanel({ width, market }: ChartOwnerProps & ChartPanelInject
   const fails = useRef(0)
   const failedFollow = useRef<string | null>(null)
   const ownOrigin = useRef<'user' | 'followed'>('user')
+
+  useEffect(() => {
+    let active = true
+    market.listProviders?.()
+      .then(list => {
+        if (active && Array.isArray(list) && list.length > 0) {
+          setAvailableProviders(list)
+        }
+      })
+      .catch(() => {})
+    return () => { active = false }
+  }, [market])
 
   // Adopt whatever the agent last DREW, separately from what it last fetched.
   // Keyed on content, not identity: `latest` republishes the same payload
@@ -435,7 +504,12 @@ export function ChartPanel({ width, market }: ChartOwnerProps & ChartPanelInject
   // about a different chart, mergeMarks hands the payload straight back.
   const payload = merged?.payload ?? own ?? fromAgent
 
-  const load = useCallback(async (symbol: string, tf: string, trigger: 'user' | 'follow' = 'user') => {
+  const load = useCallback(async (
+    symbol: string,
+    tf: string,
+    trigger: 'user' | 'follow' = 'user',
+    forcedProvider?: string,
+  ) => {
     inflight.current?.abort()
     const controller = new AbortController()
     inflight.current = controller
@@ -448,7 +522,10 @@ export function ChartPanel({ width, market }: ChartOwnerProps & ChartPanelInject
     // cadence it inherited from a closed one.
     quiet.current = 0
     try {
-      const next = await market.getPayload(symbol, tf, controller.signal)
+      const pId = forcedProvider !== undefined
+        ? (forcedProvider === 'auto' ? undefined : forcedProvider)
+        : (manualProvider === 'auto' ? undefined : manualProvider)
+      const next = await market.getPayload(symbol, tf, pId, controller.signal)
       if (!controller.signal.aborted) {
         setOwn(next)
         ownOrigin.current = trigger === 'user' ? 'user' : 'followed'
@@ -476,7 +553,7 @@ export function ChartPanel({ width, market }: ChartOwnerProps & ChartPanelInject
     } finally {
       if (!controller.signal.aborted) setBusy(false)
     }
-  }, [market])
+  }, [market, manualProvider])
 
   // Follow the conversation. The agent's payload is a frozen <=200-bar
   // snapshot and the live loop only runs on a series the panel fetched itself,
@@ -603,7 +680,8 @@ export function ChartPanel({ width, market }: ChartOwnerProps & ChartPanelInject
     const pump = async (): Promise<void> => {
       if (stopped) return
       try {
-        const tail = await market.getTail(symbol, tf, TAIL_BARS, controller.signal)
+        const pId = manualProvider === 'auto' ? own.provider : manualProvider
+        const tail = await market.getTail(symbol, tf, TAIL_BARS, pId, controller.signal)
         if (stopped) return
         // A refresh that succeeded is the end of a stall, whether or not the
         // bars moved: on a closed tape every poll returns the same series, and
@@ -648,7 +726,7 @@ export function ChartPanel({ width, market }: ChartOwnerProps & ChartPanelInject
       controller.abort()
       if (timer !== undefined) clearTimeout(timer)
     }
-  }, [live, own, width, market])
+  }, [live, own, width, market, manualProvider])
 
   if (width === 0) return null
 
@@ -680,6 +758,24 @@ export function ChartPanel({ width, market }: ChartOwnerProps & ChartPanelInject
     // chart the agent put up is the commonest reason to touch these buttons.
     const symbol = (draft.trim() !== '' ? draft : shownSymbol).trim()
     if (symbol !== '') void load(symbol, tf)
+  }
+
+  const changeProvider = (newProvider: string): void => {
+    setManualProvider(newProvider)
+    try {
+      localStorage.setItem('dsh-trading.manual-provider', newProvider)
+    } catch {}
+    const targetSymbol = (draft.trim() !== '' ? draft : shownSymbol).trim()
+    if (targetSymbol !== '') {
+      setPinned(true)
+      void load(targetSymbol, activeTimeframe, 'user', newProvider)
+    }
+  }
+
+  const pickPreset = (sym: string): void => {
+    setPinned(true)
+    setDraft(sym)
+    void load(sym, activeTimeframe, 'user')
   }
 
   // The agent's drawings, and what to do about them. Suppressed while the body
@@ -766,6 +862,20 @@ export function ChartPanel({ width, market }: ChartOwnerProps & ChartPanelInject
           autoCapitalize="off"
           autoCorrect="off"
         />
+        <select
+          style={SELECT_PROVIDER}
+          value={manualProvider}
+          onChange={e => changeProvider(e.target.value)}
+          title="选择数据源 (自动根据代码分流，或手动强制指定)"
+          aria-label="数据源选择"
+        >
+          <option value="auto">源: 自动</option>
+          {availableProviders.map(p => (
+            <option key={p.id} value={p.id}>
+              源: {p.id === 'binance' ? 'Binance' : p.id === 'cn' ? '东财/新浪A股' : p.description || p.id}
+            </option>
+          ))}
+        </select>
         {TIMEFRAMES.map(tf => (
           <button key={tf} type="button" style={TF_BUTTON(tf === activeTimeframe)} onClick={() => pickTimeframe(tf)}>
             {tf}
@@ -801,6 +911,24 @@ export function ChartPanel({ width, market }: ChartOwnerProps & ChartPanelInject
         </button>
       </form>
 
+      <div style={PRESET_ROW}>
+        <span style={{ color: 'var(--dsw-alias-text-3, rgba(128,128,128,0.75))', whiteSpace: 'nowrap' }}>热门:</span>
+        {PRESET_SYMBOLS.map(item => {
+          const isCurrent = (shownSymbol.toUpperCase() === item.symbol.toUpperCase()) || (draft.trim().toUpperCase() === item.symbol.toUpperCase())
+          return (
+            <button
+              key={item.symbol}
+              type="button"
+              style={PRESET_BUTTON(isCurrent)}
+              onClick={() => pickPreset(item.symbol)}
+              title={`快速切换到 ${item.label} (${item.symbol})`}
+            >
+              {item.label}
+            </button>
+          )
+        })}
+      </div>
+
       {payload !== null && shownSymbol !== ''
         ? (
           <>
@@ -821,7 +949,11 @@ export function ChartPanel({ width, market }: ChartOwnerProps & ChartPanelInject
               </div>
             )
             : payload !== null
-              ? <ChartBody payload={payload} shell={PANEL_SHELL} fill prose={false} derivatives={panelDerivatives} onCrosshairHover={setHoveredTime} />
+              ? (
+                <ChartErrorBoundary>
+                  <ChartBody payload={payload} shell={PANEL_SHELL} fill prose={false} derivatives={panelDerivatives} onCrosshairHover={setHoveredTime} />
+                </ChartErrorBoundary>
+              )
               : (
                 <div style={NOTE}>
                   <p>在上方输入代码，或让 AI 帮你打开。</p>
@@ -830,5 +962,13 @@ export function ChartPanel({ width, market }: ChartOwnerProps & ChartPanelInject
               )}
       </div>
     </div>
+  )
+}
+
+export function ChartPanel(props: ChartOwnerProps & ChartPanelInject): JSX.Element {
+  return (
+    <ChartErrorBoundary>
+      <ChartPanelInner {...props} />
+    </ChartErrorBoundary>
   )
 }
