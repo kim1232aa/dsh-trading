@@ -526,18 +526,19 @@ function ensureRegistered(): void {
       let labelX = coordinates[coordinates.length - 1]!.x + 4
       let labelY = coordinates[coordinates.length - 1]!.y
 
-      // If exactly 2 points (a trendline connecting two swing pivots), extend the ray forward to the right!
-      if (coordinates.length === 2 && coordinates[0] && coordinates[1]) {
-        const p0 = coordinates[0]
-        const p1 = coordinates[1]
-        if (Number.isFinite(p0.x) && Number.isFinite(p0.y) && Number.isFinite(p1.x) && Number.isFinite(p1.y)) {
+      // If at least 2 points (trendline or channel boundary), extend the last segment forward to the right!
+      if (coordinates.length >= 2) {
+        const lastIdx = coordinates.length - 1
+        const p0 = coordinates[lastIdx - 1]
+        const p1 = coordinates[lastIdx]
+        if (p0 && p1 && Number.isFinite(p0.x) && Number.isFinite(p0.y) && Number.isFinite(p1.x) && Number.isFinite(p1.y)) {
           const dx = p1.x - p0.x
           const dy = p1.y - p0.y
           if (dx > 0) {
-            const targetX = p1.x + 800
+            const targetX = p1.x + 2500
             const targetY = p1.y + (dy / dx) * (targetX - p1.x)
             if (Number.isFinite(targetY)) {
-              lineCoords[1] = { x: targetX, y: targetY }
+              lineCoords[lastIdx] = { x: targetX, y: targetY }
               labelX = targetX + 4
               labelY = targetY
             }

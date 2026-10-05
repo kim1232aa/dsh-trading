@@ -127,13 +127,12 @@ describe('mergeMarks — the predicate', () => {
     expect(mergeMarks(chart(), marksOf({ symbol: 'US.NVDA' })).applied).toBe(false)
   })
 
-  it('refuses a different timeframe outright — even price-only marks', () => {
-    // A level is timeframe-agnostic in the abstract, but the price axis is
-    // scaled to the visible candles: lifted onto another window it can sit
-    // off-pane while its table row still prints a price and a distance.
-    const r = mergeMarks(chart(), marksOf({ timeframe: '15m' }))
-    expect(r.applied).toBe(false)
-    expect(r.kept).toBe(0)
+  it('applies marks across different timeframes for the same symbol', () => {
+    // Levels and time-anchored lines belong to the instrument and persist across
+    // intervals (e.g. 5m markings visible on 15m/1h/1d) as long as they fit the window.
+    const r = mergeMarks(chart(), marksOf({ timeframe: '15m', annotations: [level(150)] }))
+    expect(r.applied).toBe(true)
+    expect(r.kept).toBe(1)
   })
 })
 

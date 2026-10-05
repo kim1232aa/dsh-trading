@@ -268,7 +268,6 @@ export function mergeMarks(payload: ChartPayload, marks: ChartMarks): MergeMarks
   if (tf === undefined) return refused
   if (payload.provider !== marks.provider) return refused
   if (payload.symbol.trim().toUpperCase() !== marks.symbol) return refused
-  if (tf.timeframe !== marks.timeframe) return refused
 
   const candles = tf.candles
   if (candles.length === 0) return { payload, applied: true, kept: 0, dropped: 0 }
