@@ -20,6 +20,25 @@ import type { GuardMode } from './policy.js'
 export { compilePolicy, DEFAULT_DENY_PATTERNS } from './policy.js'
 export type { GuardMode, GuardPolicy, GuardVerdict } from './policy.js'
 
+export {
+  CN_DEFAULT_FEE_RATES,
+  calculateCnCost,
+  calculatePriceLimits,
+  detectBoard,
+  getPriceLimitRatio,
+  validateLotSize,
+  validatePriceLimit,
+  validateTPlusOne,
+} from './cn-rules.js'
+
+export type {
+  CnBoardType,
+  CnCostBreakdown,
+  LotSizeCheckResult,
+  PriceLimitResult,
+  TPlusOneCheckResult,
+} from './cn-rules.js'
+
 export const name = 'risk-guard'
 export const inject = ['tools']
 
