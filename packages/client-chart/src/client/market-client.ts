@@ -70,6 +70,10 @@ export interface MarketClient {
   getFundamentals(symbol: string, providerId?: string, signal?: AbortSignal): Promise<FundamentalsPackage | null>
   /** User custom watchlist items & groups from @dsh-trading/watchlist. */
   getWatchlist?(signal?: AbortSignal): Promise<{ items: { symbol: string; group: string; notes?: string }[]; groups: string[] }>
+  /** Add a symbol to the custom watchlist. */
+  addToWatchlist?(symbol: string, group?: string, notes?: string): Promise<{ ok: boolean; symbol: string }>
+  /** Remove a symbol from the custom watchlist. */
+  removeFromWatchlist?(symbol: string): Promise<{ ok: boolean; symbol: string }>
 }
 
 /** Institutional and retail order flow for equities. */
@@ -477,6 +481,22 @@ export function createMarketClient(rpc: RpcCaller): MarketClient {
       const value = await unwrap(rpc.call(CHANNEL, 'watchlist', {}, signal)) as {
         items: { symbol: string; group: string; notes?: string }[]
         groups: string[]
+      }
+      return value
+    },
+
+    async addToWatchlist(symbol, group, notes) {
+      const value = await unwrap(rpc.call(CHANNEL, 'watchlistAdd', { symbol, group, notes })) as {
+        ok: boolean
+        symbol: string
+      }
+      return value
+    },
+
+    async removeFromWatchlist(symbol) {
+      const value = await unwrap(rpc.call(CHANNEL, 'watchlistRemove', { symbol })) as {
+        ok: boolean
+        symbol: string
       }
       return value
     },

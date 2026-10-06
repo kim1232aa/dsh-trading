@@ -59,6 +59,8 @@ describe('channel identity', () => {
       'symbols',
       'view',
       'watchlist',
+      'watchlistAdd',
+      'watchlistRemove',
     ])
   })
 })
@@ -276,6 +278,22 @@ describe('serveMarketEndpoint', () => {
     } as unknown as MarketDataLike
     const res = await serveMarketEndpoint(h, ENDPOINTS.watchlist, {})
     expect(res).toEqual(custom)
+  })
+
+  it('handles watchlistAdd via marketData delegate', async () => {
+    const addToWatchlist = vi.fn(async () => true)
+    const h = { provider: vi.fn(), addToWatchlist } as unknown as MarketDataLike
+    const res = await serveMarketEndpoint(h, ENDPOINTS.watchlistAdd, { symbol: 'SOLUSDT', group: '加密' })
+    expect(addToWatchlist).toHaveBeenCalledWith({ symbol: 'SOLUSDT', group: '加密', notes: undefined })
+    expect(res).toEqual({ ok: true, symbol: 'SOLUSDT' })
+  })
+
+  it('handles watchlistRemove via marketData delegate', async () => {
+    const removeFromWatchlist = vi.fn(async () => true)
+    const h = { provider: vi.fn(), removeFromWatchlist } as unknown as MarketDataLike
+    const res = await serveMarketEndpoint(h, ENDPOINTS.watchlistRemove, { symbol: 'SOLUSDT' })
+    expect(removeFromWatchlist).toHaveBeenCalledWith('SOLUSDT')
+    expect(res).toEqual({ ok: true, symbol: 'SOLUSDT' })
   })
 
   it('refuses an unknown endpoint', async () => {

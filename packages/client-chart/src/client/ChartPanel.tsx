@@ -986,6 +986,33 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
   // next submit would then use a period the toolbar was no longer showing.
   const activeTimeframe = busy || error !== null ? timeframe : shownTimeframe ?? timeframe
 
+  const isCurrentInWatchlist = useMemo(() => {
+    if (!shownSymbol || !watchlist?.items) return false
+    const sym = shownSymbol.toUpperCase()
+    return watchlist.items.some(it => it.symbol.toUpperCase() === sym)
+  }, [shownSymbol, watchlist])
+
+  const toggleCurrentWatchlist = useCallback(async () => {
+    if (!shownSymbol) return
+    const sym = shownSymbol.toUpperCase()
+    if (isCurrentInWatchlist) {
+      if (typeof market.removeFromWatchlist === 'function') {
+        await market.removeFromWatchlist(sym).catch(() => {})
+      }
+      setWatchlist(prev => prev ? { ...prev, items: prev.items.filter(it => it.symbol.toUpperCase() !== sym) } : null)
+    } else {
+      const group = activeGroup !== '全部' ? activeGroup : '自选'
+      if (typeof market.addToWatchlist === 'function') {
+        await market.addToWatchlist(sym, group).catch(() => {})
+      }
+      setWatchlist(prev => {
+        if (!prev) return { groups: [group], items: [{ symbol: sym, group }] }
+        const nextGroups = prev.groups.includes(group) ? prev.groups : [...prev.groups, group]
+        return { groups: nextGroups, items: [...prev.items, { symbol: sym, group }] }
+      })
+    }
+  }, [shownSymbol, isCurrentInWatchlist, market, activeGroup])
+
   const submit = (e: FormEvent): void => {
     e.preventDefault()
     const symbol = draft.trim()
@@ -1213,6 +1240,29 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
             </button>
           )
         })}
+        {shownSymbol ? (
+          <button
+            type="button"
+            style={{
+              background: isCurrentInWatchlist ? 'rgba(234, 179, 8, 0.15)' : 'transparent',
+              color: isCurrentInWatchlist ? '#eab308' : 'var(--dsw-alias-text-3, rgba(128,128,128,0.75))',
+              border: isCurrentInWatchlist ? '1px solid rgba(234, 179, 8, 0.4)' : '1px dashed var(--dsw-alias-border-l2, rgba(128,128,128,0.3))',
+              borderRadius: 4,
+              fontSize: 11,
+              padding: '1px 6px',
+              cursor: 'pointer',
+              marginLeft: 'auto',
+              whiteSpace: 'nowrap',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 2,
+            }}
+            onClick={toggleCurrentWatchlist}
+            title={isCurrentInWatchlist ? `点击将 ${shownSymbol} 移出自选` : `点击将 ${shownSymbol} 加入自选`}
+          >
+            {isCurrentInWatchlist ? '★ 已自选' : '☆ +自选'}
+          </button>
+        ) : null}
       </div>
 
       {payload !== null && shownSymbol !== ''

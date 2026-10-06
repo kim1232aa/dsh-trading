@@ -49,6 +49,8 @@ export const ENDPOINTS = {
   orderbook: 'orderbook',
   fundamentals: 'fundamentals',
   watchlist: 'watchlist',
+  watchlistAdd: 'watchlistAdd',
+  watchlistRemove: 'watchlistRemove',
 } as const
 
 /** The `providers` answer: list of registered providers and their descriptions. */
@@ -259,6 +261,8 @@ export interface MarketDataLike {
   resolveProvider?(symbol?: string, explicitId?: string): MarketDataProvider
   list?(): string[]
   getWatchlist?(): Promise<WatchlistResponse>
+  addToWatchlist?(item: { symbol: string; group?: string | undefined; notes?: string | undefined }): Promise<boolean>
+  removeFromWatchlist?(symbol: string): Promise<boolean>
 }
 
 /**
@@ -284,6 +288,7 @@ export async function serveMarketEndpoint(
   | FundamentalsResponse
   | ProvidersResponse
   | WatchlistResponse
+  | { ok: boolean; symbol?: string | undefined }
   | { ok: true }
 > {
   const getProvider = (sym?: string, id?: string) => {
@@ -381,6 +386,34 @@ export async function serveMarketEndpoint(
       ],
       groups: ['加密货币', 'A股核心'],
     }
+  }
+
+  if (endpoint === ENDPOINTS.watchlistAdd) {
+    const sym = typeof (payload as Record<string, unknown> | null)?.['symbol'] === 'string'
+      ? ((payload as Record<string, unknown>)['symbol'] as string).trim()
+      : ''
+    const grp = typeof (payload as Record<string, unknown> | null)?.['group'] === 'string'
+      ? ((payload as Record<string, unknown>)['group'] as string).trim()
+      : '自选'
+    const notes = typeof (payload as Record<string, unknown> | null)?.['notes'] === 'string'
+      ? (payload as Record<string, unknown>)['notes'] as string
+      : undefined
+    if (typeof marketData.addToWatchlist === 'function') {
+      const ok = await marketData.addToWatchlist({ symbol: sym, group: grp, notes })
+      return { ok, symbol: sym }
+    }
+    return { ok: true, symbol: sym }
+  }
+
+  if (endpoint === ENDPOINTS.watchlistRemove) {
+    const sym = typeof (payload as Record<string, unknown> | null)?.['symbol'] === 'string'
+      ? ((payload as Record<string, unknown>)['symbol'] as string).trim()
+      : ''
+    if (typeof marketData.removeFromWatchlist === 'function') {
+      const ok = await marketData.removeFromWatchlist(sym)
+      return { ok, symbol: sym }
+    }
+    return { ok: true, symbol: sym }
   }
 
   throw new Error(`unknown endpoint '${endpoint}'`)
