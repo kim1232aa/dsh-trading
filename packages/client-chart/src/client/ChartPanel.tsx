@@ -154,6 +154,88 @@ const NOTE: CSSProperties = {
   color: 'var(--dsw-alias-text-3, rgba(128, 128, 128, 0.9))',
 }
 
+const BANNER: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 8,
+  padding: '6px 14px',
+  fontSize: 11.5,
+  background: 'var(--dsw-alias-bg-error, rgba(224, 86, 63, 0.12))',
+  borderBottom: '1px solid var(--dsw-alias-border-error, rgba(224, 86, 63, 0.3))',
+  zIndex: 10,
+  flexShrink: 0,
+}
+
+function ChartErrorBanner({
+  error,
+  targetTimeframe,
+  currentTimeframe,
+  onRetry,
+  onDismiss,
+  onSwitchToCn,
+  providerId,
+}: {
+  error: string
+  targetTimeframe?: string | undefined
+  currentTimeframe?: string | undefined
+  onRetry: () => void
+  onDismiss: () => void
+  onSwitchToCn: () => void
+  providerId?: string | undefined
+}): JSX.Element {
+  const isCn = providerId === 'cn'
+  const isNetwork = error.includes('不可达') || error.includes('fetch failed') || error.includes('网络') || error.includes('超时')
+  return (
+    <div style={BANNER} role="alert">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0, overflow: 'hidden' }}>
+        <span style={{ color: 'var(--dsw-alias-text-error, #e0563f)', fontWeight: 600, flexShrink: 0 }}>
+          ⚠ {targetTimeframe && currentTimeframe && targetTimeframe !== currentTimeframe ? `切换到 ${targetTimeframe} 失败` : '加载失败'}:
+        </span>
+        <span
+          style={{
+            color: 'var(--dsw-alias-text-1, inherit)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+          title={error}
+        >
+          {error}
+        </span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+        {!isCn && isNetwork ? (
+          <button
+            type="button"
+            style={{ ...TF_BUTTON(false), padding: '1px 6px', fontSize: 11, borderColor: 'var(--dsw-alias-border-l3, rgba(128,128,128,0.5))' }}
+            onClick={onSwitchToCn}
+            title="一键切换为国内免代理 A 股数据源"
+          >
+            切到 A 股源
+          </button>
+        ) : null}
+        <button
+          type="button"
+          style={{ ...TF_BUTTON(true), padding: '1px 8px', fontSize: 11 }}
+          onClick={onRetry}
+          title="重新发起请求"
+        >
+          🔄 重试
+        </button>
+        <button
+          type="button"
+          style={{ ...TF_BUTTON(false), padding: '1px 5px', fontSize: 11 }}
+          onClick={onDismiss}
+          title="关闭警告信息"
+        >
+          ✕
+        </button>
+      </div>
+    </div>
+  )
+}
+
 /** Positioning moves on minutes, and Binance's ratio stats are 5m buckets; faster polling buys nothing. */
 const DERIV_MS = 30_000
 
@@ -962,14 +1044,51 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
         )
         : null}
 
-      <div style={{ flex: 1, minHeight: 0 }}>
+      {error !== null && payload !== null ? (
+        <ChartErrorBanner
+          error={error}
+          targetTimeframe={timeframe}
+          currentTimeframe={shownTimeframe}
+          onRetry={() => {
+            const sym = (draft.trim() !== '' ? draft : shownSymbol).trim()
+            if (sym !== '') void load(sym, activeTimeframe, 'user')
+          }}
+          onDismiss={() => {
+            setError(null)
+            if (shownTimeframe) setTimeframe(shownTimeframe)
+          }}
+          onSwitchToCn={() => changeProvider('cn')}
+          providerId={payload.provider}
+        />
+      ) : null}
+
+      <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
         {busy && payload === null
           ? <div style={NOTE}><p>加载中…</p></div>
-          : error !== null
+          : error !== null && payload === null
             ? (
               <div style={NOTE}>
-                <p style={{ color: 'var(--dsw-alias-text-error, #e0563f)' }}>{error}</p>
-                {hint !== null ? <p style={{ fontSize: 12, opacity: 0.75 }}>{hint}</p> : null}
+                <p style={{ color: 'var(--dsw-alias-text-error, #e0563f)', fontWeight: 600 }}>{error}</p>
+                <div style={{ marginTop: 8, display: 'flex', gap: 8, justifyContent: 'center' }}>
+                  <button
+                    type="button"
+                    style={{ ...TF_BUTTON(true), padding: '4px 12px' }}
+                    onClick={() => {
+                      const sym = (draft.trim() !== '' ? draft : shownSymbol).trim()
+                      if (sym !== '') void load(sym, activeTimeframe, 'user')
+                    }}
+                  >
+                    🔄 重新加载
+                  </button>
+                  <button
+                    type="button"
+                    style={{ ...TF_BUTTON(false), padding: '4px 12px' }}
+                    onClick={() => changeProvider('cn')}
+                  >
+                    🇨🇳 切换为 A 股数据源
+                  </button>
+                </div>
+                {hint !== null ? <p style={{ fontSize: 12, opacity: 0.75, marginTop: 8 }}>{hint}</p> : null}
               </div>
             )
             : payload !== null

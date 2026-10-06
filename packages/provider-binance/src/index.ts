@@ -50,6 +50,14 @@ const TF_MAP: Record<Timeframe, string> = {
 
 const ALL_TIMEFRAMES: Timeframe[] = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w']
 
+/** High-availability mirror hosts for Binance spot public klines. */
+const SPOT_KLINE_HOSTS = [
+  'https://data-api.binance.vision',
+  'https://api.binance.com',
+  'https://api1.binance.com',
+  'https://api3.binance.com',
+]
+
 const COMMON_QUOTES = ['USDT', 'USDC', 'BUSD', 'FDUSD', 'BTC', 'ETH']
 
 /**
@@ -124,31 +132,57 @@ class BinanceProvider implements MarketDataProvider {
     if (!interval) throw new Error(`unsupported timeframe: ${query.timeframe}`)
 
     const symbol = normalizeSymbol(query.symbol)
-    const url = new URL('/api/v3/klines', this.baseURL)
-    url.searchParams.set('symbol', symbol)
-    url.searchParams.set('interval', interval)
-    url.searchParams.set('limit', String(Math.min(query.limit ?? 200, 1000)))
-    if (query.start) url.searchParams.set('startTime', String(Date.parse(query.start)))
-    if (query.end) url.searchParams.set('endTime', String(Date.parse(query.end)))
+    const isCustomBase = this.baseURL && this.baseURL !== 'https://data-api.binance.vision'
+    const hosts = isCustomBase ? [this.baseURL] : SPOT_KLINE_HOSTS
 
-    const res = await fetch(url)
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '')
-      const hint = errText.includes('-1121')
-        ? (closestSymbol(query.symbol, this.symbols) ?? closestSymbol(symbol, this.symbols))
-        : null
-      throw new Error(`Binance ${res.status}: ${errText.includes('-1121') ? `Invalid symbol '${query.symbol}' (tried '${symbol}')${hint ? `，是不是 ${hint}？` : ''}` : errText}`)
+    let lastNetworkError: Error | null = null
+
+    for (const host of hosts) {
+      try {
+        const url = new URL('/api/v3/klines', host)
+        url.searchParams.set('symbol', symbol)
+        url.searchParams.set('interval', interval)
+        url.searchParams.set('limit', String(Math.min(query.limit ?? 200, 1000)))
+        if (query.start) url.searchParams.set('startTime', String(Date.parse(query.start)))
+        if (query.end) url.searchParams.set('endTime', String(Date.parse(query.end)))
+
+        const res = await fetch(url, { signal: AbortSignal.timeout(6_000) })
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '')
+          const hint = errText.includes('-1121')
+            ? (closestSymbol(query.symbol, this.symbols) ?? closestSymbol(symbol, this.symbols))
+            : null
+          throw new Error(`Binance ${res.status}: ${errText.includes('-1121') ? `Invalid symbol '${query.symbol}' (tried '${symbol}')${hint ? `，是不是 ${hint}？` : ''}` : errText}`)
+        }
+
+        const rows = (await res.json()) as unknown[][]
+        return rows.map(r => ({
+          time: new Date(r[0] as number).toISOString(),
+          open: Number(r[1]),
+          high: Number(r[2]),
+          low: Number(r[3]),
+          close: Number(r[4]),
+          volume: Number(r[5]),
+        }))
+      } catch (err: unknown) {
+        const e = err as Error
+        // Business validation / bad symbol error: do not retry other hosts
+        if (e.message && e.message.includes('Invalid symbol')) {
+          throw e
+        }
+        lastNetworkError = e
+      }
     }
 
-    const rows = (await res.json()) as unknown[][]
-    return rows.map(r => ({
-      time: new Date(r[0] as number).toISOString(),
-      open: Number(r[1]),
-      high: Number(r[2]),
-      low: Number(r[3]),
-      close: Number(r[4]),
-      volume: Number(r[5]),
-    }))
+    const isFetchFailed = lastNetworkError?.name === 'TypeError' || lastNetworkError?.message?.includes('fetch failed')
+    const isTimeout = lastNetworkError?.name === 'TimeoutError' || lastNetworkError?.message?.includes('timeout')
+    const detail = isTimeout
+      ? '连接行情接口超时 (6s)'
+      : isFetchFailed
+        ? '行情网络连接被阻断或重置 (ECONNRESET/TLS failure)'
+        : lastNetworkError?.message || '网络连接异常'
+
+    throw new Error(`[Binance行情不可达] ${detail}。若处于大陆网络，请检查代理配置或切换上方数据源至【东财/新浪A股】。`)
   }
 
   /** Until when fallback providers lead, after Binance futures failed. */
