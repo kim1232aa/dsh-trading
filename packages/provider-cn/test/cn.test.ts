@@ -5,6 +5,7 @@ import {
   formatRmbAmount,
   isCnSymbol,
   parseCnSymbol,
+  parseTencentQuote,
   toBarOpen,
 } from '../src/index.js'
 
@@ -124,5 +125,23 @@ describe('CnMarketProvider Routing', () => {
 
   it('refuses a timeframe A-shares do not have instead of serving other bars', async () => {
     await expect(provider.getOhlcv({ symbol: '600519', timeframe: '4h' })).rejects.toThrow(/4h/)
+  })
+
+  it('parses Tencent quote into Orderbook and Fundamentals correctly', () => {
+    const raw = 'v_sh600519="1~贵州茅台~600519~1580.00~1575.00~1582.00~12345~100~200~1579.00~50~1578.00~30~1577.00~20~1576.00~10~1575.00~5~1581.00~40~1582.00~60~1583.00~80~1584.00~90~1585.00~100~~20261002150000~5.00~0.32~1585.00~1570.00~1580.00/12345/195000000~12345~19500~0.15~25.80~1585.00~1570.00~0.95~19800.50~19800.50~8.20~";'
+    const { orderbook, fundamentals } = parseTencentQuote(raw, '600519')
+
+    expect(orderbook.symbol).toBe('600519')
+    expect(orderbook.bids.length).toBe(5)
+    expect(orderbook.bids[0]).toEqual({ price: 1579, quantity: 5000 })
+    expect(orderbook.asks.length).toBe(5)
+    expect(orderbook.asks[0]).toEqual({ price: 1581, quantity: 4000 })
+    expect(orderbook.midPrice).toBe(1580)
+    expect(orderbook.spread).toBe(2)
+
+    expect(fundamentals.symbol).toBe('600519')
+    expect(fundamentals.peTtm).toBe(25.80)
+    expect(fundamentals.pb).toBe(8.20)
+    expect(fundamentals.marketCap).toBe(19800.50 * 1e8)
   })
 })

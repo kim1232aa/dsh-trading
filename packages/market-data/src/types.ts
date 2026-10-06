@@ -68,6 +68,60 @@ export interface MarketDataProvider {
   getDerivatives?(symbol: string): Promise<Derivatives>
   /** Institutional & retail money flow (主力/散户资金流向). Optional: equity/crypto providers. */
   getMoneyFlow?(symbol: string): Promise<MoneyFlow>
+  /** Level 2 depth orderbook (买卖盘口). Optional. */
+  getOrderbook?(symbol: string): Promise<Orderbook>
+  /** Fundamental financial metrics and valuations (基础财务估值). Optional. */
+  getFundamentals?(symbol: string): Promise<FundamentalsPackage>
+}
+
+/** Single price-quantity level in an orderbook. */
+export interface OrderbookLevel {
+  price: number
+  quantity: number
+  orderCount?: number
+}
+
+/** Level 2 market depth orderbook snapshot. */
+export interface Orderbook {
+  symbol: string
+  time: string
+  bids: OrderbookLevel[]
+  asks: OrderbookLevel[]
+  midPrice?: number | undefined
+  spread?: number | undefined
+}
+
+/** Individual executed trade tick. */
+export interface TradeTick {
+  time: string
+  price: number
+  quantity: number
+  side: 'buy' | 'sell' | 'neutral'
+}
+
+/** Comprehensive financial fundamentals and valuation matrix. */
+export interface FundamentalsPackage {
+  symbol: string
+  time?: string | undefined
+  peTtm?: number | undefined
+  peStatic?: number | undefined
+  pb?: number | undefined
+  dividendYieldPct?: number | undefined
+  marketCap?: number | undefined
+  circulatingMarketCap?: number | undefined
+  roePct?: number | undefined
+  netProfitGrowthPct?: number | undefined
+  revenueGrowthPct?: number | undefined
+  grossMarginPct?: number | undefined
+  debtToAssetPct?: number | undefined
+}
+
+/** Normalized multi-market symbol representation. */
+export interface NormalizedSymbol {
+  raw: string
+  canonical: string
+  market: 'cn_stock' | 'hk_stock' | 'us_stock' | 'crypto' | 'future' | 'other'
+  displayName: string
 }
 
 /** Institutional and retail order flow for equities or assets with volume tiering. */

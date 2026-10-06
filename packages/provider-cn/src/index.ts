@@ -1,6 +1,15 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { Candle, InstrumentInfo, MarketDataProvider, MoneyFlow, OhlcvQuery, Timeframe } from '@dsh-trading/market-data'
+import type {
+  Candle,
+  FundamentalsPackage,
+  InstrumentInfo,
+  MarketDataProvider,
+  MoneyFlow,
+  OhlcvQuery,
+  Orderbook,
+  Timeframe,
+} from '@dsh-trading/market-data'
 
 export const name = 'provider-cn'
 export const inject = ['marketData']
@@ -9,12 +18,14 @@ export interface Config {
   id: string
   eastmoneyBaseURL: string
   sinaBaseURL: string
+  tencentBaseURL: string
 }
 
 export const Config: z<Config> = z.object({
   id: z.string().default('cn'),
   eastmoneyBaseURL: z.string().default('https://push2his.eastmoney.com'),
   sinaBaseURL: z.string().default('https://quotes.sina.cn'),
+  tencentBaseURL: z.string().default('https://qt.gtimg.cn'),
 }) as unknown as z<Config>
 
 export const ALL_CN_TIMEFRAMES: Timeframe[] = ['1m', '5m', '15m', '30m', '1h', '1d', '1w']
@@ -122,6 +133,69 @@ export function formatRmbAmount(amount: number): string {
   return `${sign}${abs.toFixed(0)}元`
 }
 
+/** Parses raw Tencent stock quote (qt.gtimg.cn) into normalized Orderbook and Fundamentals. */
+export function parseTencentQuote(raw: string, symbol: string): {
+  orderbook: Orderbook
+  fundamentals: FundamentalsPackage
+} {
+  const match = raw.match(/"([^"]+)"/)
+  const content = match ? match[1]! : raw
+  const parts = content.split('~')
+
+  const timeRaw = parts[30] // e.g. 20261002150000
+  let isoTime = new Date().toISOString()
+  if (timeRaw && timeRaw.length === 14) {
+    isoTime = cnTimeToIso(`${timeRaw.slice(0, 4)}-${timeRaw.slice(4, 6)}-${timeRaw.slice(6, 8)} ${timeRaw.slice(8, 10)}:${timeRaw.slice(10, 12)}:${timeRaw.slice(12, 14)}`)
+  }
+
+  // Bids: Buy 1 to Buy 5 (indices 9/10, 11/12, 13/14, 15/16, 17/18)
+  const bids: Array<{ price: number; quantity: number }> = [
+    { price: Number(parts[9]) || 0, quantity: (Number(parts[10]) || 0) * 100 },
+    { price: Number(parts[11]) || 0, quantity: (Number(parts[12]) || 0) * 100 },
+    { price: Number(parts[13]) || 0, quantity: (Number(parts[14]) || 0) * 100 },
+    { price: Number(parts[15]) || 0, quantity: (Number(parts[16]) || 0) * 100 },
+    { price: Number(parts[17]) || 0, quantity: (Number(parts[18]) || 0) * 100 },
+  ].filter(b => b.price > 0)
+
+  // Asks: Sell 1 to Sell 5 (indices 19/20, 21/22, 23/24, 25/26, 27/28)
+  const asks: Array<{ price: number; quantity: number }> = [
+    { price: Number(parts[19]) || 0, quantity: (Number(parts[20]) || 0) * 100 },
+    { price: Number(parts[21]) || 0, quantity: (Number(parts[22]) || 0) * 100 },
+    { price: Number(parts[23]) || 0, quantity: (Number(parts[24]) || 0) * 100 },
+    { price: Number(parts[25]) || 0, quantity: (Number(parts[26]) || 0) * 100 },
+    { price: Number(parts[27]) || 0, quantity: (Number(parts[28]) || 0) * 100 },
+  ].filter(a => a.price > 0)
+
+  const bestBid = bids[0]?.price
+  const bestAsk = asks[0]?.price
+  const midPrice = bestBid && bestAsk ? (bestBid + bestAsk) / 2 : (Number(parts[3]) || undefined)
+  const spread = bestBid && bestAsk ? Number((bestAsk - bestBid).toFixed(4)) : undefined
+
+  const peTtm = Number(parts[39]) || undefined
+  const pb = Number(parts[45]) || undefined
+  const circulatingMarketCap = (Number(parts[43]) || 0) * 1e8 || undefined
+  const marketCap = (Number(parts[44]) || 0) * 1e8 || undefined
+
+  return {
+    orderbook: {
+      symbol,
+      time: isoTime,
+      bids,
+      asks,
+      midPrice,
+      spread,
+    },
+    fundamentals: {
+      symbol,
+      time: isoTime,
+      peTtm,
+      pb,
+      circulatingMarketCap,
+      marketCap,
+    },
+  }
+}
+
 export class CnMarketProvider implements MarketDataProvider {
   readonly id: string
   readonly description: string
@@ -145,9 +219,10 @@ export class CnMarketProvider implements MarketDataProvider {
     id: string,
     private readonly emBaseURL: string,
     private readonly sinaBaseURL: string,
+    private readonly tencentBaseURL: string = 'https://qt.gtimg.cn',
   ) {
     this.id = id
-    this.description = 'A股行情与资金流 (东财主源 + 新浪容灾)'
+    this.description = 'A股行情与资金流 (东财主源 + 新浪容灾 + 腾讯极速盘口)'
   }
 
   matchesSymbol(symbol: string): boolean {
@@ -319,8 +394,26 @@ export class CnMarketProvider implements MarketDataProvider {
       summary,
     }
   }
+
+  async getOrderbook(symbol: string): Promise<Orderbook> {
+    const { sinaSymbol } = parseCnSymbol(symbol)
+    const res = await fetch(`${this.tencentBaseURL}/q=${sinaSymbol}`)
+    if (!res.ok) throw new Error(`Tencent quote HTTP ${res.status} for ${symbol}`)
+    const text = await res.text()
+    const { orderbook } = parseTencentQuote(text, symbol)
+    return orderbook
+  }
+
+  async getFundamentals(symbol: string): Promise<FundamentalsPackage> {
+    const { sinaSymbol } = parseCnSymbol(symbol)
+    const res = await fetch(`${this.tencentBaseURL}/q=${sinaSymbol}`)
+    if (!res.ok) throw new Error(`Tencent quote HTTP ${res.status} for ${symbol}`)
+    const text = await res.text()
+    const { fundamentals } = parseTencentQuote(text, symbol)
+    return fundamentals
+  }
 }
 
 export function apply(ctx: Context, config: Config): void {
-  ctx.effect(() => ctx.marketData.register(new CnMarketProvider(config.id, config.eastmoneyBaseURL, config.sinaBaseURL)))
+  ctx.effect(() => ctx.marketData.register(new CnMarketProvider(config.id, config.eastmoneyBaseURL, config.sinaBaseURL, config.tencentBaseURL)))
 }

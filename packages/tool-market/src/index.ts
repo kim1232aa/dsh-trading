@@ -19,6 +19,19 @@ import { chartHtml, renderChartSvg } from './chart.js'
 import type { ChartLevel, ChartOverlay } from './chart.js'
 import { chartCandles, chartSeries, regimeSeries, roundSeries } from './chart-payload.js'
 import type { AnnotationRole, ChartAnnotation, ChartPayload, ChartScenario, ChartTimeframeData } from './chart-payload.js'
+import {
+  createDonchianStrategy,
+  createDualEmaStrategy,
+  runBacktest,
+} from './backtest-engine.js'
+import type { BacktestOptions, BacktestResult, StrategyFn } from './backtest-engine.js'
+import {
+  checkBullishAlignment,
+  checkOversoldReversal,
+  checkVolumeBreakout,
+  screenUniverse,
+} from './screener.js'
+import type { ScreenerMatch } from './screener.js'
 
 export { rsi, sma, wma } from './indicators.js'
 export { adx, atr, bollinger, ema, macd, mfi, stochastic, supertrend } from './candle-indicators.js'
@@ -38,6 +51,19 @@ export type {
   AnnotationRole, ChartAnnotation, ChartCandle, ChartLevelAnnotation, ChartPayload,
   ChartScenario, ChartSeries, ChartTimeframeData, ChartZoneAnnotation,
 } from './chart-payload.js'
+export {
+  createDonchianStrategy,
+  createDualEmaStrategy,
+  runBacktest,
+} from './backtest-engine.js'
+export type { BacktestOptions, BacktestResult, StrategyFn } from './backtest-engine.js'
+export {
+  checkBullishAlignment,
+  checkOversoldReversal,
+  checkVolumeBreakout,
+  screenUniverse,
+} from './screener.js'
+export type { ScreenerMatch } from './screener.js'
 
 export const name = 'tool-market'
 export const inject = ['tools', 'marketData']
@@ -649,6 +675,126 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: args => ({
       card: 'generic',
       title: `Annotate: ${args.symbol} @ ${args.timeframe}`,
+      kind: 'other',
+      rawInput: args,
+    }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'run_backtest',
+    description: 'Execute a deterministic strategy backtest on real historical candles from the market-data provider. Computes total return, win rate, profit factor, max drawdown, Sharpe ratio, and generates a standard BacktestArtifact directly auditable by audit_backtest.',
+    parameters: {
+      symbol: { type: 'string', required: true, description: 'Instrument symbol (e.g. "ETHUSDT", "600519").' },
+      timeframe: { type: 'string', required: true, enum: [...TIMEFRAMES], description: 'Candle interval to backtest on.' },
+      strategy: { type: 'string', enum: ['dual_ema', 'donchian_breakout'], description: 'Preset strategy to run: "dual_ema" (Moving average cross) or "donchian_breakout" (Turtle breakout). Default "dual_ema".' },
+      bars: { type: 'integer', description: 'Historical candle window (default 300, max 1000).' },
+      fastPeriod: { type: 'integer', description: 'Fast EMA period for dual_ema (default 12).' },
+      slowPeriod: { type: 'integer', description: 'Slow EMA period for dual_ema (default 26).' },
+      breakoutPeriod: { type: 'integer', description: 'Breakout period for donchian_breakout (default 20).' },
+      initialCapital: { type: 'number', description: 'Starting capital (default 10000).' },
+      feePct: { type: 'number', description: 'Fee rate per transaction (default 0.0005 = 0.05%).' },
+      slippagePct: { type: 'number', description: 'Slippage rate per transaction (default 0.0002 = 0.02%).' },
+      provider: { type: 'string', description: 'Market-data provider id (omit for default).' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          summary: { type: 'string', required: true },
+          metrics: { type: 'json', required: true },
+          artifact: { type: 'json', required: true },
+          trades: { type: 'json', required: true },
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: value.summary }],
+    },
+    isConcurrencySafe: () => true,
+    async execute(args, _exec) {
+      const provider = ctx.marketData.provider(args.provider)
+      const bars = await provider.getOhlcv({
+        symbol: args.symbol,
+        timeframe: args.timeframe as Timeframe,
+        limit: Math.min(args.bars ?? 300, 1000),
+      })
+      if (!bars || bars.length < 30) {
+        throw new Error(`insufficient candle data (${bars?.length ?? 0} bars) from provider '${provider.id}' for ${args.symbol}`)
+      }
+      let strategyFn: StrategyFn
+      if (args.strategy === 'donchian_breakout') {
+        strategyFn = createDonchianStrategy(args.breakoutPeriod ?? 20, Math.floor((args.breakoutPeriod ?? 20) / 2))
+      } else {
+        strategyFn = createDualEmaStrategy(args.fastPeriod ?? 12, args.slowPeriod ?? 26)
+      }
+      const result = runBacktest(args.symbol, args.timeframe, bars, strategyFn, {
+        initialCapital: args.initialCapital,
+        feePct: args.feePct,
+        slippagePct: args.slippagePct,
+      })
+      return {
+        summary: `Backtest completed on ${args.symbol} @ ${args.timeframe} (${result.totalTrades} trades): Net Return ${result.totalReturnPct > 0 ? '+' : ''}${result.totalReturnPct}%, Win Rate ${result.winRatePct}%, Profit Factor ${result.profitFactor}, Max Drawdown -${result.maxDrawdownPct}%, Sharpe ${result.sharpeRatio}`,
+        metrics: {
+          totalReturnPct: result.totalReturnPct,
+          finalEquity: result.finalEquity,
+          winRatePct: result.winRatePct,
+          profitFactor: result.profitFactor,
+          maxDrawdownPct: result.maxDrawdownPct,
+          sharpeRatio: result.sharpeRatio,
+          totalTrades: result.totalTrades,
+          winningTrades: result.winningTrades,
+          losingTrades: result.losingTrades,
+        } as any,
+        artifact: result.artifact as any,
+        trades: result.trades.slice(-10) as any,
+      }
+    },
+    presentCall: args => ({
+      card: 'generic',
+      title: `Backtest: ${args.strategy} on ${args.symbol} @ ${args.timeframe}`,
+      kind: 'other',
+      rawInput: args,
+    }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'screen_market',
+    description: 'Scan a universe of symbols across technical patterns: moving average bullish alignment (MA20>MA50>MA200), volume breakout (1.8x+ volume breaking 20-bar resistance), or oversold rebound (RSI<32 with reversal candle).',
+    parameters: {
+      symbols: { type: 'array', items: { type: 'string' }, description: 'Symbols to scan. Defaults to hot crypto and A-share tickers if omitted.' },
+      timeframe: { type: 'string', enum: [...TIMEFRAMES], description: 'Timeframe interval (default "1d").' },
+      patterns: { type: 'array', items: { type: 'string', enum: ['bullish_alignment', 'volume_breakout', 'oversold_reversal'] }, description: 'Patterns to filter for. Defaults to all three.' },
+      provider: { type: 'string', description: 'Market-data provider id (omit for default).' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          scannedCount: { type: 'integer', required: true },
+          matchedCount: { type: 'integer', required: true },
+          summary: { type: 'string', required: true },
+          matches: { type: 'json', required: true },
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: value.summary }],
+    },
+    isConcurrencySafe: () => true,
+    async execute(args, _exec) {
+      const provider = ctx.marketData.provider(args.provider)
+      const symbolsToScan = args.symbols && args.symbols.length > 0
+        ? args.symbols
+        : ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'BNBUSDT', '600519', '000001', 'sh000001']
+      const matches = await screenUniverse(provider, symbolsToScan, (args.timeframe as Timeframe) ?? '1d', args.patterns as any)
+      return {
+        scannedCount: symbolsToScan.length,
+        matchedCount: matches.length,
+        summary: `Screened ${symbolsToScan.length} symbols @ ${args.timeframe ?? '1d'}: found ${matches.length} pattern match(es).`,
+        matches: matches as any,
+      }
+    },
+    presentCall: args => ({
+      card: 'generic',
+      title: `Screen Market @ ${args.timeframe}`,
       kind: 'other',
       rawInput: args,
     }),
