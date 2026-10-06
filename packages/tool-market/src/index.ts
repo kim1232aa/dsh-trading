@@ -32,6 +32,11 @@ import {
   screenUniverse,
 } from './screener.js'
 import type { ScreenerMatch } from './screener.js'
+import { runCustomIndicator } from './indicator-sandbox.js'
+import type { CustomIndicatorOptions, CustomIndicatorResult } from './indicator-sandbox.js'
+
+export { runCustomIndicator } from './indicator-sandbox.js'
+export type { CustomIndicatorOptions, CustomIndicatorResult } from './indicator-sandbox.js'
 
 export { rsi, sma, wma } from './indicators.js'
 export { adx, atr, bollinger, ema, macd, mfi, stochastic, supertrend } from './candle-indicators.js'
@@ -795,6 +800,75 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: args => ({
       card: 'generic',
       title: `Screen Market @ ${args.timeframe}`,
+      kind: 'other',
+      rawInput: args,
+    }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'run_custom_indicator',
+    description: 'Execute a custom JavaScript indicator algorithm in an isolated VM sandbox with a strict 200ms timeout cutoff and helper mathematical functions (sma, ema, wma, rsi, macd, stochastic, bollinger, atr, adx, mfi).',
+    parameters: {
+      symbol: { type: 'string', required: true, description: 'Trading symbol (e.g. BTCUSDT, ETHUSDT, 600519)' },
+      code: { type: 'string', required: true, description: 'JavaScript code defining function calculate(candles) returning (number | null)[]' },
+      timeframe: { type: 'string', description: 'Candle timeframe interval (default 1d)' },
+      name: { type: 'string', description: 'Optional name for this custom indicator (default custom_indicator)' },
+      limit: { type: 'integer', description: 'Number of recent candles to fetch (default 100, max 1000)' },
+      provider: { type: 'string', description: 'Market data provider ID' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          name: { type: 'string', required: true },
+          symbol: { type: 'string', required: true },
+          timeframe: { type: 'string', required: true },
+          count: { type: 'integer', required: true },
+          executionTimeMs: { type: 'number', required: true },
+          summary: { type: 'string', required: true },
+          latestValues: { type: 'json', required: true },
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: value.summary }],
+    },
+    isConcurrencySafe: () => true,
+    async execute(args, _exec) {
+      const provider = ctx.marketData.provider(args.provider)
+      const tf = (args.timeframe as Timeframe) ?? '1d'
+      const limit = Math.min(Math.max(args.limit ?? 100, 10), 1000)
+      const candles = await provider.getOhlcv({
+        symbol: args.symbol,
+        timeframe: tf,
+        limit,
+      })
+
+      const res = runCustomIndicator(args.code, candles, {
+        name: args.name ?? 'custom_indicator',
+        timeoutMs: 200,
+      })
+
+      const validValues = res.values.filter(v => v !== null) as number[]
+      const latestValues = res.values.slice(-5)
+      const summary = `### 📊 自定义指标 [${res.name}] 计算结果\n` +
+        `- **标的**: \`${args.symbol}\` (${tf})\n` +
+        `- **计算耗时**: \`${res.executionTimeMs} ms\` (VM沙箱运行安全熔断门禁通过)\n` +
+        `- **有效输出点数**: \`${validValues.length} / ${res.values.length}\`\n` +
+        `- **最近 5 根 K 线计算值**: \`[${latestValues.map(v => v !== null ? v.toFixed(4) : 'null').join(', ')}]\``
+
+      return {
+        name: res.name,
+        symbol: args.symbol,
+        timeframe: tf,
+        count: res.values.length,
+        executionTimeMs: res.executionTimeMs,
+        summary,
+        latestValues: latestValues as any,
+      }
+    },
+    presentCall: args => ({
+      card: 'generic',
+      title: `Custom Indicator: ${args.name ?? 'custom_indicator'} (${args.symbol})`,
       kind: 'other',
       rawInput: args,
     }),
