@@ -51,6 +51,7 @@
     "@deepseek-ai/schemastery": "^3.18.1",
     "@dsh-trading/client-frame": "workspace:*",
     "@dsh-trading/market-data": "workspace:^",
+    "@types/node": "^22.10.0",
     "@types/react": "^18.3.0",
     "esbuild": "^0.24.0",
     "react": "^18.3.1",

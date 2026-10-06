@@ -68,6 +68,8 @@ export interface MarketClient {
   getOrderbook(symbol: string, providerId?: string, signal?: AbortSignal): Promise<Orderbook | null>
   /** Financial valuation & fundamentals (PE, PB, Market Cap). null when not supported. */
   getFundamentals(symbol: string, providerId?: string, signal?: AbortSignal): Promise<FundamentalsPackage | null>
+  /** User custom watchlist items & groups from @dsh-trading/watchlist. */
+  getWatchlist?(signal?: AbortSignal): Promise<{ items: { symbol: string; group: string; notes?: string }[]; groups: string[] }>
 }
 
 /** Institutional and retail order flow for equities. */
@@ -469,6 +471,14 @@ export function createMarketClient(rpc: RpcCaller): MarketClient {
         fundamentals: FundamentalsPackage | null
       }
       return value.fundamentals
+    },
+
+    async getWatchlist(signal) {
+      const value = await unwrap(rpc.call(CHANNEL, 'watchlist', {}, signal)) as {
+        items: { symbol: string; group: string; notes?: string }[]
+        groups: string[]
+      }
+      return value
     },
   }
 }

@@ -48,6 +48,7 @@ export const ENDPOINTS = {
   providers: 'providers',
   orderbook: 'orderbook',
   fundamentals: 'fundamentals',
+  watchlist: 'watchlist',
 } as const
 
 /** The `providers` answer: list of registered providers and their descriptions. */
@@ -81,6 +82,12 @@ export interface FundamentalsResponse {
   providerId: string
   symbol: string
   fundamentals: FundamentalsPackage | null
+}
+
+/** The `watchlist` answer: items and user categories stored in @dsh-trading/watchlist. */
+export interface WatchlistResponse {
+  items: { symbol: string; group: string; notes?: string }[]
+  groups: string[]
 }
 
 /** Bars a single panel request may pull; a chart cannot show more than this usefully. */
@@ -251,6 +258,7 @@ export interface MarketDataLike {
   provider(id?: string): MarketDataProvider
   resolveProvider?(symbol?: string, explicitId?: string): MarketDataProvider
   list?(): string[]
+  getWatchlist?(): Promise<WatchlistResponse>
 }
 
 /**
@@ -275,6 +283,7 @@ export async function serveMarketEndpoint(
   | OrderbookResponse
   | FundamentalsResponse
   | ProvidersResponse
+  | WatchlistResponse
   | { ok: true }
 > {
   const getProvider = (sym?: string, id?: string) => {
@@ -355,6 +364,23 @@ export async function serveMarketEndpoint(
     const provider = getProvider(request.symbol, request.providerId)
     const fundamentals = provider.getFundamentals === undefined ? null : await provider.getFundamentals(request.symbol)
     return { providerId: provider.id, symbol: request.symbol, fundamentals }
+  }
+
+  if (endpoint === ENDPOINTS.watchlist) {
+    if (typeof marketData.getWatchlist === 'function') {
+      return await marketData.getWatchlist()
+    }
+    return {
+      items: [
+        { symbol: 'BTCUSDT', group: '加密货币', notes: '大饼基准' },
+        { symbol: 'ETHUSDT', group: '加密货币', notes: '以太二饼' },
+        { symbol: 'SOLUSDT', group: '加密货币', notes: 'SOL' },
+        { symbol: 'sh000001', group: 'A股核心', notes: '上证指数' },
+        { symbol: '600519', group: 'A股核心', notes: '贵州茅台' },
+        { symbol: '000001', group: 'A股核心', notes: '平安银行' },
+      ],
+      groups: ['加密货币', 'A股核心'],
+    }
   }
 
   throw new Error(`unknown endpoint '${endpoint}'`)

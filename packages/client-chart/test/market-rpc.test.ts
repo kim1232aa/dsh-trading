@@ -58,6 +58,7 @@ describe('channel identity', () => {
       'providers',
       'symbols',
       'view',
+      'watchlist',
     ])
   })
 })
@@ -255,6 +256,26 @@ describe('serveMarketEndpoint', () => {
         { id: 'cn', description: 'cn market data' },
       ],
     })
+  })
+
+  it('serves watchlist with fallback presets when custom reader is not supplied', async () => {
+    const h = { provider: vi.fn() } as unknown as MarketDataLike
+    const res = await serveMarketEndpoint(h, ENDPOINTS.watchlist, {})
+    expect(res).toHaveProperty('items')
+    expect(res).toHaveProperty('groups')
+  })
+
+  it('serves custom watchlist when marketData provides getWatchlist', async () => {
+    const custom = {
+      items: [{ symbol: 'DOGEUSDT', group: '自选', notes: '狗狗币' }],
+      groups: ['自选'],
+    }
+    const h = {
+      provider: vi.fn(),
+      getWatchlist: vi.fn(async () => custom),
+    } as unknown as MarketDataLike
+    const res = await serveMarketEndpoint(h, ENDPOINTS.watchlist, {})
+    expect(res).toEqual(custom)
   })
 
   it('refuses an unknown endpoint', async () => {

@@ -676,6 +676,8 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
       return 'auto'
     }
   })
+  const [watchlist, setWatchlist] = useState<{ items: { symbol: string; group: string; notes?: string }[]; groups: string[] } | null>(null)
+  const [activeGroup, setActiveGroup] = useState<string>('全部')
   const [panelDerivatives, setPanelDerivatives] = useState<PanelDerivatives | null>(null)
   const [hoveredTime, setHoveredTime] = useState<number | null>(null)
   const followTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -695,6 +697,22 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
         }
       })
       .catch(() => {})
+    return () => { active = false }
+  }, [market])
+
+  // Dynamically load user watchlist from @dsh-trading/watchlist
+  useEffect(() => {
+    let active = true
+    if (typeof market.getWatchlist === 'function') {
+      market.getWatchlist().then(
+        data => {
+          if (active && data && Array.isArray(data.items) && data.items.length > 0) {
+            setWatchlist(data)
+          }
+        },
+        () => {},
+      )
+    }
     return () => { active = false }
   }, [market])
 
@@ -1144,8 +1162,44 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
       </form>
 
       <div style={PRESET_ROW}>
-        <span style={{ color: 'var(--dsw-alias-text-3, rgba(128,128,128,0.75))', whiteSpace: 'nowrap' }}>热门:</span>
-        {PRESET_SYMBOLS.map(item => {
+        <span style={{ color: 'var(--dsw-alias-text-3, rgba(128,128,128,0.75))', whiteSpace: 'nowrap' }}>
+          {watchlist && watchlist.items.length > 0 ? '自选:' : '热门:'}
+        </span>
+        {watchlist && watchlist.groups && watchlist.groups.length > 1 ? (
+          <select
+            value={activeGroup}
+            onChange={e => setActiveGroup(e.target.value)}
+            style={{
+              background: 'transparent',
+              color: 'var(--dsw-alias-text-2, inherit)',
+              border: '1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.3))',
+              borderRadius: 4,
+              fontSize: 11,
+              padding: '1px 4px',
+              cursor: 'pointer',
+              marginRight: 4,
+            }}
+          >
+            <option value="全部">全部分组</option>
+            {watchlist.groups.map(g => (
+              <option key={g} value={g}>{g}</option>
+            ))}
+          </select>
+        ) : null}
+        {(watchlist && watchlist.items.length > 0
+          ? watchlist.items
+              .filter(item => activeGroup === '全部' || item.group === activeGroup)
+              .map(item => ({
+                label: item.notes || item.symbol,
+                symbol: item.symbol,
+                tooltip: `${item.symbol} [${item.group}]${item.notes ? ` · ${item.notes}` : ''}`,
+              }))
+          : PRESET_SYMBOLS.map(item => ({
+              label: item.label,
+              symbol: item.symbol,
+              tooltip: `快速切换到 ${item.label} (${item.symbol})`,
+            }))
+        ).map(item => {
           const isCurrent = (shownSymbol.toUpperCase() === item.symbol.toUpperCase()) || (draft.trim().toUpperCase() === item.symbol.toUpperCase())
           return (
             <button
@@ -1153,7 +1207,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
               type="button"
               style={PRESET_BUTTON(isCurrent)}
               onClick={() => pickPreset(item.symbol)}
-              title={`快速切换到 ${item.label} (${item.symbol})`}
+              title={item.tooltip}
             >
               {item.label}
             </button>
