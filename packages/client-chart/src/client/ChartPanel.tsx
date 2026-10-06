@@ -167,6 +167,13 @@ const BANNER: CSSProperties = {
   flexShrink: 0,
 }
 
+export function formatChartError(raw: string): string {
+  if (raw === 'fetch failed' || raw.includes('fetch failed') || raw.includes('ECONNRESET')) {
+    return '行情接口连接失败 (fetch failed)：无法直连境外 Binance/OKX 行情服务器。若在境内使用，请开启网络代理/梯子；或点击下方【查看 A 股】免代理体验。'
+  }
+  return raw
+}
+
 function ChartErrorBanner({
   error,
   targetTimeframe,
@@ -186,6 +193,7 @@ function ChartErrorBanner({
 }): JSX.Element {
   const isCn = providerId === 'cn'
   const isNetwork = error.includes('不可达') || error.includes('fetch failed') || error.includes('网络') || error.includes('超时')
+  const displayMsg = formatChartError(error)
   return (
     <div style={BANNER} role="alert">
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0, overflow: 'hidden' }}>
@@ -199,9 +207,9 @@ function ChartErrorBanner({
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
           }}
-          title={error}
+          title={displayMsg}
         >
-          {error}
+          {displayMsg}
         </span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
@@ -853,7 +861,14 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
     try {
       localStorage.setItem('dsh-trading.manual-provider', newProvider)
     } catch {}
-    const targetSymbol = (draft.trim() !== '' ? draft : shownSymbol).trim()
+    let targetSymbol = (draft.trim() !== '' ? draft : shownSymbol).trim()
+    if (newProvider === 'cn' && (!targetSymbol || /^[A-Z]{3,10}(USDT|BUSD|USDC|BTC|ETH)$/i.test(targetSymbol))) {
+      targetSymbol = 'sh000001'
+      setDraft('sh000001')
+    } else if (newProvider === 'binance' && (!targetSymbol || /^(sh|sz)?\d{6}$/i.test(targetSymbol))) {
+      targetSymbol = 'ETHUSDT'
+      setDraft('ETHUSDT')
+    }
     if (targetSymbol !== '') {
       setPinned(true)
       void load(targetSymbol, activeTimeframe, 'user', newProvider)
@@ -1068,11 +1083,13 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
           : error !== null && payload === null
             ? (
               <div style={NOTE}>
-                <p style={{ color: 'var(--dsw-alias-text-error, #e0563f)', fontWeight: 600 }}>{error}</p>
-                <div style={{ marginTop: 8, display: 'flex', gap: 8, justifyContent: 'center' }}>
+                <p style={{ color: 'var(--dsw-alias-text-error, #e0563f)', fontWeight: 600, maxWidth: 520, lineHeight: 1.6, margin: '0 auto' }}>
+                  {formatChartError(error)}
+                </p>
+                <div style={{ marginTop: 12, display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <button
                     type="button"
-                    style={{ ...TF_BUTTON(true), padding: '4px 12px' }}
+                    style={{ ...TF_BUTTON(true), padding: '4px 14px' }}
                     onClick={() => {
                       const sym = (draft.trim() !== '' ? draft : shownSymbol).trim()
                       if (sym !== '') void load(sym, activeTimeframe, 'user')
@@ -1082,13 +1099,20 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
                   </button>
                   <button
                     type="button"
-                    style={{ ...TF_BUTTON(false), padding: '4px 12px' }}
-                    onClick={() => changeProvider('cn')}
+                    style={{ ...TF_BUTTON(false), padding: '4px 14px' }}
+                    onClick={() => pickPreset('sh000001')}
                   >
-                    🇨🇳 切换为 A 股数据源
+                    🇨🇳 查看上证指数 (免代理)
+                  </button>
+                  <button
+                    type="button"
+                    style={{ ...TF_BUTTON(false), padding: '4px 14px' }}
+                    onClick={() => pickPreset('600519')}
+                  >
+                    🇨🇳 查看贵州茅台 (免代理)
                   </button>
                 </div>
-                {hint !== null ? <p style={{ fontSize: 12, opacity: 0.75, marginTop: 8 }}>{hint}</p> : null}
+                {hint !== null ? <p style={{ fontSize: 12, opacity: 0.75, marginTop: 10 }}>{hint}</p> : null}
               </div>
             )
             : payload !== null
