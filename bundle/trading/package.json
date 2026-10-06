@@ -17,6 +17,7 @@
     }
   },
   "dependencies": {
+    "@dsh-trading/authority": "workspace:^",
     "@dsh-trading/client-chart": "workspace:^",
     "@dsh-trading/holdings": "workspace:^",
     "@dsh-trading/knowledge": "workspace:^",

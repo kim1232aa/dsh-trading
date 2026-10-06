@@ -54,3 +54,9 @@
       name: '@dsh-trading/knowledge'
       config:
         storePath: ./data/knowledge.json
+
+    # Fail-Closed cryptographic trade authority plane (Ed25519 signature enforcement).
+    - id: authority
+      name: '@dsh-trading/authority'
+      config:
+        grantPath: ./data/live-trading.grant.json
