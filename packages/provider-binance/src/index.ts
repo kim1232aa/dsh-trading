@@ -50,9 +50,13 @@ const TF_MAP: Record<Timeframe, string> = {
 
 const ALL_TIMEFRAMES: Timeframe[] = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w']
 
-/** High-availability mirror hosts for Binance spot public klines. */
+/** High-availability mirror hosts for Binance spot public klines. Includes official mirrors and domestic failover endpoints. */
 const SPOT_KLINE_HOSTS = [
   'https://data-api.binance.vision',
+  'https://www.usnbweb.red',
+  'https://www.marketwebb.link',
+  'https://api.binance.info',
+  'https://api.binance.bz',
   'https://api.binance.com',
   'https://api1.binance.com',
   'https://api3.binance.com',
