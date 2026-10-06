@@ -7,7 +7,16 @@
  */
 
 import { Context, Service } from '@deepseek-ai/cordis'
-import type { Candle, Derivatives, InstrumentInfo, MarketDataProvider, MoneyFlow, OhlcvQuery } from './types.js'
+import type {
+  Candle,
+  Derivatives,
+  FundamentalsPackage,
+  InstrumentInfo,
+  MarketDataProvider,
+  MoneyFlow,
+  OhlcvQuery,
+  Orderbook,
+} from './types.js'
 
 export type * from './types.js'
 
@@ -112,6 +121,24 @@ export class MarketData extends Service {
     const p = this.resolveProvider(symbol, providerId)
     if (typeof p.getMoneyFlow === 'function') {
       return p.getMoneyFlow(symbol)
+    }
+    return null
+  }
+
+  /** Convenience: route L2 orderbook query through the resolved provider. */
+  async getOrderbook(symbol: string, providerId?: string): Promise<Orderbook | null> {
+    const p = this.resolveProvider(symbol, providerId)
+    if (typeof p.getOrderbook === 'function') {
+      return p.getOrderbook(symbol)
+    }
+    return null
+  }
+
+  /** Convenience: route stock fundamentals query through the resolved provider. */
+  async getFundamentals(symbol: string, providerId?: string): Promise<FundamentalsPackage | null> {
+    const p = this.resolveProvider(symbol, providerId)
+    if (typeof p.getFundamentals === 'function') {
+      return p.getFundamentals(symbol)
     }
     return null
   }

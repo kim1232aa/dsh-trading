@@ -236,6 +236,21 @@ describe('MarketData query routing', () => {
       async getMoneyFlow(symbol: string) {
         return { symbol, netInflow: 1000000, summary: '主力净买入' }
       },
+      async getOrderbook(symbol: string) {
+        return {
+          symbol,
+          bids: [{ price: 100, volume: 10 }],
+          asks: [{ price: 101, volume: 12 }],
+          timestamp: 1234567890,
+        }
+      },
+      async getFundamentals(symbol: string) {
+        return {
+          symbol,
+          peTtm: 25.5,
+          marketCap: 2000000000000,
+        }
+      },
     }
 
     hub.register(binance)
@@ -255,5 +270,20 @@ describe('MarketData query routing', () => {
     // Provider without getMoneyFlow returns null
     const mfCrypto = await hub.getMoneyFlow('BTCUSDT')
     expect(mfCrypto).toBeNull()
+
+    // getOrderbook dispatches to provider implementing it
+    const ob = await hub.getOrderbook('600519')
+    expect(ob?.bids[0]?.price).toBe(100)
+    expect(ob?.asks[0]?.price).toBe(101)
+
+    const obCrypto = await hub.getOrderbook('BTCUSDT')
+    expect(obCrypto).toBeNull()
+
+    // getFundamentals dispatches to provider implementing it
+    const fund = await hub.getFundamentals('600519')
+    expect(fund?.peTtm).toBe(25.5)
+
+    const fundCrypto = await hub.getFundamentals('BTCUSDT')
+    expect(fundCrypto).toBeNull()
   })
 })

@@ -12,6 +12,9 @@
     "typecheck": "pnpm -r run typecheck",
     "test": "vitest run",
     "check:boundary": "node scripts/boundary-check.mjs",
+    "check:tools": "node scripts/tools-audit.mjs",
+    "check:home": "node scripts/home-guard.mjs",
+    "audit:all": "pnpm run check:boundary && pnpm run check:tools && pnpm run check:home",
     "clean": "pnpm -r exec rm -rf lib"
   },
   "devDependencies": {
