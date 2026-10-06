@@ -42,3 +42,9 @@
       name: '@dsh-trading/holdings'
       config:
         storeDir: ./data/holdings
+
+    # Watchlist management with group classification and model tools.
+    - id: watchlist
+      name: '@dsh-trading/watchlist'
+      config:
+        storePath: ./data/watchlist.json
