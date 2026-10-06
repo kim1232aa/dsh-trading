@@ -226,8 +226,8 @@ export const evasiveSuperTrendIndicator = {
   ],
   styles: {
     lines: [
-      { color: EVASIVE_ST_DEFAULTS.bullColor, size: 2, style: 'solid', smooth: false, dashedValue: [2, 2] },
-      { color: EVASIVE_ST_DEFAULTS.bearColor, size: 2, style: 'solid', smooth: false, dashedValue: [2, 2] },
+      { color: 'transparent', size: 0, style: 'solid', smooth: false, dashedValue: [2, 2] },
+      { color: 'transparent', size: 0, style: 'solid', smooth: false, dashedValue: [2, 2] },
     ],
   },
   calc: (dataList: Candle[], indicator?: { calcParams?: number[] }) => {
@@ -249,7 +249,9 @@ export const evasiveSuperTrendIndicator = {
       calcParamsText: `(${indicator.calcParams.join(', ')})`,
       values: v === undefined ? [] : [
         { title: '', value: { text: v.toFixed(2), color: row?.trend === 1 ? EVASIVE_ST_DEFAULTS.bullColor : EVASIVE_ST_DEFAULTS.bearColor } },
-        row?.isNoisy ? { title: '', value: { text: '[避险]', color: '#ffa726' } } : null,
+        row?.isNoisy
+          ? { title: '', value: { text: '[虚线·避险]', color: '#ffa726' } }
+          : { title: '', value: { text: '[实线·主趋势]', color: row?.trend === 1 ? EVASIVE_ST_DEFAULTS.bullColor : EVASIVE_ST_DEFAULTS.bearColor } },
         row?.trendChanged ? { title: '', value: { text: row.trend === 1 ? '▲ 转多' : '▼ 转空', color: row.trend === 1 ? EVASIVE_ST_DEFAULTS.bullColor : EVASIVE_ST_DEFAULTS.bearColor } } : null,
       ].filter((x): x is NonNullable<typeof x> => x !== null),
       icons: [],
@@ -271,7 +273,41 @@ export const evasiveSuperTrendIndicator = {
 
     ctx.save()
 
-    // 1. Draw BULL and BEAR rounded badges on trendChanged bars (matching TradingView)
+    // 1. Draw SuperTrend band segments with solid (stable) vs dotted (noise evasion) styling
+    ctx.lineWidth = 2
+    for (let i = from + 1; i <= to; i++) {
+      const prev = results[i - 1]
+      const curr = results[i]
+      if (!prev || !curr) continue
+      // Do not connect across trend flips
+      if (prev.trend !== curr.trend) continue
+
+      const val0 = prev.stBand ?? (prev.trend === 1 ? prev.up : prev.dn)
+      const val1 = curr.stBand ?? (curr.trend === 1 ? curr.up : curr.dn)
+      if (val0 === undefined || val1 === undefined) continue
+
+      const x0 = xAxis.convertToPixel(i - 1)
+      const x1 = xAxis.convertToPixel(i)
+      const y0 = yAxis.convertToPixel(val0)
+      const y1 = yAxis.convertToPixel(val1)
+
+      ctx.beginPath()
+      ctx.moveTo(x0, y0)
+      ctx.lineTo(x1, y1)
+      ctx.strokeStyle = curr.trend === 1 ? EVASIVE_ST_DEFAULTS.bullColor : EVASIVE_ST_DEFAULTS.bearColor
+
+      // In Pine Script LuxAlgo Evasive SuperTrend:
+      // When in noise mode (isNoisy = true), band is rendered as dotted/dashed line.
+      // When normal (isNoisy = false), band is rendered as solid line.
+      if (curr.isNoisy) {
+        ctx.setLineDash([4, 3])
+      } else {
+        ctx.setLineDash([])
+      }
+      ctx.stroke()
+    }
+
+    // 2. Draw BULL and BEAR rounded badges on trendChanged bars (matching TradingView)
     for (let i = from; i <= to; i++) {
       const r = results[i]
       if (!r || !r.trendChanged) continue

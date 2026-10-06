@@ -39,8 +39,15 @@ export interface SRZone {
 
 export interface MtfSRBarPoint {
   res?: number | undefined
+  resTop?: number | undefined
+  resBottom?: number | undefined
   sup?: number | undefined
+  supTop?: number | undefined
+  supBottom?: number | undefined
   confluence?: number | undefined
+  confTop?: number | undefined
+  confBottom?: number | undefined
+  atr?: number | undefined
 }
 
 export interface ScoringWeights {
@@ -718,11 +725,11 @@ export function calculateMtfSR(
 
     // Determine nearest levels for the series output at bar i
     const activeAtBar = zones.filter(z => z.score >= minScore)
-    let nearestRes: number | undefined
+    let nearestResZone: SRZone | undefined
     let minResDist = Infinity
-    let nearestSup: number | undefined
+    let nearestSupZone: SRZone | undefined
     let minSupDist = Infinity
-    let nearestConf: number | undefined
+    let nearestConfZone: SRZone | undefined
     let minConfDist = Infinity
 
     for (const z of activeAtBar) {
@@ -730,13 +737,13 @@ export function calculateMtfSR(
         const dist = z.level >= curClose ? z.level - curClose : (curClose - z.level) * 2
         if (dist < minResDist) {
           minResDist = dist
-          nearestRes = z.level
+          nearestResZone = z
         }
       } else {
         const dist = z.level <= curClose ? curClose - z.level : (z.level - curClose) * 2
         if (dist < minSupDist) {
           minSupDist = dist
-          nearestSup = z.level
+          nearestSupZone = z
         }
       }
 
@@ -744,15 +751,22 @@ export function calculateMtfSR(
         const dist = Math.abs(z.level - curClose)
         if (dist < minConfDist) {
           minConfDist = dist
-          nearestConf = z.level
+          nearestConfZone = z
         }
       }
     }
 
     series[i] = {
-      res: nearestRes,
-      sup: nearestSup,
-      confluence: nearestConf,
+      res: nearestResZone?.level,
+      resTop: nearestResZone?.top,
+      resBottom: nearestResZone?.bottom,
+      sup: nearestSupZone?.level,
+      supTop: nearestSupZone?.top,
+      supBottom: nearestSupZone?.bottom,
+      confluence: nearestConfZone?.level,
+      confTop: nearestConfZone?.top,
+      confBottom: nearestConfZone?.bottom,
+      atr: baseATR[i],
     }
   }
 
@@ -903,10 +917,121 @@ export const mtfSRIndicator = {
     return {
       calcParamsText: '',
       values: [
-        row?.res ? { title: '阻力: ', value: { text: row.res.toFixed(2), color: '#158362' } } : null,
-        row?.sup ? { title: '支撑: ', value: { text: row.sup.toFixed(2), color: '#851793' } } : null,
-        row?.confluence ? { title: '共振带: ', value: { text: row.confluence.toFixed(2), color: '#7458a6' } } : null,
+        row?.res ? {
+          title: '阻力: ',
+          value: {
+            text: row.resTop && row.resBottom
+              ? `${row.res.toFixed(2)} [${row.resBottom.toFixed(2)}~${row.resTop.toFixed(2)}]`
+              : row.res.toFixed(2),
+            color: '#158362',
+          },
+        } : null,
+        row?.sup ? {
+          title: '支撑: ',
+          value: {
+            text: row.supTop && row.supBottom
+              ? `${row.sup.toFixed(2)} [${row.supBottom.toFixed(2)}~${row.supTop.toFixed(2)}]`
+              : row.sup.toFixed(2),
+            color: '#851793',
+          },
+        } : null,
+        row?.confluence ? {
+          title: '共振带: ',
+          value: { text: row.confluence.toFixed(2), color: '#7458a6' },
+        } : null,
       ].filter((x): x is NonNullable<typeof x> => x !== null),
     }
+  },
+  draw: ({ ctx, indicator, xAxis, yAxis, visibleRange }: {
+    ctx: CanvasRenderingContext2D
+    indicator: { result: MtfSRBarPoint[] }
+    xAxis: { convertToPixel: (val: number) => number }
+    yAxis: { convertToPixel: (val: number) => number }
+    visibleRange: { from: number; to: number }
+  }) => {
+    const results = indicator.result
+    if (!results || results.length === 0) return false
+    const from = Math.max(0, visibleRange.from)
+    const to = Math.min(results.length - 1, visibleRange.to)
+    if (from >= to) return false
+
+    ctx.save()
+
+    // 1. Draw dynamic ATR channel bands for Resistance and Support zones
+    for (let i = from + 1; i <= to; i++) {
+      const prev = results[i - 1]
+      const curr = results[i]
+      if (!prev || !curr) continue
+
+      const x0 = xAxis.convertToPixel(i - 1)
+      const x1 = xAxis.convertToPixel(i)
+
+      // Draw Resistance ATR channel zone (translucent emerald fill with dashed borders)
+      if (
+        curr.resTop !== undefined && curr.resBottom !== undefined &&
+        prev.resTop !== undefined && prev.resBottom !== undefined &&
+        Math.abs(curr.resTop - prev.resTop) < (curr.atr ?? 10) * 3
+      ) {
+        const yTop0 = yAxis.convertToPixel(prev.resTop)
+        const yBot0 = yAxis.convertToPixel(prev.resBottom)
+        const yTop1 = yAxis.convertToPixel(curr.resTop)
+        const yBot1 = yAxis.convertToPixel(curr.resBottom)
+
+        ctx.beginPath()
+        ctx.moveTo(x0, yTop0)
+        ctx.lineTo(x1, yTop1)
+        ctx.lineTo(x1, yBot1)
+        ctx.lineTo(x0, yBot0)
+        ctx.closePath()
+        ctx.fillStyle = 'rgba(21, 131, 98, 0.12)'
+        ctx.fill()
+
+        // Border dashed lines
+        ctx.strokeStyle = 'rgba(21, 131, 98, 0.35)'
+        ctx.lineWidth = 1
+        ctx.setLineDash([2, 2])
+        ctx.beginPath()
+        ctx.moveTo(x0, yTop0)
+        ctx.lineTo(x1, yTop1)
+        ctx.moveTo(x0, yBot0)
+        ctx.lineTo(x1, yBot1)
+        ctx.stroke()
+      }
+
+      // Draw Support ATR channel zone (translucent purple fill with dashed borders)
+      if (
+        curr.supTop !== undefined && curr.supBottom !== undefined &&
+        prev.supTop !== undefined && prev.supBottom !== undefined &&
+        Math.abs(curr.supTop - prev.supTop) < (curr.atr ?? 10) * 3
+      ) {
+        const yTop0 = yAxis.convertToPixel(prev.supTop)
+        const yBot0 = yAxis.convertToPixel(prev.supBottom)
+        const yTop1 = yAxis.convertToPixel(curr.supTop)
+        const yBot1 = yAxis.convertToPixel(curr.supBottom)
+
+        ctx.beginPath()
+        ctx.moveTo(x0, yTop0)
+        ctx.lineTo(x1, yTop1)
+        ctx.lineTo(x1, yBot1)
+        ctx.lineTo(x0, yBot0)
+        ctx.closePath()
+        ctx.fillStyle = 'rgba(133, 23, 147, 0.12)'
+        ctx.fill()
+
+        // Border dashed lines
+        ctx.strokeStyle = 'rgba(133, 23, 147, 0.35)'
+        ctx.lineWidth = 1
+        ctx.setLineDash([2, 2])
+        ctx.beginPath()
+        ctx.moveTo(x0, yTop0)
+        ctx.lineTo(x1, yTop1)
+        ctx.moveTo(x0, yBot0)
+        ctx.lineTo(x1, yBot1)
+        ctx.stroke()
+      }
+    }
+
+    ctx.restore()
+    return false
   },
 }

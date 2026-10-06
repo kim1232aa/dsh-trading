@@ -447,6 +447,52 @@ export const nadarayaWatsonIndicator = {
       }
     }
 
+    // 5. Dynamic K-line candle bar colouring based on NW trend and envelope penetration
+    for (let i = from; i <= to; i++) {
+      const r = results[i]
+      const k = kLineDataList[i] as { open?: number; high?: number; low?: number; close?: number } | undefined
+      if (!r || !k || k.open === undefined || k.close === undefined || k.high === undefined || k.low === undefined) continue
+
+      const x = xAxis.convertToPixel(i)
+      const yOpen = yAxis.convertToPixel(k.open)
+      const yClose = yAxis.convertToPixel(k.close)
+      const yHigh = yAxis.convertToPixel(k.high)
+      const yLow = yAxis.convertToPixel(k.low)
+
+      let barColor = r.isBullish ? '#00ffaa' : '#f23645'
+      // Envelope extreme penetration: highlight overbought / oversold exhaustion
+      if (k.high >= (r.upper ?? Infinity)) {
+        barColor = '#ffb300' // Upper envelope overbought / exhaustion amber
+      } else if (k.low <= (r.lower ?? -Infinity)) {
+        barColor = '#e040fb' // Lower envelope oversold / exhaustion violet
+      }
+
+      // Compute adaptive candle body width based on current bar spacing
+      const nextX = i < to ? xAxis.convertToPixel(i + 1) : x + 6
+      const prevX = i > from ? xAxis.convertToPixel(i - 1) : x - 6
+      const barSpacing = Math.abs(nextX - prevX) / 2
+      const barWidth = Math.max(1, Math.min(12, barSpacing * 0.7))
+      const halfW = barWidth / 2
+
+      ctx.save()
+      ctx.strokeStyle = barColor
+      ctx.fillStyle = barColor
+      ctx.lineWidth = 1
+
+      // Draw wick
+      ctx.beginPath()
+      ctx.moveTo(x, yHigh)
+      ctx.lineTo(x, yLow)
+      ctx.stroke()
+
+      // Draw candle body
+      const topY = Math.min(yOpen, yClose)
+      const height = Math.max(1.5, Math.abs(yClose - yOpen))
+      ctx.fillRect(x - halfW, topY, barWidth, height)
+
+      ctx.restore()
+    }
+
     ctx.restore()
     return false
   },
