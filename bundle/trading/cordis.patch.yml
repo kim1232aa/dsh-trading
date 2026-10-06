@@ -60,3 +60,10 @@
       name: '@dsh-trading/authority'
       config:
         grantPath: ./data/live-trading.grant.json
+
+    # Automated active research & market monitoring scheduled tasks.
+    - id: tasks-schedule
+      name: '@dsh-trading/tasks-schedule'
+      config:
+        tasksFilePath: ./data/tasks.json
+        logsFilePath: ./data/task-logs.json

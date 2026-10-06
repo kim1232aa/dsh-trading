@@ -37,6 +37,7 @@ const LAYERS = {
   // L2: Engines & Tools
   '@dsh-trading/tool-market': 2,
   '@dsh-trading/verdict': 2,
+  '@dsh-trading/tasks-schedule': 2,
 
   // L3: UI Layers
   '@dsh-trading/client-frame': 3,
