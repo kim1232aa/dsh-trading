@@ -47,9 +47,18 @@ describe('channel identity', () => {
   })
 
   it('exposes exactly the endpoints it means to', () => {
-    // Data reads (ohlcv, derivatives, moneyflow, symbols, providers) plus view publication.
+    // Data reads (ohlcv, derivatives, moneyflow, orderbook, fundamentals, symbols, providers) plus view publication.
     // Anything appearing here deserves a second look: this channel is reachable from a browser.
-    expect(Object.values(ENDPOINTS).sort()).toEqual(['derivatives', 'moneyflow', 'ohlcv', 'providers', 'symbols', 'view'])
+    expect(Object.values(ENDPOINTS).sort()).toEqual([
+      'derivatives',
+      'fundamentals',
+      'moneyflow',
+      'ohlcv',
+      'orderbook',
+      'providers',
+      'symbols',
+      'view',
+    ])
   })
 })
 
@@ -174,6 +183,64 @@ describe('serveMarketEndpoint', () => {
       },
     })
     expect(resolveProvider).toHaveBeenCalledWith('600519', undefined)
+  })
+
+  it('serves orderbook when available', async () => {
+    const resolveProvider = vi.fn((sym: string) => ({
+      id: 'cn',
+      description: 'A-share',
+      listSymbols: async () => [],
+      getOhlcv: async () => [CANDLE],
+      getOrderbook: async (s: string) => ({
+        symbol: s,
+        timestamp: 1234567890,
+        bids: [{ price: 100, volume: 10 }],
+        asks: [{ price: 101, volume: 20 }],
+        spread: 1,
+      }),
+    }))
+    const h = { provider: vi.fn(), resolveProvider } as unknown as MarketDataLike
+    const res = await serveMarketEndpoint(h, ENDPOINTS.orderbook, { symbol: '600519' })
+    expect(res).toEqual({
+      providerId: 'cn',
+      symbol: '600519',
+      orderbook: {
+        symbol: '600519',
+        timestamp: 1234567890,
+        bids: [{ price: 100, volume: 10 }],
+        asks: [{ price: 101, volume: 20 }],
+        spread: 1,
+      },
+    })
+  })
+
+  it('serves fundamentals when available', async () => {
+    const resolveProvider = vi.fn((sym: string) => ({
+      id: 'cn',
+      description: 'A-share',
+      listSymbols: async () => [],
+      getOhlcv: async () => [CANDLE],
+      getFundamentals: async (s: string) => ({
+        symbol: s,
+        timestamp: 1234567890,
+        peTtm: 25.5,
+        pb: 3.2,
+        totalMarketCap: 1000000000,
+      }),
+    }))
+    const h = { provider: vi.fn(), resolveProvider } as unknown as MarketDataLike
+    const res = await serveMarketEndpoint(h, ENDPOINTS.fundamentals, { symbol: '600519' })
+    expect(res).toEqual({
+      providerId: 'cn',
+      symbol: '600519',
+      fundamentals: {
+        symbol: '600519',
+        timestamp: 1234567890,
+        peTtm: 25.5,
+        pb: 3.2,
+        totalMarketCap: 1000000000,
+      },
+    })
   })
 
   it('serves registered providers list', async () => {

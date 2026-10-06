@@ -18,7 +18,16 @@
  * @module
  */
 
-import type { Candle, Derivatives, InstrumentInfo, MarketDataProvider, MoneyFlow, Timeframe } from '@dsh-trading/market-data'
+import type {
+  Candle,
+  Derivatives,
+  FundamentalsPackage,
+  InstrumentInfo,
+  MarketDataProvider,
+  MoneyFlow,
+  Orderbook,
+  Timeframe,
+} from '@dsh-trading/market-data'
 
 /**
  * Logical channel this package owns on the Connection transport.
@@ -37,6 +46,8 @@ export const ENDPOINTS = {
   derivatives: 'derivatives',
   moneyflow: 'moneyflow',
   providers: 'providers',
+  orderbook: 'orderbook',
+  fundamentals: 'fundamentals',
 } as const
 
 /** The `providers` answer: list of registered providers and their descriptions. */
@@ -56,6 +67,20 @@ export interface MoneyFlowResponse {
   providerId: string
   symbol: string
   moneyFlow: MoneyFlow | null
+}
+
+/** The `orderbook` answer: null when the provider has no L2 depth quotes. */
+export interface OrderbookResponse {
+  providerId: string
+  symbol: string
+  orderbook: Orderbook | null
+}
+
+/** The `fundamentals` answer: null when the provider has no financial valuation data. */
+export interface FundamentalsResponse {
+  providerId: string
+  symbol: string
+  fundamentals: FundamentalsPackage | null
 }
 
 /** Bars a single panel request may pull; a chart cannot show more than this usefully. */
@@ -242,7 +267,16 @@ export async function serveMarketEndpoint(
   endpoint: string,
   payload: unknown,
   onView?: (view: ChartView) => void,
-): Promise<SymbolsResponse | OhlcvResponse | DerivativesResponse | MoneyFlowResponse | ProvidersResponse | { ok: true }> {
+): Promise<
+  | SymbolsResponse
+  | OhlcvResponse
+  | DerivativesResponse
+  | MoneyFlowResponse
+  | OrderbookResponse
+  | FundamentalsResponse
+  | ProvidersResponse
+  | { ok: true }
+> {
   const getProvider = (sym?: string, id?: string) => {
     return typeof marketData.resolveProvider === 'function'
       ? marketData.resolveProvider(sym, id)
@@ -305,6 +339,22 @@ export async function serveMarketEndpoint(
     const provider = getProvider(request.symbol, request.providerId)
     const moneyFlow = provider.getMoneyFlow === undefined ? null : await provider.getMoneyFlow(request.symbol)
     return { providerId: provider.id, symbol: request.symbol, moneyFlow }
+  }
+
+  if (endpoint === ENDPOINTS.orderbook) {
+    const request = readOhlcvRequest({ ...(typeof payload === 'object' && payload !== null ? payload : {}), timeframe: '5m' })
+    if (typeof request === 'string') throw new Error(request)
+    const provider = getProvider(request.symbol, request.providerId)
+    const orderbook = provider.getOrderbook === undefined ? null : await provider.getOrderbook(request.symbol)
+    return { providerId: provider.id, symbol: request.symbol, orderbook }
+  }
+
+  if (endpoint === ENDPOINTS.fundamentals) {
+    const request = readOhlcvRequest({ ...(typeof payload === 'object' && payload !== null ? payload : {}), timeframe: '5m' })
+    if (typeof request === 'string') throw new Error(request)
+    const provider = getProvider(request.symbol, request.providerId)
+    const fundamentals = provider.getFundamentals === undefined ? null : await provider.getFundamentals(request.symbol)
+    return { providerId: provider.id, symbol: request.symbol, fundamentals }
   }
 
   throw new Error(`unknown endpoint '${endpoint}'`)

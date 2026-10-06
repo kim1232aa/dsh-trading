@@ -8,6 +8,7 @@
 
 import { annotationDigest } from './payload.js'
 import type { ChartAnnotation, ChartPayload, ChartScenario } from './payload.js'
+import type { FundamentalsPackage, Orderbook } from '@dsh-trading/market-data'
 
 /**
  * Mirrors the host's `MARKET_CHANNEL`; duplicated rather than imported so the
@@ -63,6 +64,10 @@ export interface MarketClient {
   getDerivatives(symbol: string, providerId?: string, signal?: AbortSignal): Promise<PanelDerivatives | null>
   /** Institutional & retail money flow (CN A-shares & equities). null when not supported. */
   getMoneyFlow(symbol: string, providerId?: string, signal?: AbortSignal): Promise<PanelMoneyFlow | null>
+  /** Level 2 orderbook (5-10 levels depth). null when not supported. */
+  getOrderbook(symbol: string, providerId?: string, signal?: AbortSignal): Promise<Orderbook | null>
+  /** Financial valuation & fundamentals (PE, PB, Market Cap). null when not supported. */
+  getFundamentals(symbol: string, providerId?: string, signal?: AbortSignal): Promise<FundamentalsPackage | null>
 }
 
 /** Institutional and retail order flow for equities. */
@@ -448,6 +453,22 @@ export function createMarketClient(rpc: RpcCaller): MarketClient {
         moneyFlow: PanelMoneyFlow | null
       }
       return value.moneyFlow
+    },
+
+    async getOrderbook(symbol, providerId, signal) {
+      const body = providerId === undefined ? { symbol } : { symbol, providerId }
+      const value = await unwrap(rpc.call(CHANNEL, 'orderbook', body, signal)) as {
+        orderbook: Orderbook | null
+      }
+      return value.orderbook
+    },
+
+    async getFundamentals(symbol, providerId, signal) {
+      const body = providerId === undefined ? { symbol } : { symbol, providerId }
+      const value = await unwrap(rpc.call(CHANNEL, 'fundamentals', body, signal)) as {
+        fundamentals: FundamentalsPackage | null
+      }
+      return value.fundamentals
     },
   }
 }

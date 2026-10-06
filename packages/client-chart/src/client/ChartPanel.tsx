@@ -25,6 +25,7 @@ import { decideFollow } from './follow.js'
 import { mergeMarks, mergeTail, postureColor, readMarks, recallMarks, rememberMarks, withCandles } from './market-client.js'
 import type { ChartMarks, MarketClient, PanelDerivatives, PanelMoneyFlow } from './market-client.js'
 import type { ChartPayload } from './payload.js'
+import type { FundamentalsPackage, Orderbook } from '@dsh-trading/market-data'
 
 /** Timeframes the panel offers; the provider may serve a subset and will say so. */
 const TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'] as const
@@ -498,6 +499,134 @@ function MoneyFlowStrip({ market, symbol, providerId, live }: {
       {data.smallInflow != null && data.mediumInflow != null ? (
         <span style={{ opacity: 0.85 }}>
           散户(中小单) <span style={{ color: data.smallInflow + data.mediumInflow >= 0 ? '#3ddc97' : '#f47067' }}>{fmt(data.smallInflow + data.mediumInflow)}</span>
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * Level 2 Orderbook depth strip (买一至买五、卖一至卖五、买卖价差与委比).
+ */
+function OrderbookStrip({ market, symbol, providerId, live }: {
+  market: MarketClient
+  symbol: string
+  providerId: string
+  live: boolean
+}): JSX.Element | null {
+  const [data, setData] = useState<Orderbook | null | undefined>(undefined)
+
+  useEffect(() => {
+    setData(undefined)
+    const controller = new AbortController()
+    const pull = (): void => {
+      market.getOrderbook(symbol, providerId, controller.signal).then(
+        ob => setData(ob),
+        () => { if (!controller.signal.aborted) setData(null) },
+      )
+    }
+    pull()
+    const timer = live ? setInterval(pull, 3_000) : undefined
+    return () => {
+      controller.abort()
+      if (timer !== undefined) clearInterval(timer)
+    }
+  }, [market, symbol, providerId, live])
+
+  if (!data || (data.bids.length === 0 && data.asks.length === 0)) return null
+
+  const bestBid = data.bids[0]
+  const bestAsk = data.asks[0]
+  const spread = data.spread ?? (bestBid && bestAsk ? Number((bestAsk.price - bestBid.price).toFixed(4)) : null)
+
+  return (
+    <div style={{ ...STRIP, fontSize: 11, background: 'var(--dsw-alias-bg-hover, rgba(128,128,128,0.04))' }}>
+      <span style={{ color: 'var(--dsw-alias-text-brand, #3370ff)', fontWeight: 600 }}>
+        盘口五档 (L2):
+      </span>
+      {bestBid ? (
+        <span>
+          买一: <strong style={{ color: '#3ddc97' }}>{bestBid.price}</strong> ({bestBid.volume}手)
+        </span>
+      ) : null}
+      {bestAsk ? (
+        <span>
+          卖一: <strong style={{ color: '#f47067' }}>{bestAsk.price}</strong> ({bestAsk.volume}手)
+        </span>
+      ) : null}
+      {spread !== null ? (
+        <span style={{ opacity: 0.85 }}>
+          价差: <span style={{ color: 'var(--dsw-alias-text-1, inherit)' }}>{spread}</span>
+        </span>
+      ) : null}
+      {data.bids.length > 1 || data.asks.length > 1 ? (
+        <span style={{ opacity: 0.85 }}>
+          买档: {data.bids.slice(0, 3).map(b => `${b.price}`).join('/')} | 卖档: {data.asks.slice(0, 3).map(a => `${a.price}`).join('/')}
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * Stock valuation & fundamentals metrics strip (PE TTM, PB, 总市值, 流通市值).
+ */
+function FundamentalsStrip({ market, symbol, providerId }: {
+  market: MarketClient
+  symbol: string
+  providerId: string
+}): JSX.Element | null {
+  const [data, setData] = useState<FundamentalsPackage | null | undefined>(undefined)
+
+  useEffect(() => {
+    setData(undefined)
+    const controller = new AbortController()
+    market.getFundamentals(symbol, providerId, controller.signal).then(
+      f => setData(f),
+      () => { if (!controller.signal.aborted) setData(null) },
+    )
+    return () => {
+      controller.abort()
+    }
+  }, [market, symbol, providerId])
+
+  if (!data) return null
+
+  const fmtCap = (v?: number) => {
+    if (v === undefined || v === null || Number.isNaN(v)) return '—'
+    if (v >= 1e8) return `${(v / 1e8).toFixed(2)}亿`
+    if (v >= 1e4) return `${(v / 1e4).toFixed(1)}万`
+    return `${v.toFixed(0)}元`
+  }
+
+  return (
+    <div style={{ ...STRIP, fontSize: 11 }}>
+      <span style={{ color: 'var(--dsw-alias-text-brand, #8b5cf6)', fontWeight: 600 }}>
+        估值基本面:
+      </span>
+      {data.peTtm !== undefined && data.peTtm !== null ? (
+        <span>
+          市盈率(TTM): <strong>{data.peTtm.toFixed(2)}</strong>
+        </span>
+      ) : null}
+      {data.pb !== undefined && data.pb !== null ? (
+        <span>
+          市净率(PB): <strong>{data.pb.toFixed(2)}</strong>
+        </span>
+      ) : null}
+      {data.totalMarketCap !== undefined && data.totalMarketCap !== null ? (
+        <span>
+          总市值: <strong>{fmtCap(data.totalMarketCap)}</strong>
+        </span>
+      ) : null}
+      {data.circulatingMarketCap !== undefined && data.circulatingMarketCap !== null ? (
+        <span>
+          流通市值: <strong>{fmtCap(data.circulatingMarketCap)}</strong>
+        </span>
+      ) : null}
+      {data.turnoverRatio !== undefined && data.turnoverRatio !== null ? (
+        <span>
+          换手率: <strong>{data.turnoverRatio.toFixed(2)}%</strong>
         </span>
       ) : null}
     </div>
@@ -1053,6 +1182,23 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
                 symbol={shownSymbol}
                 providerId={payload.provider}
                 live={live}
+              />
+            ) : null}
+            {payload.provider === 'cn' ? (
+              <OrderbookStrip
+                key={`orderbook-${payload.provider}-${shownSymbol}`}
+                market={market}
+                symbol={shownSymbol}
+                providerId={payload.provider}
+                live={live}
+              />
+            ) : null}
+            {payload.provider === 'cn' ? (
+              <FundamentalsStrip
+                key={`fundamentals-${payload.provider}-${shownSymbol}`}
+                market={market}
+                symbol={shownSymbol}
+                providerId={payload.provider}
               />
             ) : null}
           </>
