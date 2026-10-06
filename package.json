@@ -11,6 +11,7 @@
     "build": "pnpm -r run build",
     "typecheck": "pnpm -r run typecheck",
     "test": "vitest run",
+    "check:boundary": "node scripts/boundary-check.mjs",
     "clean": "pnpm -r exec rm -rf lib"
   },
   "devDependencies": {
