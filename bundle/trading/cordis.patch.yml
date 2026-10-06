@@ -36,3 +36,9 @@
     # closed panel. Remove the row for the generic text cards.
     - id: client-chart
       name: '@dsh-trading/client-chart'
+
+    # Two-zone portfolio ledger & position tracking (staged candidates vs committed positions).
+    - id: holdings
+      name: '@dsh-trading/holdings'
+      config:
+        storeDir: ./data/holdings
