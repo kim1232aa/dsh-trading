@@ -10,6 +10,8 @@
  *   lowerBand = nwVal - residual * bandMultiplier
  */
 
+import { formatPrice } from '../precision.js'
+
 export type KernelType =
   | 'Gaussian'
   | 'Epanechnikov'
@@ -297,7 +299,7 @@ export function createNadarayaWatsonTooltipDataSource({
 }) {
   const i = crosshair.dataIndex
   const row = i !== undefined ? indicator.result?.[i] : undefined
-  const v = row ? (row.up ?? row.dn ?? row.value)?.toFixed(2) : undefined
+  const v = row ? formatPrice(row.up ?? row.dn ?? row.value) : undefined
   const upColor = '#00ffaa'
   const dnColor = '#f23645'
   const bandColor = '#50a0f0'
@@ -306,8 +308,8 @@ export function createNadarayaWatsonTooltipDataSource({
     calcParamsText: indicator.calcParams?.length ? `(${indicator.calcParams.join(', ')})` : '',
     values: v === undefined ? [] : [
       { title: '中轨: ', value: { text: v, color: row?.isBullish ? upColor : dnColor } },
-      row?.upper !== undefined ? { title: '上轨: ', value: { text: row.upper.toFixed(2), color: bandColor } } : null,
-      row?.lower !== undefined ? { title: '下轨: ', value: { text: row.lower.toFixed(2), color: bandColor } } : null,
+      row?.upper !== undefined ? { title: '上轨: ', value: { text: formatPrice(row.upper), color: bandColor } } : null,
+      row?.lower !== undefined ? { title: '下轨: ', value: { text: formatPrice(row.lower), color: bandColor } } : null,
     ].filter((x): x is NonNullable<typeof x> => x !== null),
     icons: [],
   }

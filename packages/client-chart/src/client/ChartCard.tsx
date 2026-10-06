@@ -30,6 +30,7 @@ import { orderBlockBreaker, orderBlockIndicator } from './indicators/order-block
 import { mtfSRZones, mtfSRIndicator } from './indicators/mtf-sr.js'
 import { entrySignalIndicator } from './indicators/entry-signal.js'
 import { rsiGridIndicator } from './indicators/rsi-grid.js'
+import { detectPricePrecision, formatPrice } from './precision.js'
 
 export { evasiveSuperTrend } from './indicators/evasive-st.js'
 export { nadarayaWatsonTrend } from './indicators/nadaraya-watson.js'
@@ -343,7 +344,6 @@ function ensureRegistered(): void {
     name: 'WMA',
     shortName: '',
     series: 'price',
-    precision: 2,
     shouldOhlc: true,
     calcParams: WMA_PERIODS,
     figures: wmaFigures(WMA_PERIODS),
@@ -364,7 +364,6 @@ function ensureRegistered(): void {
     name: 'SUPERTREND',
     shortName: '超级趋势',
     series: 'price',
-    precision: 2,
     calcParams: [60, 4],
     figures: [{ key: 'up', type: 'line' }, { key: 'dn', type: 'line' }],
     styles: { lines: ST_COLORS.map(color => ({ color, size: 1, style: 'solid', smooth: false, dashedValue: [2, 2] })) },
@@ -379,7 +378,7 @@ function ensureRegistered(): void {
       const v = row?.up ?? row?.dn
       return {
         calcParamsText: `(${indicator.calcParams.join(', ')})`,
-        values: v === undefined ? [] : [{ title: '', value: { text: v, color: ST_COLORS[row?.up !== undefined ? 0 : 1] } }],
+        values: v === undefined ? [] : [{ title: '', value: { text: formatPrice(v), color: ST_COLORS[row?.up !== undefined ? 0 : 1] } }],
         icons: [GEAR],
       }
     },
@@ -825,6 +824,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, onEditParam
     chartRef.current = chart
     const data = latest.current
     chart.setStyles(klineStyles(palette))
+    const pricePrec = detectPricePrecision(data.candles)
+    chart.setPriceVolumePrecision(pricePrec, 0)
     chart.applyNewData(data.candles.map(c => ({
       timestamp: Date.parse(c.time),
       open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,

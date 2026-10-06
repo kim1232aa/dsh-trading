@@ -7,6 +7,8 @@
  * and pushes the band away by (alpha * ATR) to avoid premature whipsaws.
  */
 
+import { formatPrice } from '../precision.js'
+
 export interface Candle {
   high: number
   low: number
@@ -248,7 +250,7 @@ export const evasiveSuperTrendIndicator = {
     return {
       calcParamsText: `(${indicator.calcParams.join(', ')})`,
       values: v === undefined ? [] : [
-        { title: '', value: { text: v.toFixed(2), color: row?.trend === 1 ? EVASIVE_ST_DEFAULTS.bullColor : EVASIVE_ST_DEFAULTS.bearColor } },
+        { title: '', value: { text: formatPrice(v), color: row?.trend === 1 ? EVASIVE_ST_DEFAULTS.bullColor : EVASIVE_ST_DEFAULTS.bearColor } },
         row?.isNoisy
           ? { title: '', value: { text: '[虚线·避险]', color: '#ffa726' } }
           : { title: '', value: { text: '[实线·主趋势]', color: row?.trend === 1 ? EVASIVE_ST_DEFAULTS.bullColor : EVASIVE_ST_DEFAULTS.bearColor } },

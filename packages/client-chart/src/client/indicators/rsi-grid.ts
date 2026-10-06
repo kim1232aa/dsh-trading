@@ -6,6 +6,7 @@
  */
 import { rsiGrid, RSI_GRID_DEFAULTS } from '../../../../tool-market/src/rsi-grid.js'
 import type { RsiGridBar } from '../../../../tool-market/src/rsi-grid.js'
+import { formatPrice } from '../precision.js'
 
 type K = { open: number; high: number; low: number; close: number }
 type Row = RsiGridBar & { inPos: boolean; posEntry?: number }
@@ -53,7 +54,7 @@ export const rsiGridIndicator = {
     if (r?.inPos && r.posEntry !== undefined) {
       const c = kLineDataList[i]?.close ?? r.posEntry
       const pnl = 100 * (c - r.posEntry) / r.posEntry
-      values.push({ title: '持多 ', value: { text: `@${r.posEntry.toFixed(2)} ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%`, color: pnl >= 0 ? HIGH_C : LOW_C } })
+      values.push({ title: '持多 ', value: { text: `@${formatPrice(r.posEntry)} ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%`, color: pnl >= 0 ? HIGH_C : LOW_C } })
     }
     if (r?.signal) values.push({ title: '', value: { text: r.signal === 'entry' ? '触发进多' : '触发平仓', color: r.signal === 'entry' ? HIGH_C : LOW_C } })
     return { calcParamsText: `(${indicator.calcParams.join(',')}｜低${low} 高${high})`, values, icons: [] }

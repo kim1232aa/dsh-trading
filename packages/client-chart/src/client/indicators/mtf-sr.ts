@@ -4,6 +4,8 @@
  * and conviction scoring (0-10).
  */
 
+import { formatPrice } from '../precision.js'
+
 export interface Candle {
   open?: number
   high: number
@@ -921,8 +923,8 @@ export const mtfSRIndicator = {
           title: '阻力: ',
           value: {
             text: row.resTop && row.resBottom
-              ? `${row.res.toFixed(2)} [${row.resBottom.toFixed(2)}~${row.resTop.toFixed(2)}]`
-              : row.res.toFixed(2),
+              ? `${formatPrice(row.res)} [${formatPrice(row.resBottom)}~${formatPrice(row.resTop)}]`
+              : formatPrice(row.res),
             color: '#158362',
           },
         } : null,
@@ -930,14 +932,14 @@ export const mtfSRIndicator = {
           title: '支撑: ',
           value: {
             text: row.supTop && row.supBottom
-              ? `${row.sup.toFixed(2)} [${row.supBottom.toFixed(2)}~${row.supTop.toFixed(2)}]`
-              : row.sup.toFixed(2),
+              ? `${formatPrice(row.sup)} [${formatPrice(row.supBottom)}~${formatPrice(row.supTop)}]`
+              : formatPrice(row.sup),
             color: '#851793',
           },
         } : null,
         row?.confluence ? {
           title: '共振带: ',
-          value: { text: row.confluence.toFixed(2), color: '#7458a6' },
+          value: { text: formatPrice(row.confluence), color: '#7458a6' },
         } : null,
       ].filter((x): x is NonNullable<typeof x> => x !== null),
     }

@@ -7,6 +7,7 @@
  */
 import { entrySignals, signalStatus } from '../../../../tool-market/src/signal.js'
 import type { EntrySignal } from '../../../../tool-market/src/signal.js'
+import { formatPrice } from '../precision.js'
 
 type K = { timestamp: number; open: number; high: number; low: number; close: number; volume?: number }
 type Row = { signal?: EntrySignal; status?: string }
@@ -45,10 +46,10 @@ export const entrySignalIndicator = {
       calcParamsText: `(${indicator.calcParams.join(', ')})`,
       values: s === undefined ? [] : [
         { title: '', value: { text: `${s.side === 'long' ? '做多' : '做空'}·${s.kind === 'flip' ? '翻转' : '回踩'}`, color: c } },
-        { title: '入: ', value: { text: s.entry.toFixed(2), color: c } },
-        { title: '损: ', value: { text: s.stop.toFixed(2), color: '#a475e0' } },
-        { title: 'T1: ', value: { text: s.target1.toFixed(2), color: '#539bf5' } },
-        { title: 'T2: ', value: { text: s.target2.toFixed(2), color: '#539bf5' } },
+        { title: '入: ', value: { text: formatPrice(s.entry), color: c } },
+        { title: '损: ', value: { text: formatPrice(s.stop), color: '#a475e0' } },
+        { title: 'T1: ', value: { text: formatPrice(s.target1), color: '#539bf5' } },
+        { title: 'T2: ', value: { text: formatPrice(s.target2), color: '#539bf5' } },
         { title: '', value: { text: STATUS_ZH[status ?? 'open'] ?? '', color: '#ffa726' } },
       ],
       icons: [],
