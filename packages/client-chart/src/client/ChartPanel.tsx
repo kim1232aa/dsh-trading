@@ -198,12 +198,16 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
   onData?: (data: PanelDerivatives | null) => void
   hoveredTime?: number | null
 }): JSX.Element | null {
-  if (providerId === 'cn') return null
-
   const [data, setData] = useState<PanelDerivatives | null | undefined>(undefined)
   const [failed, setFailed] = useState<string | null>(null)
 
   useEffect(() => {
+    if (providerId === 'cn') {
+      setData(null)
+      onData?.(null)
+      setFailed(null)
+      return
+    }
     setData(undefined)
     onData?.(null)
     setFailed(null)
@@ -226,12 +230,6 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
     }
   }, [market, symbol, providerId, live])
 
-  if (data === null) return null
-  if (failed !== null && data === undefined) {
-    // Don't guess the cause: a timeout and "no such perpetual" both land here. Show the real error.
-    return <div style={STRIP} title={failed}>合约数据获取失败（{failed.slice(0, 80)}），{DERIV_MS / 1000}s 后重试</div>
-  }
-
   // Crosshair hover: match corresponding historical bar from data.history
   const historyBar = useMemo(() => {
     if (!hoveredTime || !data?.history || data.history.length === 0) return null
@@ -241,6 +239,12 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
       return Math.abs(hSec - sec) < 300 // within 5m
     }) ?? null
   }, [hoveredTime, data])
+
+  if (providerId === 'cn' || data === null) return null
+  if (failed !== null && data === undefined) {
+    // Don't guess the cause: a timeout and "no such perpetual" both land here. Show the real error.
+    return <div style={STRIP} title={failed}>合约数据获取失败（{failed.slice(0, 80)}），{DERIV_MS / 1000}s 后重试</div>
+  }
 
   const target = historyBar ? {
     source: data?.source ?? '',
@@ -333,11 +337,13 @@ function MoneyFlowStrip({ market, symbol, providerId, live }: {
   providerId: string
   live: boolean
 }): JSX.Element | null {
-  if (providerId !== 'cn') return null
-
   const [data, setData] = useState<PanelMoneyFlow | null | undefined>(undefined)
 
   useEffect(() => {
+    if (providerId !== 'cn') {
+      setData(null)
+      return
+    }
     setData(undefined)
     const controller = new AbortController()
     const pull = (): void => {
@@ -354,7 +360,7 @@ function MoneyFlowStrip({ market, symbol, providerId, live }: {
     }
   }, [market, symbol, providerId, live])
 
-  if (!data) return null
+  if (providerId !== 'cn' || !data) return null
 
   const mainColor = data.netInflow >= 0 ? '#3ddc97' : '#f47067'
   const fmt = (v?: number | null) => {
@@ -932,8 +938,26 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
       {payload !== null && shownSymbol !== ''
         ? (
           <>
-            <DerivativesStrip market={market} symbol={shownSymbol} providerId={payload.provider} live={live} onData={setPanelDerivatives} hoveredTime={hoveredTime} />
-            <MoneyFlowStrip market={market} symbol={shownSymbol} providerId={payload.provider} live={live} />
+            {payload.provider !== 'cn' ? (
+              <DerivativesStrip
+                key={`deriv-${payload.provider}`}
+                market={market}
+                symbol={shownSymbol}
+                providerId={payload.provider}
+                live={live}
+                onData={setPanelDerivatives}
+                hoveredTime={hoveredTime}
+              />
+            ) : null}
+            {payload.provider === 'cn' ? (
+              <MoneyFlowStrip
+                key="moneyflow-cn"
+                market={market}
+                symbol={shownSymbol}
+                providerId={payload.provider}
+                live={live}
+              />
+            ) : null}
           </>
         )
         : null}
