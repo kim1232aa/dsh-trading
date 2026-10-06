@@ -31,6 +31,7 @@ const LAYERS = {
   '@dsh-trading/risk-guard': 1,
   '@dsh-trading/holdings': 1,
   '@dsh-trading/watchlist': 1,
+  '@dsh-trading/knowledge': 1,
 
   // L2: Engines & Tools
   '@dsh-trading/tool-market': 2,

@@ -20,6 +20,9 @@ importers:
       '@dsh-trading/holdings':
         specifier: workspace:^
         version: link:../../packages/holdings
+      '@dsh-trading/knowledge':
+        specifier: workspace:^
+        version: link:../../packages/knowledge
       '@dsh-trading/market-data':
         specifier: workspace:^
         version: link:../../packages/market-data
@@ -123,6 +126,24 @@ importers:
       '@dsh-trading/market-data':
         specifier: workspace:*
         version: link:../market-data
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: ^4.0.4
+        version: 4.0.4
+      '@deepseek-ai/dsh-tools':
+        specifier: 0.2.0-rc.2
+        version: 0.2.0-rc.2(2c642a792bf543710a7bf1d5a58a884e)
+      '@deepseek-ai/schemastery':
+        specifier: ^3.18.1
+        version: 3.18.4
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/knowledge:
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: ^4.0.4

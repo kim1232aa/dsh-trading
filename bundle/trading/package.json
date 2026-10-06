@@ -19,6 +19,7 @@
   "dependencies": {
     "@dsh-trading/client-chart": "workspace:^",
     "@dsh-trading/holdings": "workspace:^",
+    "@dsh-trading/knowledge": "workspace:^",
     "@dsh-trading/market-data": "workspace:^",
     "@dsh-trading/provider-csv": "workspace:^",
     "@dsh-trading/risk-guard": "workspace:^",

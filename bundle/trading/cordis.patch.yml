@@ -48,3 +48,9 @@
       name: '@dsh-trading/watchlist'
       config:
         storePath: ./data/watchlist.json
+
+    # Research knowledge graph & investment thesis repository.
+    - id: knowledge
+      name: '@dsh-trading/knowledge'
+      config:
+        storePath: ./data/knowledge.json
