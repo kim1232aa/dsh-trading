@@ -452,7 +452,7 @@ export function apply(ctx: Context, config: Config): void {
     parameters: {
       symbol: { type: 'string', required: true, description: 'Instrument symbol exactly as list_symbols reports it.' },
       timeframe: { type: 'string', required: true, enum: [...TIMEFRAMES], description: 'Timeframe the analysis was read on; prices are validated against THIS window.' },
-      bars: { type: 'integer', description: 'Window drawn and validated against. Default 200.' },
+      bars: { type: 'integer', description: 'Window drawn and validated against. Default scales with timeframe (1m 600, 5m 300, 15m 200, 30m 150, 1h 150, 4h 100, 1d 200, 1w 100).' },
       levels: {
         type: 'array',
         description: 'Horizontal price levels. Each must cite the evidence it rests on.',
