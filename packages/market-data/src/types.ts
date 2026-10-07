@@ -109,6 +109,7 @@ export interface FundamentalsPackage {
   dividendYieldPct?: number | undefined
   marketCap?: number | undefined
   circulatingMarketCap?: number | undefined
+  turnoverRatio?: number | undefined
   roePct?: number | undefined
   netProfitGrowthPct?: number | undefined
   revenueGrowthPct?: number | undefined

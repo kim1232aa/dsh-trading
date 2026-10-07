@@ -546,12 +546,12 @@ function OrderbookStrip({ market, symbol, providerId, live }: {
       </span>
       {bestBid ? (
         <span>
-          买一: <strong style={{ color: '#3ddc97' }}>{bestBid.price}</strong> ({bestBid.volume}手)
+          买一: <strong style={{ color: '#3ddc97' }}>{bestBid.price}</strong> ({bestBid.quantity}手)
         </span>
       ) : null}
       {bestAsk ? (
         <span>
-          卖一: <strong style={{ color: '#f47067' }}>{bestAsk.price}</strong> ({bestAsk.volume}手)
+          卖一: <strong style={{ color: '#f47067' }}>{bestAsk.price}</strong> ({bestAsk.quantity}手)
         </span>
       ) : null}
       {spread !== null ? (
@@ -614,9 +614,9 @@ function FundamentalsStrip({ market, symbol, providerId }: {
           市净率(PB): <strong>{data.pb.toFixed(2)}</strong>
         </span>
       ) : null}
-      {data.totalMarketCap !== undefined && data.totalMarketCap !== null ? (
+      {data.marketCap !== undefined && data.marketCap !== null ? (
         <span>
-          总市值: <strong>{fmtCap(data.totalMarketCap)}</strong>
+          总市值: <strong>{fmtCap(data.marketCap)}</strong>
         </span>
       ) : null}
       {data.circulatingMarketCap !== undefined && data.circulatingMarketCap !== null ? (

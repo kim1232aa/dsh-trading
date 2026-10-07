@@ -175,6 +175,7 @@ export function parseTencentQuote(raw: string, symbol: string): {
   const pb = Number(parts[45]) || undefined
   const circulatingMarketCap = (Number(parts[43]) || 0) * 1e8 || undefined
   const marketCap = (Number(parts[44]) || 0) * 1e8 || undefined
+  const turnoverRatio = Number(parts[38]) || undefined
 
   return {
     orderbook: {
@@ -192,6 +193,7 @@ export function parseTencentQuote(raw: string, symbol: string): {
       pb,
       circulatingMarketCap,
       marketCap,
+      turnoverRatio,
     },
   }
 }
