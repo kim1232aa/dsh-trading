@@ -552,7 +552,8 @@ export function apply(ctx: Context, config: Config): void {
     async execute(args, _exec) {
       const provider = ctx.marketData.resolveProvider(args.symbol, args.provider)
       const timeframe = args.timeframe as Timeframe
-      const candles = await provider.getOhlcv({ symbol: args.symbol, timeframe, limit: args.bars ?? 200 })
+      const defaultBars: Record<string, number> = { '1m': 600, '5m': 300, '15m': 200, '30m': 150, '1h': 150, '4h': 100, '1d': 200, '1w': 100 }
+      const candles = await provider.getOhlcv({ symbol: args.symbol, timeframe, limit: args.bars ?? defaultBars[timeframe] ?? 200 })
       if (candles.length === 0) throw new Error(`no candles for ${args.symbol} @ ${timeframe}`)
       const lo = Math.min(...candles.map(c => c.low))
       const hi = Math.max(...candles.map(c => c.high))

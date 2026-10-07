@@ -696,7 +696,7 @@ const LABEL_LANES = 3
  * Fraction of the visible price range under which two labels would collide.
  * ~2.5% of the plot height at the label's 10px type size plus breathing room.
  */
-const LABEL_MIN_GAP = 0.025
+const LABEL_MIN_GAP = 0.06
 
 /**
  * Assign each horizontal line a label lane, or -1 to draw the line unlabelled.
@@ -885,8 +885,14 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, onEditParam
       }
     }
     for (const s of scenarios) {
-      if (s.triggerPrice !== undefined) primitives.push({ kind: 'hline', price: s.triggerPrice, dashed: true, color: palette.target, label: `${s.direction === 'bull' ? '多' : '空'}·触发` })
-      if (s.invalidationPrice !== undefined) primitives.push({ kind: 'hline', price: s.invalidationPrice, dashed: true, color: palette.invalidation, label: `${s.direction === 'bull' ? '多' : '空'}·失效` })
+      if (s.triggerPrice !== undefined) {
+        const dup = primitives.some(p => p.kind === 'hline' && Math.abs(p.price - s.triggerPrice!) / s.triggerPrice! < 0.005)
+        if (!dup) primitives.push({ kind: 'hline', price: s.triggerPrice, dashed: true, color: palette.target, label: `${s.direction === 'bull' ? '多' : '空'}·触发` })
+      }
+      if (s.invalidationPrice !== undefined) {
+        const dup = primitives.some(p => p.kind === 'hline' && Math.abs(p.price - s.invalidationPrice!) / s.invalidationPrice! < 0.005)
+        if (!dup) primitives.push({ kind: 'hline', price: s.invalidationPrice, dashed: true, color: palette.invalidation, label: `${s.direction === 'bull' ? '多' : '空'}·失效` })
+      }
     }
     let lowest = Infinity
     let highest = -Infinity
