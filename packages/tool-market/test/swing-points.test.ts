@@ -36,6 +36,26 @@ describe('classifySwingStructure', () => {
     const s = detectSwingPoints(flat)
     expect(s.swingHighs.length + s.swingLows.length).toBe(0)
   })
+
+  it('labels a breakdown with LL and lower macro high as down, not fooled by plateau micro HH', () => {
+    // Mimics the ETH 15m crash: 2725 high, lower high 2700, then crash to 2591 (LL), with tiny bounce to 2603 (HL)
+    const highs = [
+      { index: 10, price: 2725.13, time: '1' },
+      { index: 20, price: 2702.63, time: '2' },
+      { index: 30, price: 2698.98, time: '3' },
+      { index: 40, price: 2699.99, time: '4' },
+      { index: 50, price: 2700.54, time: '5' },
+    ]
+    const lows = [
+      { index: 15, price: 2689.26, time: '1.5' },
+      { index: 25, price: 2683.73, time: '2.5' },
+      { index: 35, price: 2693.78, time: '3.5' },
+      { index: 45, price: 2591.71, time: '4.5' },
+      { index: 55, price: 2603.79, time: '5.5' },
+    ]
+    const res = classifySwingStructure({ swingHighs: highs, swingLows: lows })
+    expect(res.bias).toBe('down')
+  })
 })
 
 describe('trendlineCandidate', () => {

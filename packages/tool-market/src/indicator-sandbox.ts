@@ -83,17 +83,31 @@ export function classifySwingStructure(
   const lastH = highs[highs.length - 1]?.label
   const lastL = lows[lows.length - 1]?.label
 
-  // Structural Dow Theory check: do not declare 'up' if recent macro swings are falling,
-  // and do not declare 'down' if recent macro swings are rising.
+  // Structural Dow Theory check:
+  // 1. If recent swing lows contain a Lower Low (LL break of structure) and
+  //    highs have not reclaimed the prior cycle high, the dominant structure is 'down'.
+  // 2. If recent swing highs contain a Higher High (HH breakout) and
+  //    lows haven't broken below the prior cycle low, the dominant structure is 'up'.
+  // 3. Fall back to standard consecutive pivot rules (HH+HL=up, LH+LL=down).
+  const recentHighs = highs.slice(-4)
+  const recentLows = lows.slice(-4)
+  const maxRecentHigh = recentHighs.length > 0 ? Math.max(...recentHighs.map(h => h.price)) : 0
+  const minRecentLow = recentLows.length > 0 ? Math.min(...recentLows.map(l => l.price)) : Infinity
+
+  const hasRecentLL = recentLows.some(l => l.label === 'LL')
+  const hasRecentHH = recentHighs.some(h => h.label === 'HH')
+  const currentHigh = highs.at(-1)?.price ?? 0
+  const currentLow = lows.at(-1)?.price ?? 0
+
   let bias: 'up' | 'down' | 'range' = 'range'
-  if (lastH === 'HH' && lastL === 'HL') {
-    const macroHighsAscending = highs.length >= 3 ? highs[highs.length - 1]!.price >= highs[highs.length - 3]!.price : true
-    const macroLowsAscending = lows.length >= 3 ? lows[lows.length - 1]!.price >= lows[lows.length - 3]!.price : true
-    bias = macroHighsAscending && macroLowsAscending ? 'up' : 'range'
+  if (hasRecentLL && currentHigh < maxRecentHigh) {
+    bias = 'down'
+  } else if (hasRecentHH && currentLow > minRecentLow && !hasRecentLL) {
+    bias = 'up'
+  } else if (lastH === 'HH' && lastL === 'HL' && !hasRecentLL) {
+    bias = 'up'
   } else if (lastH === 'LH' && lastL === 'LL') {
-    const macroHighsDescending = highs.length >= 3 ? highs[highs.length - 1]!.price <= highs[highs.length - 3]!.price : true
-    const macroLowsDescending = lows.length >= 3 ? lows[lows.length - 1]!.price <= lows[lows.length - 3]!.price : true
-    bias = macroHighsDescending && macroLowsDescending ? 'down' : 'range'
+    bias = 'down'
   }
   return { points, bias }
 }
