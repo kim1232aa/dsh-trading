@@ -966,22 +966,54 @@ export function trendlineCandidate(
   kind: 'resistance' | 'support',
 ) {
   if (pivots.length < 2) return null
-  const a = pivots[pivots.length - 2]!
   const b = pivots[pivots.length - 1]!
-  const slope = (b.price - a.price) / (b.index - a.index)
-  const lineAt = (i: number): number => a.price + slope * (i - a.index)
   const last = candles.length - 1
-  let touches = 2
-  let closesBeyond = 0
-  for (let i = a.index + 1; i <= last; i++) {
-    const c = candles[i]!
-    const y = lineAt(i)
-    if (i > b.index && (kind === 'resistance' ? c.close > y : c.close < y)) closesBeyond++
-    if (Math.abs(i - b.index) <= 1 || i === a.index + 1) continue
-    const wick = kind === 'resistance' ? c.high : c.low
-    if (Math.abs(wick - y) / y <= 0.003) touches++
+
+  function evalLine(candA: typeof b) {
+    const slope = (b.price - candA.price) / (b.index - candA.index)
+    const lineAt = (i: number): number => candA.price + slope * (i - candA.index)
+    let touches = 2
+    let closesBeyond = 0
+    for (let i = candA.index + 1; i <= last; i++) {
+      const c = candles[i]!
+      const y = lineAt(i)
+      if (i > b.index && (kind === 'resistance' ? c.close > y : c.close < y)) closesBeyond++
+      if (Math.abs(i - b.index) <= 1 || i === candA.index + 1) continue
+      const wick = kind === 'resistance' ? c.high : c.low
+      if (Math.abs(wick - y) / y <= 0.003) touches++
+    }
+    const projectedNow = lineAt(last)
+    return { candA, slope, touches, closesBeyond, projectedNow }
   }
-  const projectedNow = lineAt(last)
+
+  const defaultA = pivots[pivots.length - 2]!
+  let best = evalLine(defaultA)
+
+  // If default line has the wrong slope (rising resistance or falling support),
+  // is virtually flat (< 0.1% delta), or breaks immediately, search backwards
+  // for a structurally sound anchor that respects the slope and minimizes closesBeyond.
+  const isWrongSlope = kind === 'resistance' ? best.slope >= 0 : best.slope <= 0
+  const isFlat = Math.abs(b.price - defaultA.price) / b.price < 0.001
+  if (isWrongSlope || isFlat || best.closesBeyond > 0) {
+    const searchRange = pivots.slice(Math.max(0, pivots.length - 8), pivots.length - 1)
+    for (const candA of searchRange) {
+      if (candA === defaultA) continue
+      const cand = evalLine(candA)
+      const validSlope = kind === 'resistance' ? cand.slope < 0 : cand.slope > 0
+      if (!validSlope) continue
+      if (
+        cand.closesBeyond < best.closesBeyond ||
+        (cand.closesBeyond === best.closesBeyond && cand.touches > best.touches) ||
+        (cand.closesBeyond === best.closesBeyond && cand.touches === best.touches && (b.index - candA.index) > (b.index - best.candA.index))
+      ) {
+        best = cand
+      }
+    }
+  }
+
+  const a = best.candA
+  const slope = best.slope
+  const projectedNow = best.projectedNow
   return {
     kind,
     direction: slope > 0 ? 'rising' : slope < 0 ? 'falling' : 'flat',
@@ -993,7 +1025,7 @@ export function trendlineCandidate(
       { time: b.time, price: b.price },
       { time: candles[last]!.time, price: Number(projectedNow.toPrecision(8)) },
     ],
-    touches,
-    closesBeyond,
+    touches: best.touches,
+    closesBeyond: best.closesBeyond,
   }
 }

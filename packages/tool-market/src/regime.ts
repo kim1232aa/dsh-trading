@@ -18,7 +18,7 @@ import { renderSignal, signalReport } from './signal.js'
 import type { SignalReport } from './signal.js'
 import { priceStructure, renderStructure } from './structure.js'
 import type { Structure } from './structure.js'
-import { renderRsiGrid, rsiGridReport } from './rsi-grid.js'
+import { renderRsiGrid, rsiGridReport, RSI_GRID_DEFAULTS, RSI_GRID_SHORT_DEFAULTS } from './rsi-grid.js'
 import type { RsiGridReport } from './rsi-grid.js'
 import { renderRsiDiff, rsiDiffReport } from './rsi-diff.js'
 import type { RsiDiffReport } from './rsi-diff.js'
@@ -136,6 +136,7 @@ export type RegimeSnapshot = {
   signal: SignalReport
   structure: Structure
   rsiGrid: RsiGridReport
+  rsiGridShort?: RsiGridReport
   rsiDiff: RsiDiffReport
   moneyFlow?: RegimeMoneyFlow | null
 }
@@ -254,6 +255,7 @@ export function regimeSnapshot(
     signal: signalReport(candles),
     structure: priceStructure(candles),
     rsiGrid: rsiGridReport(candles),
+    rsiGridShort: rsiGridReport(candles, RSI_GRID_SHORT_DEFAULTS, 'short'),
     rsiDiff: rsiDiffReport(closes, 6, 12),
   }
 }
@@ -271,7 +273,7 @@ export function renderSnapshot(timeframe: string, s: RegimeSnapshot): string {
   ]
   lines.push(renderStructure(s.structure))
   lines.push(renderSignal(s.signal))
-  lines.push(renderRsiGrid(s.rsiGrid))
+  lines.push(renderRsiGrid(s.rsiGrid, s.rsiGridShort))
   lines.push(renderRsiDiff(s.rsiDiff))
   if (s.derivatives) {
     const d = s.derivatives

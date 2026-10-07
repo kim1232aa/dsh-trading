@@ -53,4 +53,23 @@ describe("rsiGrid (Pine port)", () => {
     expect(line).toContain("浮亏中不会平仓")
     expect(line).toContain("无止损")
   })
+
+  it("short grid: enters short when RSI > high and exits in profit when RSI <= low", () => {
+    // flat warm-up, a steep rally (RSI pinned high > 70), then a drop
+    const rally = [...Array(10).fill(50), 52, 55, 59, 64, 70, 76, 75, 73, 70, 65, 58, 50, 42]
+    const sg = rsiGrid(bars(rally), 7, 40, 70, 10, 'short')
+    const sig = sg.bars.findIndex(b => b.signal === 'entry')
+    expect(sig).toBeGreaterThan(0)
+    expect(sg.bars[sig]!.cum).toBeGreaterThan(10)
+    expect(sg.bars[sig + 1]!.entry).toBe(rally[sig])
+
+    expect(sg.trades.length).toBeGreaterThanOrEqual(1)
+    const t = sg.trades[0]!
+    expect(t.side).toBe('short')
+    expect(t.exit).toBeLessThanOrEqual(t.entry)
+
+    const rep = rsiGridReport(bars(rally), [7, 40, 70, 10], 'short')
+    const rendered = renderRsiGrid(rep)
+    expect(rendered).toContain('RSI空头网格')
+  })
 })
