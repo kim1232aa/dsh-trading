@@ -21,6 +21,36 @@ export interface CustomIndicatorResult {
 }
 
 /**
+ * Detect swing high/low pivot points.
+ *
+ * A swing high at index i means highs[i] >= highs[j] for all j in [i-left, i+right].
+ * A swing low  at index i means  lows[i] <=  lows[j] for all j in [i-left, i+right].
+ *
+ * Returns {swingHighs, swingLows} — each an array of {index, price, time}.
+ */
+export function detectSwingPoints(
+  candles: readonly Candle[],
+  left = 3,
+  right = 3,
+): { swingHighs: { index: number; price: number; time: string }[]; swingLows: { index: number; price: number; time: string }[] } {
+  const swingHighs: { index: number; price: number; time: string }[] = []
+  const swingLows: { index: number; price: number; time: string }[] = []
+  for (let i = left; i < candles.length - right; i++) {
+    let isHigh = true
+    let isLow = true
+    for (let j = i - left; j <= i + right; j++) {
+      if (j === i) continue
+      if (candles[j]!.high > candles[i]!.high) isHigh = false
+      if (candles[j]!.low < candles[i]!.low) isLow = false
+      if (!isHigh && !isLow) break
+    }
+    if (isHigh) swingHighs.push({ index: i, price: candles[i]!.high, time: candles[i]!.time })
+    if (isLow) swingLows.push({ index: i, price: candles[i]!.low, time: candles[i]!.time })
+  }
+  return { swingHighs, swingLows }
+}
+
+/**
  * Execute a custom indicator formula or function body in an isolated VM sandbox.
  *
  * Sandbox exposes:
@@ -29,7 +59,7 @@ export interface CustomIndicatorResult {
  * - `highs`: readonly number[]
  * - `lows`: readonly number[]
  * - `volumes`: readonly number[]
- * - Built-in helper functions: `sma`, `ema`, `wma`, `rsi`, `macd`, `stochastic`, `bollinger`, `atr`, `adx`, `mfi`
+ * - Built-in helper functions: `sma`, `ema`, `wma`, `rsi`, `macd`, `stochastic`, `bollinger`, `atr`, `adx`, `mfi`, `swingPoints`
  * - Standard safe Math functions
  *
  * Formula code must either:
@@ -67,6 +97,7 @@ export function runCustomIndicator(
     atr: (period = 14) => atr(candles, period),
     adx: (period = 14) => adx(candles, period),
     mfi: (period = 14) => mfi(candles, period),
+    swingPoints: (left = 3, right = 3) => detectSwingPoints(candles, left, right),
   }
 
   const context = createContext(sandbox)

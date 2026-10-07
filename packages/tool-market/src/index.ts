@@ -27,15 +27,18 @@ import {
 import type { BacktestOptions, BacktestResult, StrategyFn } from './backtest-engine.js'
 import {
   checkBullishAlignment,
+  checkBearishAlignment,
   checkOversoldReversal,
+  checkOverboughtReversal,
   checkVolumeBreakout,
+  checkVolumeBreakdown,
   screenUniverse,
 } from './screener.js'
-import type { ScreenerMatch } from './screener.js'
+import type { ScreenerMatch, ScreenerPattern } from './screener.js'
 import { runCustomIndicator } from './indicator-sandbox.js'
 import type { CustomIndicatorOptions, CustomIndicatorResult } from './indicator-sandbox.js'
 
-export { runCustomIndicator } from './indicator-sandbox.js'
+export { runCustomIndicator, detectSwingPoints } from './indicator-sandbox.js'
 export type { CustomIndicatorOptions, CustomIndicatorResult } from './indicator-sandbox.js'
 
 export { rsi, sma, wma } from './indicators.js'
@@ -64,11 +67,14 @@ export {
 export type { BacktestOptions, BacktestResult, StrategyFn } from './backtest-engine.js'
 export {
   checkBullishAlignment,
+  checkBearishAlignment,
   checkOversoldReversal,
+  checkOverboughtReversal,
   checkVolumeBreakout,
+  checkVolumeBreakdown,
   screenUniverse,
 } from './screener.js'
-export type { ScreenerMatch } from './screener.js'
+export type { ScreenerMatch, ScreenerPattern } from './screener.js'
 
 export const name = 'tool-market'
 export const inject = ['tools', 'marketData']
@@ -764,11 +770,11 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.tools.register(defineTool({
     name: 'screen_market',
-    description: 'Scan a universe of symbols across technical patterns: moving average bullish alignment (MA20>MA50>MA200), volume breakout (1.8x+ volume breaking 20-bar resistance), or oversold rebound (RSI<32 with reversal candle).',
+    description: 'Scan a universe of symbols across technical patterns: bullish alignment (MA20>MA50>MA200), bearish alignment (MA20<MA50<MA200), volume breakout/breakdown (1.8x+ volume breaking 20-bar resistance/support), oversold rebound (RSI<32 with reversal candle), or overbought reversal (RSI>68 with bearish candle).',
     parameters: {
       symbols: { type: 'array', items: { type: 'string' }, description: 'Symbols to scan. Defaults to hot crypto and A-share tickers if omitted.' },
       timeframe: { type: 'string', enum: [...TIMEFRAMES], description: 'Timeframe interval (default "1d").' },
-      patterns: { type: 'array', items: { type: 'string', enum: ['bullish_alignment', 'volume_breakout', 'oversold_reversal'] }, description: 'Patterns to filter for. Defaults to all three.' },
+      patterns: { type: 'array', items: { type: 'string', enum: ['bullish_alignment', 'volume_breakout', 'oversold_reversal', 'bearish_alignment', 'volume_breakdown', 'overbought_reversal'] }, description: 'Patterns to filter for. Defaults to all six.' },
       provider: { type: 'string', description: 'Market-data provider id (omit for default).' },
     },
     output: {
@@ -808,7 +814,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.tools.register(defineTool({
     name: 'run_custom_indicator',
-    description: 'Execute a custom JavaScript indicator algorithm in an isolated VM sandbox with a strict 200ms timeout cutoff and helper mathematical functions (sma, ema, wma, rsi, macd, stochastic, bollinger, atr, adx, mfi).',
+    description: 'Execute a custom JavaScript indicator algorithm in an isolated VM sandbox with a strict 200ms timeout cutoff and helper mathematical functions (sma, ema, wma, rsi, macd, stochastic, bollinger, atr, adx, mfi, swingPoints).',
     parameters: {
       symbol: { type: 'string', required: true, description: 'Trading symbol (e.g. BTCUSDT, ETHUSDT, 600519)' },
       code: { type: 'string', required: true, description: 'JavaScript code defining function calculate(candles) returning (number | null)[]' },
