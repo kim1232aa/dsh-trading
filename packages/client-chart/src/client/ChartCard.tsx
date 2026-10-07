@@ -367,6 +367,29 @@ export function subscribeAxisSettings(l: () => void): () => void {
   return () => { axisSettingsListeners.delete(l) }
 }
 
+/**
+ * Resolves the candle pane's Y-axis component from a klinecharts Chart instance.
+ */
+export function getCandleYAxis(chart: Chart | null): any {
+  if (!chart) return null
+  const anyChart = chart as any
+  const pane = anyChart.getDrawPaneById?.('candle_pane') ?? anyChart._candlePane
+  return pane?.getAxisComponent?.() ?? null
+}
+
+/**
+ * Resets the candle pane Y-axis to auto calculation and refreshes the viewport.
+ */
+export function resetCandleYAxisAuto(chart: Chart | null): void {
+  if (!chart) return
+  const yAxis = getCandleYAxis(chart)
+  if (yAxis) {
+    yAxis.setAutoCalcTickFlag?.(true)
+  }
+  const anyChart = chart as any
+  anyChart.adjustPaneViewport?.(false, true, true, true, true)
+}
+
 /** Legend cog on the editable indicators; a click opens the param row (ActionType.OnTooltipIconClick). */
 const GEAR = {
   id: 'params', position: 'right', icon: '⚙', size: 12, fontFamily: 'Segoe UI Symbol, Apple Symbols, sans-serif',
@@ -1052,14 +1075,184 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       id: 'candle_pane',
       gap: axisSettings.autoScale.candle ? { top: 0.08, bottom: 0.05 } : { top: 0.2, bottom: 0.1 },
     })
+    const yAxis = getCandleYAxis(chart)
+    if (yAxis) {
+      if (axisSettings.autoScale.candle) {
+        yAxis.setAutoCalcTickFlag?.(true)
+        ;(chart as any).adjustPaneViewport?.(false, true, true, true, true)
+      } else {
+        yAxis.setAutoCalcTickFlag?.(false)
+      }
+    }
   }, [axisSettings])
+
+  useEffect(() => {
+    const container = el.current
+    if (!container) return
+
+    let isPointerDown = false
+    let startX = 0
+    let startY = 0
+    let isVerticalUnlocked = false
+
+    const onPointerDown = (e: MouseEvent) => {
+      if (e.button !== 0) return
+      isPointerDown = true
+      startX = e.clientX
+      startY = e.clientY
+      isVerticalUnlocked = false
+    }
+
+    const onPointerMove = (e: MouseEvent) => {
+      if (!isPointerDown) return
+      const dy = e.clientY - startY
+      if (!isVerticalUnlocked && Math.abs(dy) >= 3) {
+        const chart = chartRef.current
+        const yAxis = getCandleYAxis(chart)
+        if (yAxis && yAxis.getAutoCalcTickFlag?.()) {
+          isVerticalUnlocked = true
+          yAxis.setAutoCalcTickFlag?.(false)
+          const current = getAxisSettings()
+          if (current.autoScale.candle) {
+            setAxisSettings({
+              ...current,
+              autoScale: { ...current.autoScale, candle: false },
+            })
+          }
+        }
+      }
+    }
+
+    const onPointerUp = () => {
+      if (isPointerDown) {
+        isPointerDown = false
+        const chart = chartRef.current
+        const yAxis = getCandleYAxis(chart)
+        if (yAxis && yAxis.getAutoCalcTickFlag?.() === false) {
+          const current = getAxisSettings()
+          if (current.autoScale.candle) {
+            setAxisSettings({
+              ...current,
+              autoScale: { ...current.autoScale, candle: false },
+            })
+          }
+        }
+      }
+    }
+
+    const onDoubleClick = () => {
+      const chart = chartRef.current
+      if (!chart) return
+      resetCandleYAxisAuto(chart)
+      const current = getAxisSettings()
+      if (!current.autoScale.candle) {
+        setAxisSettings({
+          ...current,
+          autoScale: { ...current.autoScale, candle: true },
+        })
+      }
+    }
+
+    const onWheel = (e: WheelEvent) => {
+      const chart = chartRef.current
+      if (!chart) return
+      const rect = container.getBoundingClientRect()
+      const isOverYAxis = e.clientX >= rect.right - 80 && e.clientY <= rect.bottom - 20
+      if (isOverYAxis) {
+        e.preventDefault()
+        e.stopPropagation()
+        const yAxis = getCandleYAxis(chart)
+        if (!yAxis) return
+        const range = yAxis.getRange?.()
+        if (!range || range.range <= 0) return
+        const zoomFactor = e.deltaY > 0 ? 1.15 : 0.85
+        const newRange = range.range * zoomFactor
+        const relY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height))
+        const currentPriceAtCursor = typeof yAxis.convertFromPixel === 'function'
+          ? yAxis.convertFromPixel(e.clientY - rect.top)
+          : range.from + (1 - relY) * range.range
+        const centerRatio = Number.isFinite(currentPriceAtCursor)
+          ? (currentPriceAtCursor - range.from) / range.range
+          : 0.5
+        const newFrom = currentPriceAtCursor - centerRatio * newRange
+        const newTo = newFrom + newRange
+        const realFrom = typeof yAxis.convertToRealValue === 'function' ? yAxis.convertToRealValue(newFrom) : newFrom
+        const realTo = typeof yAxis.convertToRealValue === 'function' ? yAxis.convertToRealValue(newTo) : newTo
+        yAxis.setRange?.({
+          from: newFrom,
+          to: newTo,
+          range: newRange,
+          realFrom,
+          realTo,
+          realRange: realTo - realFrom,
+        })
+        ;(chart as any).adjustPaneViewport?.(false, true, true, true, true)
+        const current = getAxisSettings()
+        if (current.autoScale.candle) {
+          setAxisSettings({
+            ...current,
+            autoScale: { ...current.autoScale, candle: false },
+          })
+        }
+      }
+    }
+
+    container.addEventListener('mousedown', onPointerDown)
+    window.addEventListener('mousemove', onPointerMove)
+    window.addEventListener('mouseup', onPointerUp)
+    container.addEventListener('dblclick', onDoubleClick)
+    container.addEventListener('wheel', onWheel, { passive: false })
+
+    return () => {
+      container.removeEventListener('mousedown', onPointerDown)
+      window.removeEventListener('mousemove', onPointerMove)
+      window.removeEventListener('mouseup', onPointerUp)
+      container.removeEventListener('dblclick', onDoubleClick)
+      container.removeEventListener('wheel', onWheel)
+    }
+  }, [])
+
   // In fill mode the plot is sized by the flex parent and the ResizeObserver
   // above keeps klinecharts in step; `minHeight` is the floor below which a
   // candlestick chart stops being a chart. Indicator panes then divide the
   // available height rather than extending the card downward.
-  return fill
-    ? <div ref={el} style={{ flex: '1 1 auto', minHeight: 240, width: '100%' }} />
-    : <div ref={el} style={{ height: baseHeight + paneCount * PANE_HEIGHT, width: '100%' }} />
+  return (
+    <div style={{ position: 'relative', width: '100%', ...(fill ? { flex: '1 1 auto', minHeight: 240 } : { height: baseHeight + paneCount * PANE_HEIGHT }) }}>
+      <div ref={el} style={{ width: '100%', height: '100%' }} />
+      {!axisSettings.autoScale.candle && (
+        <button
+          type="button"
+          onClick={() => {
+            const chart = chartRef.current
+            resetCandleYAxisAuto(chart)
+            setAxisSettings({ ...axisSettings, autoScale: { ...axisSettings.autoScale, candle: true } })
+          }}
+          title="双击画布或点击此处恢复K线自动坐标"
+          style={{
+            position: 'absolute',
+            right: 68,
+            bottom: 8,
+            zIndex: 10,
+            padding: '2px 8px',
+            fontSize: 11,
+            fontWeight: 600,
+            color: '#38bdf8',
+            background: 'rgba(18, 18, 20, 0.85)',
+            border: '1px solid rgba(56, 189, 248, 0.5)',
+            borderRadius: 4,
+            cursor: 'pointer',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+          }}
+        >
+          <span>↺ 自动</span>
+        </button>
+      )}
+    </div>
+  )
 }
 
 function fmt(x: unknown): string {

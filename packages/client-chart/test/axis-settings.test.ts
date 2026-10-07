@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_AXIS_SETTINGS,
   sanitizeAxisSettings,
@@ -6,6 +6,8 @@ import {
   getAxisSettings,
   setAxisSettings,
   subscribeAxisSettings,
+  getCandleYAxis,
+  resetCandleYAxisAuto,
 } from '../src/client/ChartCard.js'
 
 describe('AxisSettings', () => {
@@ -75,5 +77,29 @@ describe('AxisSettings', () => {
     expect(getAxisSettings().coordType).toBe('percentage')
     expect(getAxisSettings().autoScale.rsi).toBe(false)
     unsub()
+  })
+
+  it('handles getCandleYAxis and resetCandleYAxisAuto safely with null or chart mock', () => {
+    expect(getCandleYAxis(null)).toBeNull()
+    expect(() => resetCandleYAxisAuto(null)).not.toThrow()
+
+    const mockYAxis = {
+      setAutoCalcTickFlag: vi.fn(),
+      getAutoCalcTickFlag: vi.fn().mockReturnValue(true),
+    }
+    const mockPane = {
+      getAxisComponent: vi.fn().mockReturnValue(mockYAxis),
+    }
+    const mockChart = {
+      getDrawPaneById: vi.fn().mockImplementation((id: string) => (id === 'candle_pane' ? mockPane : null)),
+      adjustPaneViewport: vi.fn(),
+    }
+
+    const yAxis = getCandleYAxis(mockChart as any)
+    expect(yAxis).toBe(mockYAxis)
+
+    resetCandleYAxisAuto(mockChart as any)
+    expect(mockYAxis.setAutoCalcTickFlag).toHaveBeenCalledWith(true)
+    expect(mockChart.adjustPaneViewport).toHaveBeenCalledWith(false, true, true, true, true)
   })
 })
