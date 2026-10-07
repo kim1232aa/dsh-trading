@@ -82,7 +82,19 @@ export function classifySwingStructure(
   const points = [...highs, ...lows].sort((a, b) => a.index - b.index)
   const lastH = highs[highs.length - 1]?.label
   const lastL = lows[lows.length - 1]?.label
-  const bias = lastH === 'HH' && lastL === 'HL' ? 'up' : lastH === 'LH' && lastL === 'LL' ? 'down' : 'range'
+
+  // Structural Dow Theory check: do not declare 'up' if recent macro swings are falling,
+  // and do not declare 'down' if recent macro swings are rising.
+  let bias: 'up' | 'down' | 'range' = 'range'
+  if (lastH === 'HH' && lastL === 'HL') {
+    const macroHighsAscending = highs.length >= 3 ? highs[highs.length - 1]!.price >= highs[highs.length - 3]!.price : true
+    const macroLowsAscending = lows.length >= 3 ? lows[lows.length - 1]!.price >= lows[lows.length - 3]!.price : true
+    bias = macroHighsAscending && macroLowsAscending ? 'up' : 'range'
+  } else if (lastH === 'LH' && lastL === 'LL') {
+    const macroHighsDescending = highs.length >= 3 ? highs[highs.length - 1]!.price <= highs[highs.length - 3]!.price : true
+    const macroLowsDescending = lows.length >= 3 ? lows[lows.length - 1]!.price <= lows[lows.length - 3]!.price : true
+    bias = macroHighsDescending && macroLowsDescending ? 'down' : 'range'
+  }
   return { points, bias }
 }
 

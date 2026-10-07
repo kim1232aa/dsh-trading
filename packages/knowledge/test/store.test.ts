@@ -118,8 +118,8 @@ describe('KnowledgeStore', () => {
     const tagHubs = await store.listTags()
     expect(tagHubs).toEqual([
       { tag: '假突破', count: 2 },
-      { tag: '高频', count: 1 },
       { tag: 'M顶', count: 1 },
+      { tag: '高频', count: 1 },
     ])
   })
 })
