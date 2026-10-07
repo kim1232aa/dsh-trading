@@ -15,7 +15,7 @@
 import { Component, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, ErrorInfo, ReactNode } from 'react'
 import { ActionType, TooltipShowRule, dispose, init, registerIndicator, registerOverlay } from 'klinecharts'
-import type { Chart, OverlayCreateFiguresCallbackParams } from 'klinecharts'
+import type { Chart, OverlayCreateFiguresCallbackParams, YAxisType } from 'klinecharts'
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 import { publishLatestChart } from './latest.js'
 import { annotationDigest, contentText, readChartPayload } from './payload.js'
@@ -299,6 +299,74 @@ function subscribeSettings(l: () => void): () => void {
   return () => { settingsListeners.delete(l) }
 }
 
+export type CoordType = 'normal' | 'percentage' | 'log'
+
+export interface AxisSettings {
+  coordType: CoordType
+  autoScale: {
+    candle: boolean
+    rsi: boolean
+    accLs: boolean
+    macd: boolean
+  }
+}
+
+export const DEFAULT_AXIS_SETTINGS: AxisSettings = {
+  coordType: 'normal',
+  autoScale: {
+    candle: true,
+    rsi: true,
+    accLs: true,
+    macd: true,
+  },
+}
+
+export function toYAxisType(coord: CoordType): YAxisType {
+  if (coord === 'percentage') return 'percentage' as YAxisType
+  if (coord === 'log') return 'log' as YAxisType
+  return 'normal' as YAxisType
+}
+
+export function sanitizeAxisSettings(raw: unknown): AxisSettings {
+  const src = typeof raw === 'object' && raw !== null ? raw as Record<string, unknown> : {}
+  const rawCoord = typeof src['coordType'] === 'string' ? src['coordType'] : 'normal'
+  const coordType: CoordType = (rawCoord === 'percentage' || rawCoord === 'log') ? rawCoord : 'normal'
+  const rawAuto = typeof src['autoScale'] === 'object' && src['autoScale'] !== null ? src['autoScale'] as Record<string, unknown> : {}
+  return {
+    coordType,
+    autoScale: {
+      candle: typeof rawAuto['candle'] === 'boolean' ? rawAuto['candle'] : true,
+      rsi: typeof rawAuto['rsi'] === 'boolean' ? rawAuto['rsi'] : true,
+      accLs: typeof rawAuto['accLs'] === 'boolean' ? rawAuto['accLs'] : true,
+      macd: typeof rawAuto['macd'] === 'boolean' ? rawAuto['macd'] : true,
+    },
+  }
+}
+
+const AXIS_SETTINGS_KEY = 'dsh-trading.chart-axis-settings.v1'
+let axisSettingsCache: AxisSettings | undefined
+const axisSettingsListeners = new Set<() => void>()
+
+export function getAxisSettings(): AxisSettings {
+  if (axisSettingsCache === undefined) {
+    let raw: unknown = null
+    try { raw = JSON.parse(localStorage.getItem(AXIS_SETTINGS_KEY) ?? 'null') } catch {}
+    axisSettingsCache = sanitizeAxisSettings(raw)
+  }
+  return axisSettingsCache
+}
+
+export function setAxisSettings(next: AxisSettings): void {
+  axisSettingsCache = sanitizeAxisSettings(next)
+  try { localStorage.setItem(AXIS_SETTINGS_KEY, JSON.stringify(axisSettingsCache)) } catch {}
+  for (const l of axisSettingsListeners) l()
+}
+
+export function subscribeAxisSettings(l: () => void): () => void {
+  axisSettingsListeners.add(l)
+  return () => { axisSettingsListeners.delete(l) }
+}
+
 /** Legend cog on the editable indicators; a click opens the param row (ActionType.OnTooltipIconClick). */
 const GEAR = {
   id: 'params', position: 'right', icon: '⚙', size: 12, fontFamily: 'Segoe UI Symbol, Apple Symbols, sans-serif',
@@ -576,7 +644,7 @@ function useDark(): boolean {
   return dark
 }
 
-function klineStyles(p: Palette): Record<string, unknown> {
+function klineStyles(p: Palette, coordType: CoordType = 'normal'): Record<string, unknown> {
   const tick = { color: p.faint, family: FONT_FAMILY }
   return {
     grid: { horizontal: { color: p.line }, vertical: { color: p.line } },
@@ -595,7 +663,7 @@ function klineStyles(p: Palette): Record<string, unknown> {
     },
     indicator: { tooltip: { text: { color: p.text, family: FONT_FAMILY }, showRule: 'none' } },
     xAxis: { axisLine: { color: p.line }, tickText: tick, tickLine: { color: p.line } },
-    yAxis: { axisLine: { color: p.line }, tickText: tick, tickLine: { color: p.line } },
+    yAxis: { axisLine: { color: p.line }, tickText: tick, tickLine: { color: p.line }, type: toYAxisType(coordType) },
     separator: { color: p.line },
     crosshair: {
       horizontal: { line: { color: p.faint }, text: { backgroundColor: p.faint, family: FONT_FAMILY } },
@@ -767,9 +835,10 @@ function drawPrimitive(chart: Pick<Chart, 'createOverlay'>, prim: DrawPrimitive,
   }
 }
 
-function Kline({ data, scenarios, dark, active, seriesKey, settings, onEditParams, derivatives, onCrosshairHover, baseHeight = CHART_HEIGHT, fill = false }: {
+function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSettings, onEditParams, derivatives, onCrosshairHover, baseHeight = CHART_HEIGHT, fill = false }: {
   data: ChartTimeframeData
   settings: IndicatorSettings
+  axisSettings: AxisSettings
   onEditParams: () => void
   derivatives?: PanelDerivatives | null | undefined
   onCrosshairHover?: ((timestamp: number | null) => void) | undefined
@@ -823,8 +892,12 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, onEditParam
     if (chart === null) return
     chartRef.current = chart
     const data = latest.current
-    chart.setStyles(klineStyles(palette))
-    chart.setPaneOptions({ id: 'candle_pane', gap: { top: 0.08, bottom: 0.05 }, axisOptions: { scrollZoomEnabled: true } })
+    chart.setStyles(klineStyles(palette, axisSettings.coordType))
+    chart.setPaneOptions({
+      id: 'candle_pane',
+      gap: axisSettings.autoScale.candle ? { top: 0.08, bottom: 0.05 } : { top: 0.2, bottom: 0.1 },
+      axisOptions: { scrollZoomEnabled: true },
+    })
     const pricePrec = detectPricePrecision(data.candles)
     chart.setPriceVolumePrecision(pricePrec, 0)
     chart.applyNewData(data.candles.map(c => ({
@@ -970,6 +1043,16 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, onEditParam
       })
     }
   }, [data, active])
+
+  useEffect(() => {
+    const chart = chartRef.current
+    if (chart === null) return
+    chart.setStyles({ yAxis: { type: toYAxisType(axisSettings.coordType) } })
+    chart.setPaneOptions({
+      id: 'candle_pane',
+      gap: axisSettings.autoScale.candle ? { top: 0.08, bottom: 0.05 } : { top: 0.2, bottom: 0.1 },
+    })
+  }, [axisSettings])
   // In fill mode the plot is sized by the flex parent and the ResizeObserver
   // above keeps klinecharts in step; `minHeight` is the floor below which a
   // candlestick chart stops being a chart. Indicator panes then divide the
@@ -1093,6 +1176,158 @@ function annotationRow(a: ChartAnnotation, close: number, p: Palette): { key: st
  * @param shell - container style, so the panel can drop the card's border and
  *   margins and sit flush in its column.
  */
+function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }): JSX.Element {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={(e) => { e.stopPropagation(); onChange(!checked) }}
+      style={{
+        width: 36,
+        height: 20,
+        borderRadius: 10,
+        background: checked ? '#ffffff' : '#27272a',
+        border: '1px solid #3f3f46',
+        position: 'relative',
+        cursor: 'pointer',
+        padding: 0,
+        transition: 'background 0.15s ease',
+        outline: 'none',
+      }}
+    >
+      <span
+        style={{
+          display: 'block',
+          width: 14,
+          height: 14,
+          borderRadius: 7,
+          background: checked ? '#09090b' : '#71717a',
+          position: 'absolute',
+          top: 2,
+          left: checked ? 18 : 2,
+          transition: 'left 0.15s ease',
+        }}
+      />
+    </button>
+  )
+}
+
+function AxisMenu({
+  settings,
+  palette,
+  onChange,
+  onClose,
+}: {
+  settings: AxisSettings
+  palette: Palette
+  onChange: (next: AxisSettings) => void
+  onClose: () => void
+}): JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        onClose()
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  const itemStyle: CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '7px 14px',
+    cursor: 'pointer',
+    fontSize: 13,
+    color: '#e4e4e7',
+    userSelect: 'none',
+  }
+
+  const headerStyle: CSSProperties = {
+    fontSize: 12,
+    color: '#a1a1aa',
+    padding: '6px 14px 4px',
+    userSelect: 'none',
+  }
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: 'absolute',
+        top: 28,
+        right: 0,
+        zIndex: 100,
+        width: 160,
+        background: '#121214',
+        border: `1px solid ${palette.line}`,
+        borderRadius: 8,
+        boxShadow: '0 10px 30px rgba(0,0,0,0.7)',
+        padding: '6px 0',
+        fontFamily: FONT_FAMILY,
+      }}
+    >
+      <div style={headerStyle}>坐标类型</div>
+      <div
+        style={itemStyle}
+        onClick={() => onChange({ ...settings, coordType: 'normal' })}
+      >
+        <span>常规</span>
+        {settings.coordType === 'normal' ? <span style={{ color: '#ffffff', fontWeight: 600 }}>✓</span> : null}
+      </div>
+      <div
+        style={itemStyle}
+        onClick={() => onChange({ ...settings, coordType: 'percentage' })}
+      >
+        <span>百分比</span>
+        {settings.coordType === 'percentage' ? <span style={{ color: '#ffffff', fontWeight: 600 }}>✓</span> : null}
+      </div>
+      <div
+        style={itemStyle}
+        onClick={() => onChange({ ...settings, coordType: 'log' })}
+      >
+        <span>对数</span>
+        {settings.coordType === 'log' ? <span style={{ color: '#ffffff', fontWeight: 600 }}>✓</span> : null}
+      </div>
+
+      <div style={{ height: 1, background: palette.line, margin: '6px 0' }} />
+
+      <div style={headerStyle}>自动坐标</div>
+      <div style={itemStyle}>
+        <span>K线图</span>
+        <Switch
+          checked={settings.autoScale.candle}
+          onChange={(v) => onChange({ ...settings, autoScale: { ...settings.autoScale, candle: v } })}
+        />
+      </div>
+      <div style={itemStyle}>
+        <span>RSI</span>
+        <Switch
+          checked={settings.autoScale.rsi}
+          onChange={(v) => onChange({ ...settings, autoScale: { ...settings.autoScale, rsi: v } })}
+        />
+      </div>
+      <div style={itemStyle}>
+        <span>Acc. L/S</span>
+        <Switch
+          checked={settings.autoScale.accLs}
+          onChange={(v) => onChange({ ...settings, autoScale: { ...settings.autoScale, accLs: v } })}
+        />
+      </div>
+      <div style={itemStyle}>
+        <span>MACD</span>
+        <Switch
+          checked={settings.autoScale.macd}
+          onChange={(v) => onChange({ ...settings, autoScale: { ...settings.autoScale, macd: v } })}
+        />
+      </div>
+    </div>
+  )
+}
+
 /**
  * One row per editable indicator: show/hide + its params. Applies on blur or
  * Enter (not per keystroke, so typing "100" never computes WMA(1) and WMA(10)
@@ -1197,6 +1432,8 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
   const [activeChips, setActiveChips] = useState<string[]>(getInitialActiveChips)
   const settings = useSyncExternalStore(subscribeSettings, getSettings)
   const [editing, setEditing] = useState(false)
+  const axisSettings = useSyncExternalStore(subscribeAxisSettings, getAxisSettings, () => DEFAULT_AXIS_SETTINGS)
+  const [showAxisMenu, setShowAxisMenu] = useState(false)
 
   const rawTf = payload.timeframes[Math.min(activeTf, payload.timeframes.length - 1)]
   const tf = useMemo(() => {
@@ -1278,15 +1515,36 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
               {changePct >= 0 ? '+' : ''}{changePct}%
             </span>
           : null}
-        <button
-          onClick={() => setEditing(e => !e)}
-          aria-expanded={editing}
-          style={{
-            marginLeft: 'auto', border: `1px solid ${editing ? palette.text : palette.line}`,
-            background: 'transparent', color: 'inherit', borderRadius: 4,
-            padding: '1px 8px', fontSize: 11, cursor: 'pointer',
-          }}
-        >⚙ 指标参数</button>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ position: 'relative', display: 'inline-block' }}>
+            <button
+              onClick={() => setShowAxisMenu(m => !m)}
+              aria-expanded={showAxisMenu}
+              style={{
+                border: `1px solid ${showAxisMenu ? palette.text : palette.line}`,
+                background: 'transparent', color: 'inherit', borderRadius: 4,
+                padding: '1px 8px', fontSize: 11, cursor: 'pointer',
+              }}
+            >📐 坐标</button>
+            {showAxisMenu ? (
+              <AxisMenu
+                settings={axisSettings}
+                palette={palette}
+                onChange={(next) => setAxisSettings(next)}
+                onClose={() => setShowAxisMenu(false)}
+              />
+            ) : null}
+          </div>
+          <button
+            onClick={() => setEditing(e => !e)}
+            aria-expanded={editing}
+            style={{
+              border: `1px solid ${editing ? palette.text : palette.line}`,
+              background: 'transparent', color: 'inherit', borderRadius: 4,
+              padding: '1px 8px', fontSize: 11, cursor: 'pointer',
+            }}
+          >⚙ 指标参数</button>
+        </div>
         {payload.timeframes.length > 1
           ? <span style={{ display: 'flex', gap: 4 }}>
               {payload.timeframes.map((t, i) => (
@@ -1312,6 +1570,7 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
         active={activeList}
         seriesKey={seriesKey}
         settings={settings}
+        axisSettings={axisSettings}
         derivatives={derivatives}
         onCrosshairHover={onCrosshairHover}
         onEditParams={() => setEditing(true)}
