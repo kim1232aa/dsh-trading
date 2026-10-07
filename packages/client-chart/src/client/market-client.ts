@@ -235,14 +235,22 @@ export function readMarks(payload: ChartPayload | null): ChartMarks | null {
 }
 
 /** Plausibility band, mirroring the producer's own validation. */
-function band(role: unknown, lo: number, hi: number): { floor: number; ceil: number } {
+function band(role: unknown, lo: number, hi: number, isCrossTf = false): { floor: number; ceil: number } {
+  if (isCrossTf) {
+    // When applying higher-timeframe marks onto lower-timeframe charts (e.g. 4H on 1M),
+    // only import levels within reasonable proximity (max 30% range extension).
+    // This prevents far-away macro lines (e.g. 4H SMA200 far above) from stretching
+    // the Y-axis and squashing the low-timeframe candlesticks into a flat strip.
+    const pad = Math.max((hi - lo) * 0.3, (hi + lo) * 0.015)
+    return { floor: lo - pad, ceil: hi + pad }
+  }
   const wide = role === 'target' || role === 'invalidation'
   return wide ? { floor: lo * 0.5, ceil: hi * 2.0 } : { floor: lo * 0.7, ceil: hi * 1.3 }
 }
 
-function inBand(price: unknown, role: unknown, lo: number, hi: number): boolean {
+function inBand(price: unknown, role: unknown, lo: number, hi: number, isCrossTf = false): boolean {
   if (typeof price !== 'number' || !Number.isFinite(price)) return false
-  const { floor, ceil } = band(role, lo, hi)
+  const { floor, ceil } = band(role, lo, hi, isCrossTf)
   return price >= floor && price <= ceil
 }
 
@@ -293,15 +301,16 @@ export function mergeMarks(payload: ChartPayload, marks: ChartMarks): MergeMarks
   const forwardMs = (lastMs - firstMs) * 0.1
 
   let dropped = 0
+  const isCrossTf = tf.timeframe !== marks.timeframe
   const kept: ChartAnnotation[] = []
   for (const a of marks.annotations) {
     const record = a as unknown as Record<string, unknown>
     const role = record['role']
     if (a.type === 'level') {
-      if (inBand(record['price'], role, lo, hi)) kept.push(a)
+      if (inBand(record['price'], role, lo, hi, isCrossTf)) kept.push(a)
       else dropped += 1
     } else if (a.type === 'zone') {
-      if (inBand(record['low'], role, lo, hi) && inBand(record['high'], role, lo, hi)) kept.push(a)
+      if (inBand(record['low'], role, lo, hi, isCrossTf) && inBand(record['high'], role, lo, hi, isCrossTf)) kept.push(a)
       else dropped += 1
     } else if (a.type === 'path') {
       const points = Array.isArray(record['points']) ? record['points'] : []
@@ -311,7 +320,7 @@ export function mergeMarks(payload: ChartPayload, marks: ChartMarks): MergeMarks
         if (typeof p !== 'object' || p === null) return false
         const pt = p as Record<string, unknown>
         const t = typeof pt['time'] === 'string' ? Date.parse(pt['time']) : NaN
-        return inBand(pt['price'], role, lo, hi)
+        return inBand(pt['price'], role, lo, hi, isCrossTf)
           && !Number.isNaN(t) && t >= firstMs && t <= lastMs + forwardMs
       })
       if (ok) kept.push(a)
@@ -329,7 +338,7 @@ export function mergeMarks(payload: ChartPayload, marks: ChartMarks): MergeMarks
     let next = s
     for (const field of ['triggerPrice', 'invalidationPrice'] as const) {
       const price = rec[field]
-      if (price !== undefined && !inBand(price, field === 'triggerPrice' ? 'target' : 'invalidation', lo, hi)) {
+      if (price !== undefined && !inBand(price, field === 'triggerPrice' ? 'target' : 'invalidation', lo, hi, isCrossTf)) {
         // Keep the prose, lose only the price it cannot justify.
         const { [field]: _drop, ...rest } = next as Record<string, unknown>
         next = rest as unknown as ChartScenario

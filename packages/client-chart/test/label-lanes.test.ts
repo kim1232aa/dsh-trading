@@ -23,10 +23,10 @@ describe('assignLabelLanes', () => {
   })
 
   it('drops the caption once the lanes are full, keeping the line', () => {
-    // Five levels stacked inside a hair's width: three can be captioned, the
-    // rest draw unlabelled. -1 is "line without caption", never "no line".
-    const lanes = assignLabelLanes([150, 150.05, 150.1, 150.15, 150.2], 100, 200)
-    expect(lanes.filter(l => l >= 0)).toHaveLength(3)
+    // Six levels stacked inside a hair's width: four can be captioned across available lanes,
+    // the rest draw unlabelled. -1 is "line without caption", never "no line".
+    const lanes = assignLabelLanes([150, 150.05, 150.1, 150.15, 150.2, 150.25], 100, 200)
+    expect(lanes.filter(l => l >= 0)).toHaveLength(4)
     expect(lanes.filter(l => l === -1)).toHaveLength(2)
   })
 

@@ -690,7 +690,7 @@ const CHIP_DEFS: ChipDef[] = [
 const LABEL_LANE_WIDTH = 150
 
 /** Lanes available before a label is dropped rather than stacked. */
-const LABEL_LANES = 3
+const LABEL_LANES = 4
 
 /**
  * Fraction of the visible price range under which two labels would collide.
@@ -824,6 +824,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, onEditParam
     chartRef.current = chart
     const data = latest.current
     chart.setStyles(klineStyles(palette))
+    chart.setPaneOptions({ id: 'candle_pane', gap: { top: 0.08, bottom: 0.05 }, axisOptions: { scrollZoomEnabled: true } })
     const pricePrec = detectPricePrecision(data.candles)
     chart.setPriceVolumePrecision(pricePrec, 0)
     chart.applyNewData(data.candles.map(c => ({
