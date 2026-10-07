@@ -288,7 +288,12 @@ export function runBacktest(
 /**
  * Dual EMA trend following strategy.
  */
-export function createDualEmaStrategy(fastPeriod = 12, slowPeriod = 26): StrategyFn {
+/** Which sides a preset strategy may trade. `both` = stop-and-reverse. */
+export type StrategyDirection = 'long' | 'short' | 'both'
+
+export function createDualEmaStrategy(fastPeriod = 12, slowPeriod = 26, direction: StrategyDirection = 'long'): StrategyFn {
+  const canLong = direction !== 'short'
+  const canShort = direction !== 'long'
   const calcEma = (bars: Candle[], period: number, endIdx: number): number => {
     const k = 2 / (period + 1)
     let ema = bars[Math.max(0, endIdx - period * 2)]?.close ?? bars[0]!.close
@@ -310,10 +315,12 @@ export function createDualEmaStrategy(fastPeriod = 12, slowPeriod = 26): Strateg
     const deathCross = fastPrev >= slowPrev && fastCurrent < slowCurrent
 
     if (goldenCross) {
-      return { action: 'enter_long', reason: `EMA(${fastPeriod}) golden cross EMA(${slowPeriod})` }
+      const reason = `EMA(${fastPeriod}) golden cross EMA(${slowPeriod})`
+      return canLong ? { action: 'enter_long', reason } : { action: 'exit_short', reason }
     }
     if (deathCross) {
-      return { action: 'exit_long', reason: `EMA(${fastPeriod}) death cross EMA(${slowPeriod})` }
+      const reason = `EMA(${fastPeriod}) death cross EMA(${slowPeriod})`
+      return canShort ? { action: 'enter_short', reason } : { action: 'exit_long', reason }
     }
 
     return { action: 'hold' }
@@ -323,25 +330,39 @@ export function createDualEmaStrategy(fastPeriod = 12, slowPeriod = 26): Strateg
 /**
  * Donchian Breakout (Turtle trading) strategy.
  */
-export function createDonchianStrategy(entryPeriod = 20, exitPeriod = 10): StrategyFn {
+export function createDonchianStrategy(entryPeriod = 20, exitPeriod = 10, direction: StrategyDirection = 'long'): StrategyFn {
+  const canLong = direction !== 'short'
+  const canShort = direction !== 'long'
+  const extremes = (bars: Candle[], end: number, period: number): { hi: number; lo: number } => {
+    let hi = -Infinity
+    let lo = Infinity
+    for (let i = Math.max(0, end - period); i < end; i++) {
+      if (bars[i]!.high > hi) hi = bars[i]!.high
+      if (bars[i]!.low < lo) lo = bars[i]!.low
+    }
+    return { hi, lo }
+  }
+
   return (ctx) => {
     if (ctx.index < entryPeriod) return { action: 'hold' }
 
-    let highestHigh = -Infinity
-    for (let i = ctx.index - entryPeriod; i < ctx.index; i++) {
-      if (ctx.bars[i]!.high > highestHigh) highestHigh = ctx.bars[i]!.high
-    }
+    const entry = extremes(ctx.bars, ctx.index, entryPeriod)
+    const exit = extremes(ctx.bars, ctx.index, exitPeriod)
+    const close = ctx.candle.close
+    const side = ctx.position?.side
 
-    let lowestLow = Infinity
-    for (let i = ctx.index - exitPeriod; i < ctx.index; i++) {
-      if (ctx.bars[i]!.low < lowestLow) lowestLow = ctx.bars[i]!.low
+    if (side === undefined) {
+      if (canLong && close > entry.hi) return { action: 'enter_long', reason: `Broke above ${entryPeriod}-bar high (${entry.hi})` }
+      if (canShort && close < entry.lo) return { action: 'enter_short', reason: `Broke below ${entryPeriod}-bar low (${entry.lo})` }
+      return { action: 'hold' }
     }
-
-    if (ctx.candle.close > highestHigh && !ctx.position) {
-      return { action: 'enter_long', reason: `Broke above ${entryPeriod}-bar high (${highestHigh})` }
+    if (side === 'long' && close < exit.lo) {
+      if (canShort && close < entry.lo) return { action: 'enter_short', reason: `Reversed below ${entryPeriod}-bar low (${entry.lo})` }
+      return { action: 'exit_long', reason: `Fell below ${exitPeriod}-bar low (${exit.lo})` }
     }
-    if (ctx.candle.close < lowestLow && ctx.position) {
-      return { action: 'exit_long', reason: `Fell below ${exitPeriod}-bar low (${lowestLow})` }
+    if (side === 'short' && close > exit.hi) {
+      if (canLong && close > entry.hi) return { action: 'enter_long', reason: `Reversed above ${entryPeriod}-bar high (${entry.hi})` }
+      return { action: 'exit_short', reason: `Rose above ${exitPeriod}-bar high (${exit.hi})` }
     }
 
     return { action: 'hold' }

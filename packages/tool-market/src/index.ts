@@ -24,7 +24,7 @@ import {
   createDualEmaStrategy,
   runBacktest,
 } from './backtest-engine.js'
-import type { BacktestOptions, BacktestResult, StrategyFn } from './backtest-engine.js'
+import type { BacktestOptions, BacktestResult, StrategyFn, StrategyDirection } from './backtest-engine.js'
 import {
   checkBullishAlignment,
   checkBearishAlignment,
@@ -35,10 +35,10 @@ import {
   screenUniverse,
 } from './screener.js'
 import type { ScreenerMatch, ScreenerPattern } from './screener.js'
-import { runCustomIndicator } from './indicator-sandbox.js'
+import { runCustomIndicator, detectSwingPoints, classifySwingStructure } from './indicator-sandbox.js'
 import type { CustomIndicatorOptions, CustomIndicatorResult } from './indicator-sandbox.js'
 
-export { runCustomIndicator, detectSwingPoints } from './indicator-sandbox.js'
+export { runCustomIndicator, detectSwingPoints, classifySwingStructure } from './indicator-sandbox.js'
 export type { CustomIndicatorOptions, CustomIndicatorResult } from './indicator-sandbox.js'
 
 export { rsi, sma, wma } from './indicators.js'
@@ -64,7 +64,7 @@ export {
   createDualEmaStrategy,
   runBacktest,
 } from './backtest-engine.js'
-export type { BacktestOptions, BacktestResult, StrategyFn } from './backtest-engine.js'
+export type { BacktestOptions, BacktestResult, StrategyFn, StrategyDirection } from './backtest-engine.js'
 export {
   checkBullishAlignment,
   checkBearishAlignment,
@@ -703,6 +703,7 @@ export function apply(ctx: Context, config: Config): void {
       fastPeriod: { type: 'integer', description: 'Fast EMA period for dual_ema (default 12).' },
       slowPeriod: { type: 'integer', description: 'Slow EMA period for dual_ema (default 26).' },
       breakoutPeriod: { type: 'integer', description: 'Breakout period for donchian_breakout (default 20).' },
+      direction: { type: 'string', enum: ['long', 'short', 'both'], description: 'Sides the strategy may trade: "long" (default), "short" (bearish signals only), or "both" (stop-and-reverse).' },
       initialCapital: { type: 'number', description: 'Starting capital (default 10000).' },
       feePct: { type: 'number', description: 'Fee rate per transaction (default 0.0005 = 0.05%).' },
       slippagePct: { type: 'number', description: 'Slippage rate per transaction (default 0.0002 = 0.02%).' },
@@ -733,15 +734,17 @@ export function apply(ctx: Context, config: Config): void {
         throw new Error(`insufficient candle data (${bars?.length ?? 0} bars) from provider '${provider.id}' for ${args.symbol}`)
       }
       let strategyFn: StrategyFn
+      const direction = (args.direction as StrategyDirection | undefined) ?? 'long'
       if (args.strategy === 'donchian_breakout') {
-        strategyFn = createDonchianStrategy(args.breakoutPeriod ?? 20, Math.floor((args.breakoutPeriod ?? 20) / 2))
+        strategyFn = createDonchianStrategy(args.breakoutPeriod ?? 20, Math.floor((args.breakoutPeriod ?? 20) / 2), direction)
       } else {
-        strategyFn = createDualEmaStrategy(args.fastPeriod ?? 12, args.slowPeriod ?? 26)
+        strategyFn = createDualEmaStrategy(args.fastPeriod ?? 12, args.slowPeriod ?? 26, direction)
       }
       const result = runBacktest(args.symbol, args.timeframe, bars, strategyFn, {
         initialCapital: args.initialCapital,
         feePct: args.feePct,
         slippagePct: args.slippagePct,
+        allowShort: direction !== 'long',
       })
       return {
         summary: `Backtest completed on ${args.symbol} @ ${args.timeframe} (${result.totalTrades} trades): Net Return ${result.totalReturnPct > 0 ? '+' : ''}${result.totalReturnPct}%, Win Rate ${result.winRatePct}%, Profit Factor ${result.profitFactor}, Max Drawdown -${result.maxDrawdownPct}%, Sharpe ${result.sharpeRatio}`,
@@ -880,4 +883,117 @@ export function apply(ctx: Context, config: Config): void {
       rawInput: args,
     }),
   }))
+
+  ctx.tools.register(defineTool({
+    name: 'find_swing_points',
+    description: 'Find confirmed swing highs/lows (fractal pivots) on real candles, label market structure (HH/HL/LH/LL) with an up/down/range bias, and propose trendline candidates anchored on the two most recent swing highs (resistance) and swing lows (support) — each with real bar-open times, touch count and closes beyond the line. Call this BEFORE drawing any trendline, wave count or XABCD pattern with annotate_chart; feed its anchor points straight into paths[].',
+    parameters: {
+      symbol: { type: 'string', required: true, description: 'Instrument symbol exactly as list_symbols reports it.' },
+      timeframe: { type: 'string', required: true, enum: [...TIMEFRAMES], description: 'Bar interval.' },
+      bars: { type: 'integer', description: 'Window to scan. Default scales with timeframe (1m 600 … 4h 100), max 1000.' },
+      left: { type: 'integer', description: 'Bars on the left a pivot must exceed (default 3).' },
+      right: { type: 'integer', description: 'Bars on the right a pivot must exceed (default 3). The last `right` bars cannot be confirmed yet.' },
+      maxPoints: { type: 'integer', description: 'Most recent pivots to return (default 12, max 40).' },
+      provider: { type: 'string', description: 'Provider id. Omit to use the default provider.' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          symbol: { type: 'string', required: true },
+          timeframe: { type: 'string', required: true },
+          bias: { type: 'string', required: true },
+          summary: { type: 'string', required: true },
+          points: { type: 'json', required: true },
+          trendlines: { type: 'json', required: true },
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: value.summary }],
+    },
+    isConcurrencySafe: () => true,
+    async execute(args, _exec) {
+      const provider = ctx.marketData.resolveProvider(args.symbol, args.provider)
+      const timeframe = args.timeframe as Timeframe
+      const defaultBars: Record<string, number> = { '1m': 600, '5m': 300, '15m': 200, '30m': 150, '1h': 150, '4h': 100, '1d': 200, '1w': 100 }
+      const limit = Math.min(Math.max(args.bars ?? defaultBars[timeframe] ?? 200, 20), 1000)
+      const candles = await provider.getOhlcv({ symbol: args.symbol, timeframe, limit })
+      if (candles.length < 10) throw new Error(`not enough candles for ${args.symbol} @ ${timeframe}`)
+      const swings = detectSwingPoints(candles, args.left ?? 3, args.right ?? 3)
+      const { points, bias } = classifySwingStructure(swings)
+      const maxPoints = Math.min(Math.max(args.maxPoints ?? 12, 2), 40)
+      const recent = points.slice(-maxPoints)
+      const trendlines = [
+        trendlineCandidate(candles, swings.swingHighs, 'resistance'),
+        trendlineCandidate(candles, swings.swingLows, 'support'),
+      ].filter((t): t is NonNullable<typeof t> => t !== null)
+      const biasText = bias === 'up' ? '上升结构 (HH+HL)' : bias === 'down' ? '下降结构 (LH+LL)' : '震荡/转换结构'
+      const fmt = (n: number): string => Number(n.toPrecision(6)).toString()
+      const summary = [
+        `### 摆动结构 ${args.symbol} @ ${timeframe}（${candles.length} 根，左${args.left ?? 3}/右${args.right ?? 3}）`,
+        `- 结构判定：**${biasText}**`,
+        `- 最近摆动点：${recent.map(p => `${p.label} ${fmt(p.price)} @ ${p.time}`).join('；') || '无'}`,
+        ...trendlines.map(t =>
+          `- ${t.kind === 'resistance' ? '阻力' : '支撑'}趋势线候选：${fmt(t.anchors[0].price)}@${t.anchors[0].time} → ${fmt(t.anchors[1].price)}@${t.anchors[1].time}，` +
+          `当前投影 ${fmt(t.projectedNow)}，触碰 ${t.touches} 次，收盘越线 ${t.closesBeyond} 次${t.closesBeyond > 0 ? '（已被有效突破/跌破，慎用）' : ''}`),
+      ].join('\n')
+      return {
+        symbol: args.symbol,
+        timeframe,
+        bias,
+        summary,
+        points: recent.map(p => ({ time: p.time, price: p.price, kind: p.kind, label: p.label })) as any,
+        trendlines: trendlines as any,
+      }
+    },
+    presentCall: args => ({
+      card: 'generic',
+      title: `Swing Points: ${args.symbol} @ ${args.timeframe}`,
+      kind: 'other',
+      rawInput: args,
+    }),
+  }))
+}
+
+/**
+ * Trendline through the two most recent pivots of one kind, extended to the last
+ * bar. Touches = later bars whose wick comes within 0.3% of the line; closesBeyond
+ * = closes after the 2nd anchor on the wrong side (above resistance / below support).
+ */
+export function trendlineCandidate(
+  candles: readonly { time: string; high: number; low: number; close: number }[],
+  pivots: readonly { index: number; price: number; time: string }[],
+  kind: 'resistance' | 'support',
+) {
+  if (pivots.length < 2) return null
+  const a = pivots[pivots.length - 2]!
+  const b = pivots[pivots.length - 1]!
+  const slope = (b.price - a.price) / (b.index - a.index)
+  const lineAt = (i: number): number => a.price + slope * (i - a.index)
+  const last = candles.length - 1
+  let touches = 2
+  let closesBeyond = 0
+  for (let i = a.index + 1; i <= last; i++) {
+    const c = candles[i]!
+    const y = lineAt(i)
+    if (i > b.index && (kind === 'resistance' ? c.close > y : c.close < y)) closesBeyond++
+    if (Math.abs(i - b.index) <= 1 || i === a.index + 1) continue
+    const wick = kind === 'resistance' ? c.high : c.low
+    if (Math.abs(wick - y) / y <= 0.003) touches++
+  }
+  const projectedNow = lineAt(last)
+  return {
+    kind,
+    direction: slope > 0 ? 'rising' : slope < 0 ? 'falling' : 'flat',
+    anchors: [{ time: a.time, price: a.price }, { time: b.time, price: b.price }] as const,
+    projectedNow,
+    /** Ready-made annotate_chart paths[].points: both anchors + projection at the last bar. */
+    pathPoints: [
+      { time: a.time, price: a.price },
+      { time: b.time, price: b.price },
+      { time: candles[last]!.time, price: Number(projectedNow.toPrecision(8)) },
+    ],
+    touches,
+    closesBeyond,
+  }
 }

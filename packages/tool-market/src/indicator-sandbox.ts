@@ -20,34 +20,70 @@ export interface CustomIndicatorResult {
   executionTimeMs: number
 }
 
+/** One confirmed pivot. */
+export interface SwingPoint { index: number; price: number; time: string }
+
 /**
- * Detect swing high/low pivot points.
+ * Detect swing high/low pivot points (Williams-fractal style, generalised).
  *
- * A swing high at index i means highs[i] >= highs[j] for all j in [i-left, i+right].
- * A swing low  at index i means  lows[i] <=  lows[j] for all j in [i-left, i+right].
- *
- * Returns {swingHighs, swingLows} — each an array of {index, price, time}.
+ * A swing high at index i means highs[i] >  highs[j] for every j in [i-left, i+right], j≠i.
+ * A swing low  at index i means  lows[i] <   lows[j] for every j in [i-left, i+right], j≠i.
+ * Strict comparison (as TA-Lib FRACTAL / ta4j) so flat stretches don't spray duplicate pivots.
+ * The last `right` bars can never be confirmed — a pivot needs its right arm closed.
  */
 export function detectSwingPoints(
   candles: readonly Candle[],
   left = 3,
   right = 3,
-): { swingHighs: { index: number; price: number; time: string }[]; swingLows: { index: number; price: number; time: string }[] } {
-  const swingHighs: { index: number; price: number; time: string }[] = []
-  const swingLows: { index: number; price: number; time: string }[] = []
-  for (let i = left; i < candles.length - right; i++) {
+): { swingHighs: SwingPoint[]; swingLows: SwingPoint[] } {
+  const swingHighs: SwingPoint[] = []
+  const swingLows: SwingPoint[] = []
+  const l = Math.max(1, Math.floor(left))
+  const r = Math.max(1, Math.floor(right))
+  for (let i = l; i < candles.length - r; i++) {
     let isHigh = true
     let isLow = true
-    for (let j = i - left; j <= i + right; j++) {
+    for (let j = i - l; j <= i + r; j++) {
       if (j === i) continue
-      if (candles[j]!.high > candles[i]!.high) isHigh = false
-      if (candles[j]!.low < candles[i]!.low) isLow = false
+      if (candles[j]!.high >= candles[i]!.high) isHigh = false
+      if (candles[j]!.low <= candles[i]!.low) isLow = false
       if (!isHigh && !isLow) break
     }
     if (isHigh) swingHighs.push({ index: i, price: candles[i]!.high, time: candles[i]!.time })
     if (isLow) swingLows.push({ index: i, price: candles[i]!.low, time: candles[i]!.time })
   }
   return { swingHighs, swingLows }
+}
+
+export type SwingLabel = 'HH' | 'LH' | 'EH' | 'HL' | 'LL' | 'EL' | 'H' | 'L'
+
+export interface LabelledSwing extends SwingPoint { kind: 'high' | 'low'; label: SwingLabel }
+
+/**
+ * Label each pivot against the previous pivot of the same kind (HH/LH for highs,
+ * HL/LL for lows; first of each kind is plain H/L) and read the structure bias
+ * from the latest high + latest low: HH+HL = up, LH+LL = down, otherwise range.
+ */
+export function classifySwingStructure(
+  swings: { swingHighs: readonly SwingPoint[]; swingLows: readonly SwingPoint[] },
+): { points: LabelledSwing[]; bias: 'up' | 'down' | 'range' } {
+  const label = (list: readonly SwingPoint[], kind: 'high' | 'low'): LabelledSwing[] =>
+    list.map((p, k) => {
+      const prev = list[k - 1]
+      let lab: SwingLabel
+      if (prev === undefined) lab = kind === 'high' ? 'H' : 'L'
+      else if (p.price > prev.price) lab = kind === 'high' ? 'HH' : 'HL'
+      else if (p.price < prev.price) lab = kind === 'high' ? 'LH' : 'LL'
+      else lab = kind === 'high' ? 'EH' : 'EL'
+      return { ...p, kind, label: lab }
+    })
+  const highs = label(swings.swingHighs, 'high')
+  const lows = label(swings.swingLows, 'low')
+  const points = [...highs, ...lows].sort((a, b) => a.index - b.index)
+  const lastH = highs[highs.length - 1]?.label
+  const lastL = lows[lows.length - 1]?.label
+  const bias = lastH === 'HH' && lastL === 'HL' ? 'up' : lastH === 'LH' && lastL === 'LL' ? 'down' : 'range'
+  return { points, bias }
 }
 
 /**
