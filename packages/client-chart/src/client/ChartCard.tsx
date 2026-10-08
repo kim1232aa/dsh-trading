@@ -55,6 +55,7 @@ function labelStyle(color: string): Record<string, unknown> {
     color, size: 11, weight: 500, family: FONT_FAMILY,
     backgroundColor: 'rgba(22,24,28,0.72)', borderRadius: 2,
     paddingLeft: 3, paddingRight: 3, paddingTop: 1, paddingBottom: 1,
+    align: 'right',
   }
 }
 
@@ -553,7 +554,7 @@ function ensureRegistered(): void {
       if (lane >= 0 && lane < usableLanes && typeof ext['label'] === 'string' && ext['label'] !== '') {
         figures.push({
           type: 'text',
-          attrs: { x: 6 + lane * LABEL_LANE_WIDTH, y: y - 4, text: ext['label'], baseline: 'bottom' },
+          attrs: { x: bounding.width - 6 - lane * LABEL_LANE_WIDTH, y: y - 4, text: ext['label'], baseline: 'bottom' },
           styles: labelStyle(color),
           ignoreEvent: true,
         })
@@ -585,7 +586,7 @@ function ensureRegistered(): void {
       if (lane >= 0 && lane < usableLanes && typeof ext['label'] === 'string' && ext['label'] !== '') {
         figures.push({
           type: 'text',
-          attrs: { x: 6 + lane * LABEL_LANE_WIDTH, y: top - 4, text: ext['label'], baseline: 'bottom' },
+          attrs: { x: bounding.width - 6 - lane * LABEL_LANE_WIDTH, y: top - 4, text: ext['label'], baseline: 'bottom' },
           styles: labelStyle(color),
           ignoreEvent: true,
         })
