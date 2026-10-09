@@ -253,7 +253,7 @@ class BinanceProvider implements MarketDataProvider {
           if (!res.ok) throw new Error(`Binance futures ${res.status}: ${await res.text().catch(() => '')}`)
           return res.json()
         }
-        const stat = { period: '5m', limit: '12' }
+        const stat = { period: '5m', limit: '30' }
         const [premium, oi, oiHist, ls, topPos, topAcc, taker] = await Promise.allSettled([
           get('/fapi/v1/premiumIndex'),
           get('/fapi/v1/openInterest'),
@@ -261,7 +261,7 @@ class BinanceProvider implements MarketDataProvider {
           get('/futures/data/globalLongShortAccountRatio', stat),
           get('/futures/data/topLongShortPositionRatio', stat),
           get('/futures/data/topLongShortAccountRatio', stat),
-          get('/futures/data/takerlongshortRatio', { period: '5m', limit: '1' }),
+          get('/futures/data/takerlongshortRatio', stat),
         ])
         if (premium.status === 'rejected') throw premium.reason
         const p = premium.value as { markPrice: string; lastFundingRate: string; nextFundingTime: number; time: number }
@@ -283,8 +283,17 @@ class BinanceProvider implements MarketDataProvider {
           ? Number((((openInterest - pastOi) / pastOi) * 100).toFixed(2)) : null
         const priceChangePct1h = mark !== null && pastPrice !== null
           ? Number((((mark - pastPrice) / pastPrice) * 100).toFixed(2)) : null
+
+        const lsRatio = num(lastArr(ls)?.['longShortRatio'])
+        const tpRatio = num(lastArr(topPos)?.['longShortRatio'])
+        const crowdVsWhale = crowdVsWhaleOf(lsRatio, tpRatio)
+        const latestTakerRatio = num(lastArr(taker)?.['buySellRatio']) ?? num(first(taker)?.['buySellRatio'])
         const posture = oiChangePct1h !== null && priceChangePct1h !== null
-          ? postureOf(priceChangePct1h, oiChangePct1h, true) : null
+          ? postureOf(priceChangePct1h, oiChangePct1h, true, {
+            takerRatio: latestTakerRatio,
+            fundingRate: num(p.lastFundingRate),
+            crowdVsWhale,
+          }) : null
 
         const history: DerivativeBar[] = hist.map((item, idx, arr) => {
           const itemVal = num(item['sumOpenInterestValue'])
@@ -292,16 +301,22 @@ class BinanceProvider implements MarketDataProvider {
           const prevItem = idx > 0 ? arr[idx - 1] : undefined
           const prevOi = prevItem ? num(prevItem['sumOpenInterest']) : null
           const prevVal = prevItem ? num(prevItem['sumOpenInterestValue']) : null
-          let barPosture: string | null = null
-          if (itemVal !== null && itemOi !== null && prevVal !== null && prevOi !== null && itemOi > 0 && prevOi > 0) {
-            const px = itemVal / itemOi
-            const prevPx = prevVal / prevOi
-            barPosture = postureOf(100 * (px - prevPx) / prevPx, 100 * (itemOi - prevOi) / prevOi, false)
-          }
           const itemTs = num(item['timestamp'])
           const lsItem = ls.status === 'fulfilled' && Array.isArray(ls.value) ? ls.value[idx] : undefined
           const tpItem = topPos.status === 'fulfilled' && Array.isArray(topPos.value) ? topPos.value[idx] : undefined
           const taItem = topAcc.status === 'fulfilled' && Array.isArray(topAcc.value) ? topAcc.value[idx] : undefined
+          const tkItem = taker.status === 'fulfilled' && Array.isArray(taker.value) ? taker.value[idx] : undefined
+          const barTakerRatio = tkItem ? num(tkItem['buySellRatio']) : null
+
+          let barPosture: string | null = null
+          if (itemVal !== null && itemOi !== null && prevVal !== null && prevOi !== null && itemOi > 0 && prevOi > 0) {
+            const px = itemVal / itemOi
+            const prevPx = prevVal / prevOi
+            barPosture = postureOf(100 * (px - prevPx) / prevPx, 100 * (itemOi - prevOi) / prevOi, false, {
+              takerRatio: barTakerRatio,
+              fundingRate: num(p.lastFundingRate),
+            })
+          }
           return {
             time: new Date(itemTs !== null ? itemTs : Date.now()).toISOString(),
             openInterest: itemOi,
@@ -309,14 +324,10 @@ class BinanceProvider implements MarketDataProvider {
             longShortRatio: lsItem ? num(lsItem['longShortRatio']) : null,
             topPositionRatio: tpItem ? num(tpItem['longShortRatio']) : null,
             topAccountRatio: taItem ? num(taItem['longShortRatio']) : null,
-            takerBuySellRatio: null,
+            takerBuySellRatio: barTakerRatio,
             posture: barPosture,
           }
         })
-
-        const lsRatio = num(lastArr(ls)?.['longShortRatio'])
-        const tpRatio = num(lastArr(topPos)?.['longShortRatio'])
-        const crowdVsWhale = crowdVsWhaleOf(lsRatio, tpRatio)
 
         return {
           source: 'Binance',
@@ -329,7 +340,7 @@ class BinanceProvider implements MarketDataProvider {
           longShortRatio: lsRatio,
           topPositionRatio: tpRatio,
           topAccountRatio: num(lastArr(topAcc)?.['longShortRatio']),
-          takerBuySellRatio: num(first(taker)?.['buySellRatio']),
+          takerBuySellRatio: latestTakerRatio,
           time: new Date(Number.isFinite(p.time) ? p.time : Date.now()).toISOString(),
           oiChangePct1h,
           priceChangePct1h,
@@ -350,22 +361,53 @@ function num(v: unknown): number | null {
   return v === undefined || v === null || v === '' || !Number.isFinite(n) ? null : n
 }
 
+export interface PostureFactors {
+  takerRatio?: number | null | undefined
+  fundingRate?: number | null | undefined
+  crowdVsWhale?: string | null | undefined
+  topPosRatio?: number | null | undefined
+}
+
 /**
- * Price × OI quadrant, from percentage changes. OI is market-wide, so the label
- * says what the flow most likely was, never who ("主力") did it. Moves inside
- * the dead zone are noise and get no direction. `long` = the 1h headline
- * (wider dead zone); otherwise a single 5m bar.
- * ponytail: fixed dead zones; scale them by ATR if they misfire on quiet/volatile coins.
+ * Multi-factor Price × OI posture evaluation:
+ * - Basic quadrant: pricePct vs oiPct (with dead-zone filtering)
+ * - Taker volume aggression flow (aggressor confirmation / divergence)
+ * - Extreme funding rate leverage congestion flags
+ * - Retail vs whale counterparty risk
  */
-export function postureOf(pricePct: number, oiPct: number, long: boolean): string {
+export function postureOf(pricePct: number, oiPct: number, long: boolean, factors?: PostureFactors): string {
   const [pz, oz] = long ? [0.1, 0.3] : [0.02, 0.05]
   if (Math.abs(oiPct) < oz) return '持仓持平'
   const oiUp = oiPct > 0
   if (Math.abs(pricePct) < pz) return oiUp ? '价平增仓' : '价平减仓'
-  const [head, tail] = pricePct > 0
-    ? oiUp ? ['价涨增仓', '多头增仓'] : ['价涨减仓', '空头回补']
-    : oiUp ? ['价跌增仓', '空头增仓'] : ['价跌减仓', '多头平仓']
-  return long ? `${head} (${tail}为主)` : tail
+
+  const tk = factors?.takerRatio
+  let head = ''
+  let tail = ''
+
+  if (pricePct > 0) {
+    head = oiUp ? '价涨增仓' : '价涨减仓'
+    if (oiUp) {
+      tail = tk && tk >= 1.12 ? '多头主动吃单做多' : tk && tk <= 0.88 ? '多头被动推高 (量能背离)' : '多头增仓'
+    } else {
+      tail = factors && pricePct > 2.0 ? '空头爆仓轧空止损' : '空头回补'
+    }
+  } else {
+    head = oiUp ? '价跌增仓' : '价跌减仓'
+    if (oiUp) {
+      tail = tk && tk <= 0.88 ? '空头主动砸盘做空' : tk && tk >= 1.12 ? '大户接盘吸筹 (散户追空)' : '空头增仓'
+    } else {
+      tail = factors && pricePct < -2.0 ? '多头恐慌清算踩踏' : '多头平仓'
+    }
+  }
+
+  let result = long ? `${head} (${tail}为主)` : tail
+  const fr = factors?.fundingRate
+  if (long && fr !== null && fr !== undefined) {
+    if (fr >= 0.0003) result += ' [多头费率极度拥挤]'
+    else if (fr <= -0.0002) result += ' [空头负费率过度拥挤]'
+  }
+  return result
 }
 
 /**
@@ -490,7 +532,10 @@ async function gateDerivatives(rawSymbol: string): Promise<Derivatives> {
   }
 
   const posture = oiChangePct1h !== null && priceChangePct1h !== null
-    ? postureOf(priceChangePct1h, oiChangePct1h, true) : null
+    ? postureOf(priceChangePct1h, oiChangePct1h, true, {
+      takerRatio: num(s['lsr_taker']),
+      fundingRate: num(c['funding_rate']),
+    }) : null
 
   const history: DerivativeBar[] = stats.map((item, idx) => {
     const itemContracts = num(item['open_interest'])
@@ -504,7 +549,10 @@ async function gateDerivatives(rawSymbol: string): Promise<Derivatives> {
     // Contracts, not USD: USD OI moves with price.
     const prevC = prevItem ? num(prevItem['open_interest']) : null
     if (itemPrice !== null && prevP !== null && itemContracts !== null && prevC !== null && prevC > 0 && prevP > 0) {
-      barPosture = postureOf(100 * (itemPrice - prevP) / prevP, 100 * (itemContracts - prevC) / prevC, false)
+      barPosture = postureOf(100 * (itemPrice - prevP) / prevP, 100 * (itemContracts - prevC) / prevC, false, {
+        takerRatio: num(item['lsr_taker']),
+        fundingRate: num(c['funding_rate']),
+      })
     }
     const itemTime = num(item['time'])
     return {
@@ -605,7 +653,6 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
   const ago = pt(oih[12] ?? oih[oih.length - 1])
   const oiChangePct1h = round2(chg(now.oi, ago.oi))
   const priceChangePct1h = round2(chg(now.px, ago.px))
-  const posture = oiChangePct1h !== null && priceChangePct1h !== null ? postureOf(priceChangePct1h, oiChangePct1h, true) : null
 
   const topPositionRatio = num(top[0]?.[1])
   const sell = num(taker[0]?.[1])
@@ -613,6 +660,9 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
   const takerBuySellRatio = buy !== null && sell !== null && sell > 0 ? Number((buy / sell).toFixed(4)) : null
   // No all-accounts (retail) ratio fetched from OKX, so no retail-vs-whale read.
   const crowdVsWhale = null
+
+  const posture = oiChangePct1h !== null && priceChangePct1h !== null
+    ? postureOf(priceChangePct1h, oiChangePct1h, true) : null
 
   const history: DerivativeBar[] = [...oih].reverse().map((row, i, asc) => {
     const cur = pt(row)
@@ -624,9 +674,12 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
       openInterest: cur.oi,
       openInterestValue: num(row[3]),
       longShortRatio: null,
-      takerBuySellRatio: null,
-      topPositionRatio: null,
-      posture: dOi !== null && dPx !== null ? postureOf(dPx, dOi, false) : null,
+      takerBuySellRatio,
+      topPositionRatio,
+      posture: dOi !== null && dPx !== null ? postureOf(dPx, dOi, false, {
+        takerRatio: takerBuySellRatio,
+        fundingRate,
+      }) : null,
     }
   })
 

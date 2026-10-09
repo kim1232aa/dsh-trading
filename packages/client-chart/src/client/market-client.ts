@@ -564,7 +564,15 @@ export function recallMarks(): ChartMarks | null {
  * Orange = position reduction (long liquidation or short covering) or neutral.
  */
 export function postureColor(posture: string | null | undefined): { color: string; bg: string } {
-  if (!posture || posture === '—') return { color: '#c9d1d9', bg: 'transparent' }
+  if (!posture || posture === '—' || posture.includes('持平') || posture.includes('观望')) {
+    return { color: '#8b949e', bg: 'rgba(139,148,158,0.12)' }
+  }
+  if (posture.includes('爆仓') || posture.includes('清算') || posture.includes('踩踏') || posture.includes('轧空')) {
+    return { color: '#d2a8ff', bg: 'rgba(210,168,255,0.18)' }
+  }
+  if (posture.includes('吸筹') || posture.includes('接盘')) {
+    return { color: '#27C6DA', bg: 'rgba(39,198,218,0.18)' }
+  }
   if (posture.includes('多头增仓') || posture.includes('价涨增仓') || posture.includes('做多')) {
     return { color: '#3ddc97', bg: 'rgba(61,220,151,0.15)' }
   }

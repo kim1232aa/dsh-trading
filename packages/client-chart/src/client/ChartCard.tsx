@@ -243,7 +243,7 @@ export const EDITABLE: {
   { name: 'NW_TREND', title: '核回归趋势(QuantAlgo)', defaults: [50, 8, 2.0, 1.8], defaultVisible: false, params: [period('回溯周期'), { label: '带宽', min: 1, max: 50, step: 1 }, { label: '倍数', min: 0.5, max: 10, step: 0.1 }, { label: '通道倍数', min: 0.5, max: 10, step: 0.1 }] },
   { name: 'OB_BB', title: '订单块/破坏块(RWB)', defaults: [], defaultVisible: false, params: [] },
   { name: 'MTF_SR', title: '多周期支撑阻力(Syndicate)', defaults: [5], defaultVisible: false, params: [period('Pivot周期')] },
-  { name: 'OI_POSTURE', title: '持仓动向', defaults: [], params: [] },
+  { name: 'OI_POSTURE', title: '持仓动向', pane: 'pane_oi_posture', defaults: [], params: [] },
   { name: 'ENTRY_SIGNAL', title: '多空进场信号(未验证)', defaults: [60, 4], defaultVisible: false, params: [period('ST周期'), { label: 'ST倍数', min: 0.1, max: 20, step: 0.1 }] },
 ]
 
@@ -470,42 +470,158 @@ function ensureRegistered(): void {
   registerIndicator({
     name: 'OI_POSTURE',
     shortName: '持仓动向',
-    series: 'price',
-    figures: [],
-    calc: () => [],
+    series: 'volume',
+    precision: 2,
+    shouldFormatBigNumber: true,
+    calcParams: [14],
+    figures: [
+      {
+        key: 'oi',
+        title: 'OI: ',
+        type: 'line',
+        styles: () => ({
+          color: '#27C6DA',
+          size: 1.5,
+        }),
+      },
+      {
+        key: 'oiMa',
+        title: 'OI均线: ',
+        type: 'line',
+        styles: () => ({
+          color: '#f59e0b',
+          size: 1,
+        }),
+      },
+    ],
+    calc: (kLineDataList: { timestamp?: number }[], indicator: { extendData?: unknown; calcParams?: number[] }) => {
+      const history = (indicator.extendData ?? []) as PanelDerivativeBar[]
+      if (!Array.isArray(history) || history.length === 0) {
+        return kLineDataList.map(() => ({}))
+      }
+      const histParsed = history.map((h, idx) => {
+        const sec = Math.floor(Date.parse(h.time) / 1000)
+        const prev = idx > 0 ? history[idx - 1] : undefined
+        const curVal = h.openInterestValue ?? h.openInterest ?? null
+        const prevVal = prev?.openInterestValue ?? prev?.openInterest ?? null
+        const delta = curVal !== null && prevVal !== null ? curVal - prevVal : 0
+        return {
+          bar: h,
+          sec,
+          delta,
+        }
+      })
+
+      const maPeriod = (indicator.calcParams?.[0] as number | undefined) ?? 14
+      const oiValues: (number | undefined)[] = []
+
+      return kLineDataList.map(k => {
+        const ts = k.timestamp
+        if (ts === undefined) return {}
+        const kSec = Math.floor(ts / 1000)
+        let bestDiff = Infinity
+        let matched: typeof histParsed[number] | undefined
+        for (const item of histParsed) {
+          const diff = Math.abs(item.sec - kSec)
+          if (diff < bestDiff && diff <= 900) {
+            bestDiff = diff
+            matched = item
+          }
+        }
+        if (!matched || matched.bar.openInterestValue == null) {
+          oiValues.push(undefined)
+          return {}
+        }
+        const oi = matched.bar.openInterestValue
+        oiValues.push(oi)
+        let sum = 0
+        let count = 0
+        for (let j = oiValues.length - 1; j >= 0 && count < maPeriod; j--) {
+          const val = oiValues[j]
+          if (val !== undefined) {
+            sum += val
+            count++
+          }
+        }
+        const oiMa = count > 0 ? sum / count : undefined
+
+        return {
+          oi,
+          oiMa,
+          deltaOi: matched.delta,
+          bar: matched.bar,
+        }
+      })
+    },
     createTooltipDataSource: ({ indicator, crosshair, kLineDataList }: {
-      indicator: { extendData?: unknown }
+      indicator: { calcParams?: number[]; extendData?: unknown; result?: Record<string, unknown>[] }
       crosshair: { dataIndex?: number; kLineData?: { timestamp?: number } }
       kLineDataList: { timestamp?: number }[]
     }) => {
+      const res = indicator.result ?? []
       const history = (indicator.extendData ?? []) as PanelDerivativeBar[]
       if (!Array.isArray(history) || history.length === 0) {
-        return { name: '', calcParamsText: '', values: [] }
+        return { name: '持仓动向', calcParamsText: '', values: [] }
       }
       const dataIndex = crosshair.dataIndex ?? (kLineDataList.length - 1)
+      const row = res[dataIndex] as { oi?: number; oiMa?: number; deltaOi?: number; bar?: PanelDerivativeBar } | undefined
       const ts = crosshair.kLineData?.timestamp ?? kLineDataList[dataIndex]?.timestamp
-      let target: PanelDerivativeBar | undefined
-      if (ts !== undefined) {
+
+      let target: PanelDerivativeBar | undefined = row?.bar
+      let deltaVal: number | undefined = row?.deltaOi
+      if (!target && ts !== undefined) {
         const sec = Math.floor(ts / 1000)
         target = history.find(h => {
           const hSec = Math.floor(Date.parse(h.time) / 1000)
-          return Math.abs(hSec - sec) < 300
+          return Math.abs(hSec - sec) <= 900
         })
       }
-      const bar = target ?? history[history.length - 1]!
-      const pColor = postureColor(bar.posture).color
-      const oiText = bar.openInterestValue ? `$${compact.format(bar.openInterestValue)}` : '—'
-      const lsrText = bar.longShortRatio ? bar.longShortRatio.toFixed(2) : '—'
-      const topPos = bar.topPositionRatio ? bar.topPositionRatio.toFixed(2) : null
-      const values = [
+      // Strictly prevent time-travel leakage: only fallback to latest live snapshot on the newest candle
+      if (!target && dataIndex >= kLineDataList.length - 1) {
+        target = history[history.length - 1]
+      }
+
+      if (!target) {
+        return {
+          name: '持仓动向',
+          calcParamsText: '',
+          values: [
+            { title: 'OI: ', value: { text: '—', color: '#8b949e' } },
+            { title: '动向: ', value: { text: '历史无快照', color: '#8b949e' } },
+          ],
+        }
+      }
+
+      const pColor = postureColor(target.posture).color
+      const oiText = target.openInterestValue ? `$${compact.format(target.openInterestValue)}` : '—'
+      const lsrText = target.longShortRatio ? target.longShortRatio.toFixed(2) : '—'
+      const topPos = target.topPositionRatio ? target.topPositionRatio.toFixed(2) : null
+      const tkText = target.takerBuySellRatio ? target.takerBuySellRatio.toFixed(2) : null
+      const deltaText = deltaVal !== undefined && Number.isFinite(deltaVal)
+        ? `${deltaVal >= 0 ? '+' : ''}$${compact.format(deltaVal)}`
+        : null
+
+      const values: { title: string; value: { text: string; color: string } }[] = [
         { title: 'OI: ', value: { text: oiText, color: '#27C6DA' } },
-        { title: '动向: ', value: { text: bar.posture ?? '—', color: pColor } },
-        { title: '散户比: ', value: { text: lsrText, color: '#c9d1d9' } },
       ]
-      if (topPos) values.push({ title: '大户持仓比: ', value: { text: topPos, color: '#ffa726' } })
+      if (row?.oiMa !== undefined && Number.isFinite(row.oiMa)) {
+        values.push({ title: 'OI均线: ', value: { text: `$${compact.format(row.oiMa)}`, color: '#f59e0b' } })
+      }
+      if (deltaText) {
+        values.push({ title: 'ΔOI: ', value: { text: deltaText, color: deltaVal! >= 0 ? '#22c55e' : '#ef4444' } })
+      }
+      values.push({ title: '动向: ', value: { text: target.posture ?? '—', color: pColor } })
+      if (tkText) {
+        values.push({ title: '主动买卖比: ', value: { text: tkText, color: Number(tkText) >= 1.0 ? '#22c55e' : '#ef4444' } })
+      }
+      values.push({ title: '散户比: ', value: { text: lsrText, color: '#c9d1d9' } })
+      if (topPos) {
+        values.push({ title: '大户比: ', value: { text: topPos, color: '#ffa726' } })
+      }
+      const p = indicator.calcParams?.[0] ?? 14
       return {
         name: '持仓动向',
-        calcParamsText: '',
+        calcParamsText: `(${p})`,
         values,
       }
     },
@@ -795,12 +911,12 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     })))
     for (const def of EDITABLE) {
       const s = settingsRef.current[def.name]!
+      const ext = def.name === 'OI_POSTURE' ? derivativesRef.current?.history : undefined
       if (def.pane !== undefined) {
         // Own pane: created only when shown, so a hidden one doesn't leave a blank strip.
-        if (s.visible) chart.createIndicator({ name: def.name, calcParams: s.params }, false, { id: def.pane, height: PANE_HEIGHT })
+        if (s.visible) chart.createIndicator({ name: def.name, calcParams: s.params, extendData: ext }, false, { id: def.pane, height: PANE_HEIGHT })
         continue
       }
-      const ext = def.name === 'OI_POSTURE' ? derivativesRef.current?.history : undefined
       chart.createIndicator({ name: def.name, calcParams: s.params, visible: s.visible, extendData: ext }, true, { id: 'candle_pane' })
     }
     chart.subscribeAction(ActionType.OnTooltipIconClick, (d?: { iconId?: string }) => {
@@ -900,14 +1016,14 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     if (chart === null) return
     for (const def of EDITABLE) {
       const s = settings[def.name]!
+      const ext = def.name === 'OI_POSTURE' ? derivatives?.history : undefined
       if (def.pane !== undefined) {
         const exists = chart.getIndicatorByPaneId(def.pane, def.name) != null
         if (!s.visible) { if (exists) chart.removeIndicator(def.pane, def.name) }
-        else if (!exists) chart.createIndicator({ name: def.name, calcParams: s.params }, false, { id: def.pane, height: PANE_HEIGHT })
-        else chart.overrideIndicator({ name: def.name, calcParams: s.params }, def.pane)
+        else if (!exists) chart.createIndicator({ name: def.name, calcParams: s.params, extendData: ext }, false, { id: def.pane, height: PANE_HEIGHT })
+        else chart.overrideIndicator({ name: def.name, calcParams: s.params, extendData: ext }, def.pane)
         continue
       }
-      const ext = def.name === 'OI_POSTURE' ? derivatives?.history : undefined
       chart.overrideIndicator({ name: def.name, calcParams: s.params, visible: s.visible, extendData: ext }, 'candle_pane')
     }
   }, [settings, derivatives])
