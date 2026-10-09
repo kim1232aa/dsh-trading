@@ -169,8 +169,8 @@ const BANNER: CSSProperties = {
 }
 
 export function formatChartError(raw: string): string {
-  if (raw === 'fetch failed' || raw.includes('fetch failed') || raw.includes('ECONNRESET')) {
-    return '行情接口连接失败 (fetch failed)：无法直连境外 Binance/OKX 行情服务器。若在境内使用，请开启网络代理/梯子；或点击下方【查看 A 股】免代理体验。'
+  if (raw === 'fetch failed' || raw.includes('fetch failed') || raw.includes('ECONNRESET') || raw.includes('ETIMEDOUT')) {
+    return '行情服务连接超时或网络异常，请点击重新加载。'
   }
   return raw
 }
@@ -181,19 +181,15 @@ function ChartErrorBanner({
   currentTimeframe,
   onRetry,
   onDismiss,
-  onSwitchToCn,
-  providerId,
 }: {
   error: string
   targetTimeframe?: string | undefined
   currentTimeframe?: string | undefined
   onRetry: () => void
   onDismiss: () => void
-  onSwitchToCn: () => void
+  onSwitchToCn?: () => void
   providerId?: string | undefined
 }): JSX.Element {
-  const isCn = providerId === 'cn'
-  const isNetwork = error.includes('不可达') || error.includes('fetch failed') || error.includes('网络') || error.includes('超时')
   const displayMsg = formatChartError(error)
   return (
     <div style={BANNER} role="alert">
@@ -214,16 +210,6 @@ function ChartErrorBanner({
         </span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-        {!isCn && isNetwork ? (
-          <button
-            type="button"
-            style={{ ...TF_BUTTON(false), padding: '1px 6px', fontSize: 11, borderColor: 'var(--dsw-alias-border-l3, rgba(128,128,128,0.5))' }}
-            onClick={onSwitchToCn}
-            title="一键切换为国内免代理 A 股数据源"
-          >
-            切到 A 股源
-          </button>
-        ) : null}
         <button
           type="button"
           style={{ ...TF_BUTTON(true), padding: '1px 8px', fontSize: 11 }}
@@ -1346,20 +1332,6 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
                     }}
                   >
                     🔄 重新加载
-                  </button>
-                  <button
-                    type="button"
-                    style={{ ...TF_BUTTON(false), padding: '4px 14px' }}
-                    onClick={() => pickPreset('sh000001')}
-                  >
-                    🇨🇳 查看上证指数 (免代理)
-                  </button>
-                  <button
-                    type="button"
-                    style={{ ...TF_BUTTON(false), padding: '4px 14px' }}
-                    onClick={() => pickPreset('600519')}
-                  >
-                    🇨🇳 查看贵州茅台 (免代理)
                   </button>
                 </div>
                 {hint !== null ? <p style={{ fontSize: 12, opacity: 0.75, marginTop: 10 }}>{hint}</p> : null}
