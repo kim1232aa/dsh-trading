@@ -7,16 +7,35 @@
 
 import type { Timeframe } from '@dsh-trading/market-data'
 
-/** Bar duration per timeframe, milliseconds. 1w = 7 calendar days. */
-export const TIMEFRAME_MS: Record<Timeframe, number> = {
+/** Fixed bar durations in milliseconds; null means a variable calendar month. */
+export const TIMEFRAME_MS = {
   '1m': 60_000,
+  '3m': 180_000,
   '5m': 300_000,
   '15m': 900_000,
   '30m': 1_800_000,
   '1h': 3_600_000,
+  '2h': 7_200_000,
   '4h': 14_400_000,
+  '6h': 21_600_000,
+  '8h': 28_800_000,
+  '12h': 43_200_000,
   '1d': 86_400_000,
+  '3d': 259_200_000,
   '1w': 604_800_000,
+  '1M': null,
+} satisfies Record<Timeframe, number | null>
+
+/** Actual duration from a bar's open to its close; monthly bars use UTC months. */
+export function barDurationMs(timeframe: Timeframe, barOpenTime: string): number {
+  const fixed = TIMEFRAME_MS[timeframe]
+  if (fixed !== null) return fixed
+  const open = new Date(barOpenTime)
+  const next = new Date(open)
+  next.setUTCDate(1)
+  next.setUTCHours(0, 0, 0, 0)
+  next.setUTCMonth(next.getUTCMonth() + 1)
+  return next.getTime() - open.getTime()
 }
 
 /** One completed round trip. Times are ISO-8601 UTC. */
@@ -86,7 +105,7 @@ export function parseArtifact(value: unknown): BacktestArtifact {
   const a = value as Record<string, unknown>
   if (a.version !== 1) throw new Error(`artifact.version must be 1 (got ${JSON.stringify(a.version)})`)
   if (typeof a.symbol !== 'string' || a.symbol.length === 0) throw new Error('artifact.symbol must be a non-empty string')
-  if (typeof a.timeframe !== 'string' || !(a.timeframe in TIMEFRAME_MS)) {
+  if (typeof a.timeframe !== 'string' || !Object.hasOwn(TIMEFRAME_MS, a.timeframe)) {
     throw new Error(`artifact.timeframe must be one of ${Object.keys(TIMEFRAME_MS).join(', ')} (got ${JSON.stringify(a.timeframe)})`)
   }
   if (!Array.isArray(a.trades)) throw new Error('artifact.trades must be an array')

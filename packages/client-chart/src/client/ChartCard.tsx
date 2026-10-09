@@ -550,11 +550,11 @@ function ensureRegistered(): void {
       // pass runs before any geometry is known, so a narrow column could be
       // handed lane 2 and print its caption off the right edge — placed as far
       // as the pass knows, invisible as far as the reader is concerned.
-      const usableLanes = Math.max(1, Math.floor((bounding.width - 6) / LABEL_LANE_WIDTH))
+      const usableLanes = Math.max(1, Math.floor((bounding.width - LABEL_AXIS_INSET) / LABEL_LANE_WIDTH))
       if (lane >= 0 && lane < usableLanes && typeof ext['label'] === 'string' && ext['label'] !== '') {
         figures.push({
           type: 'text',
-          attrs: { x: bounding.width - 6 - lane * LABEL_LANE_WIDTH, y: y - 4, text: ext['label'], baseline: 'bottom' },
+          attrs: { x: labelAnchorX(bounding.width, lane, ext['label']), y: y - 4, text: ext['label'], baseline: 'bottom' },
           styles: labelStyle(color),
           ignoreEvent: true,
         })
@@ -582,11 +582,11 @@ function ensureRegistered(): void {
       // Same lane pass as hlines: a zone edge often shares a price with a
       // scenario trigger, and two captions at x=6 on one y print over each other.
       const lane = typeof ext['lane'] === 'number' ? ext['lane'] : 0
-      const usableLanes = Math.max(1, Math.floor((bounding.width - 6) / LABEL_LANE_WIDTH))
+      const usableLanes = Math.max(1, Math.floor((bounding.width - LABEL_AXIS_INSET) / LABEL_LANE_WIDTH))
       if (lane >= 0 && lane < usableLanes && typeof ext['label'] === 'string' && ext['label'] !== '') {
         figures.push({
           type: 'text',
-          attrs: { x: bounding.width - 6 - lane * LABEL_LANE_WIDTH, y: top - 4, text: ext['label'], baseline: 'bottom' },
+          attrs: { x: labelAnchorX(bounding.width, lane, ext['label']), y: top - 4, text: ext['label'], baseline: 'bottom' },
           styles: labelStyle(color),
           ignoreEvent: true,
         })
@@ -780,6 +780,29 @@ const CHIP_DEFS: ChipDef[] = [
 
 /** Horizontal step between label lanes, in px. */
 const LABEL_LANE_WIDTH = 150
+
+/**
+ * Width of the Y-axis price column. It sits INSIDE the pane bounding box, so a
+ * caption whose right edge is `width - 6` draws across the price tag. The
+ * anchor must clear the whole column, not just the pill.
+ */
+const LABEL_AXIS_INSET = 64
+
+/** 11px CJK is ~11px wide; ASCII is ~6.5. */
+function labelWidthPx(text: string): number {
+  let width = 0
+  for (const ch of text) width += ch.charCodeAt(0) > 0xff ? 11 : 6.5
+  return Math.ceil(width) + 8
+}
+
+/**
+ * Right edge of a right-aligned caption. The text grows LEFT from this x, so
+ * the anchor itself must sit left of the Y-axis column by the caption's own
+ * width — otherwise a long label runs back into the price tag.
+ */
+export function labelAnchorX(paneWidth: number, lane: number, text: string): number {
+  return paneWidth - LABEL_AXIS_INSET - lane * LABEL_LANE_WIDTH - labelWidthPx(text)
+}
 
 /** Lanes available before a label is dropped rather than stacked. */
 const LABEL_LANES = 4

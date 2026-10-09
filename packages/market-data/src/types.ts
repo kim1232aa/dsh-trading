@@ -5,8 +5,16 @@
  * @module @dsh-trading/market-data
  */
 
-/** Supported bar intervals. Providers may serve a subset. */
-export type Timeframe = '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1d' | '1w'
+/**
+ * Supported bar intervals. Providers may serve a subset.
+ *
+ * `1M` is a calendar month. Binance's wire value is the capital `1M`; the
+ * lowercase `1m` stays the one-minute bar, so the case is load-bearing.
+ */
+export type Timeframe =
+  | '1m' | '3m' | '5m' | '15m' | '30m'
+  | '1h' | '2h' | '4h' | '6h' | '8h' | '12h'
+  | '1d' | '3d' | '1w' | '1M'
 
 /** One OHLCV bar. `time` is the bar OPEN time as an ISO-8601 UTC string. */
 export interface Candle {

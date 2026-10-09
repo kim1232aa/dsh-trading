@@ -37,6 +37,8 @@ import {
 import type { ScreenerMatch, ScreenerPattern } from './screener.js'
 import { runCustomIndicator, detectSwingPoints, classifySwingStructure } from './indicator-sandbox.js'
 import type { CustomIndicatorOptions, CustomIndicatorResult } from './indicator-sandbox.js'
+import { trendlineCandidate } from './trendlines.js'
+export { trendlineCandidate } from './trendlines.js'
 
 export { runCustomIndicator, detectSwingPoints, classifySwingStructure } from './indicator-sandbox.js'
 export type { CustomIndicatorOptions, CustomIndicatorResult } from './indicator-sandbox.js'
@@ -886,7 +888,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.tools.register(defineTool({
     name: 'find_swing_points',
-    description: 'Find confirmed swing highs/lows (fractal pivots) on real candles, label market structure (HH/HL/LH/LL) with an up/down/range bias, and propose trendline candidates anchored on the two most recent swing highs (resistance) and swing lows (support) — each with real bar-open times, touch count and closes beyond the line. Call this BEFORE drawing any trendline, wave count or XABCD pattern with annotate_chart; feed its anchor points straight into paths[].',
+    description: 'Find swing highs/lows and label market structure. Search separated pivot pairs for wick-anchored arithmetic-scale trendlines, reject intervening price intersections, count independent pivot reactions (not nearby candles), and distinguish candidate / confirmed-by-later-retest / broken. Confirmation is a historical geometric check, not predictive proof. No suitable pair returns no line. Call BEFORE drawing trendlines with annotate_chart; use returned anchors with their timeframe and status, never present candidates or broken lines as confirmed support/resistance.',
     parameters: {
       symbol: { type: 'string', required: true, description: 'Instrument symbol exactly as list_symbols reports it.' },
       timeframe: { type: 'string', required: true, enum: [...TIMEFRAMES], description: 'Bar interval.' },
@@ -919,7 +921,8 @@ export function apply(ctx: Context, config: Config): void {
       const limit = Math.min(Math.max(args.bars ?? defaultBars[timeframe] ?? 200, 20), 1000)
       const candles = await provider.getOhlcv({ symbol: args.symbol, timeframe, limit })
       if (candles.length < 10) throw new Error(`not enough candles for ${args.symbol} @ ${timeframe}`)
-      const swings = detectSwingPoints(candles, args.left ?? 3, args.right ?? 3)
+      // The provider may include a live tail; it cannot confirm a pivot's right arm.
+      const swings = detectSwingPoints(candles.slice(0, -1), args.left ?? 3, args.right ?? 3)
       const { points, bias } = classifySwingStructure(swings)
       const maxPoints = Math.min(Math.max(args.maxPoints ?? 12, 2), 40)
       const recent = points.slice(-maxPoints)
@@ -932,10 +935,13 @@ export function apply(ctx: Context, config: Config): void {
       const summary = [
         `### 摆动结构 ${args.symbol} @ ${timeframe}（${candles.length} 根，左${args.left ?? 3}/右${args.right ?? 3}）`,
         `- 结构判定：**${biasText}**`,
+        '- 末根按可能未收盘处理，不参与摆动确认/破线计数；触点不等于胜率。',
         `- 最近摆动点：${recent.map(p => `${p.label} ${fmt(p.price)} @ ${p.time}`).join('；') || '无'}`,
         ...trendlines.map(t =>
           `- ${t.kind === 'resistance' ? '阻力' : '支撑'}趋势线候选：${fmt(t.anchors[0].price)}@${t.anchors[0].time} → ${fmt(t.anchors[1].price)}@${t.anchors[1].time}，` +
-          `当前投影 ${fmt(t.projectedNow)}，触碰 ${t.touches} 次，收盘越线 ${t.closesBeyond} 次${t.closesBeyond > 0 ? '（已被有效突破/跌破，慎用）' : ''}`),
+          `当前投影 ${fmt(t.projectedNow)}，独立摆动触点 ${t.touches} 个，后续回测 ${t.retests} 次，收盘越线 ${t.closesBeyond} 根，` +
+          `${t.status === 'broken' ? '已破线（不作有效支撑/阻力）' : t.status === 'confirmed' ? '回测确认（几何检验，非预测保证）' : '两点候选（待后续独立回测）'}；算术坐标`),
+        ...(trendlines.length === 0 ? ['- 无符合条件的趋势线；不强行连线。'] : []),
       ].join('\n')
       return {
         symbol: args.symbol,
@@ -953,79 +959,4 @@ export function apply(ctx: Context, config: Config): void {
       rawInput: args,
     }),
   }))
-}
-
-/**
- * Trendline through the two most recent pivots of one kind, extended to the last
- * bar. Touches = later bars whose wick comes within 0.3% of the line; closesBeyond
- * = closes after the 2nd anchor on the wrong side (above resistance / below support).
- */
-export function trendlineCandidate(
-  candles: readonly { time: string; high: number; low: number; close: number }[],
-  pivots: readonly { index: number; price: number; time: string }[],
-  kind: 'resistance' | 'support',
-) {
-  if (pivots.length < 2) return null
-  const b = pivots[pivots.length - 1]!
-  const last = candles.length - 1
-
-  function evalLine(candA: typeof b) {
-    const slope = (b.price - candA.price) / (b.index - candA.index)
-    const lineAt = (i: number): number => candA.price + slope * (i - candA.index)
-    let touches = 2
-    let closesBeyond = 0
-    for (let i = candA.index + 1; i <= last; i++) {
-      const c = candles[i]!
-      const y = lineAt(i)
-      if (i > b.index && (kind === 'resistance' ? c.close > y : c.close < y)) closesBeyond++
-      if (Math.abs(i - b.index) <= 1 || i === candA.index + 1) continue
-      const wick = kind === 'resistance' ? c.high : c.low
-      if (Math.abs(wick - y) / y <= 0.003) touches++
-    }
-    const projectedNow = lineAt(last)
-    return { candA, slope, touches, closesBeyond, projectedNow }
-  }
-
-  const defaultA = pivots[pivots.length - 2]!
-  let best = evalLine(defaultA)
-
-  // If default line has the wrong slope (rising resistance or falling support),
-  // is virtually flat (< 0.1% delta), or breaks immediately, search backwards
-  // for a structurally sound anchor that respects the slope and minimizes closesBeyond.
-  const isWrongSlope = kind === 'resistance' ? best.slope >= 0 : best.slope <= 0
-  const isFlat = Math.abs(b.price - defaultA.price) / b.price < 0.001
-  if (isWrongSlope || isFlat || best.closesBeyond > 0) {
-    const searchRange = pivots.slice(Math.max(0, pivots.length - 8), pivots.length - 1)
-    for (const candA of searchRange) {
-      if (candA === defaultA) continue
-      const cand = evalLine(candA)
-      const validSlope = kind === 'resistance' ? cand.slope < 0 : cand.slope > 0
-      if (!validSlope) continue
-      if (
-        cand.closesBeyond < best.closesBeyond ||
-        (cand.closesBeyond === best.closesBeyond && cand.touches > best.touches) ||
-        (cand.closesBeyond === best.closesBeyond && cand.touches === best.touches && (b.index - candA.index) > (b.index - best.candA.index))
-      ) {
-        best = cand
-      }
-    }
-  }
-
-  const a = best.candA
-  const slope = best.slope
-  const projectedNow = best.projectedNow
-  return {
-    kind,
-    direction: slope > 0 ? 'rising' : slope < 0 ? 'falling' : 'flat',
-    anchors: [{ time: a.time, price: a.price }, { time: b.time, price: b.price }] as const,
-    projectedNow,
-    /** Ready-made annotate_chart paths[].points: both anchors + projection at the last bar. */
-    pathPoints: [
-      { time: a.time, price: a.price },
-      { time: b.time, price: b.price },
-      { time: candles[last]!.time, price: Number(projectedNow.toPrecision(8)) },
-    ],
-    touches: best.touches,
-    closesBeyond: best.closesBeyond,
-  }
 }

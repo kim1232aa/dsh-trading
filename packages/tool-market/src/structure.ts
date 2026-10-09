@@ -2,14 +2,16 @@
  * Price structure the dashboard numbers can't show: swing pivots with
  * HH/LH/HL/LL labels, RSI divergence between pivots, and volume spikes.
  *
- * A pivot needs `span` bars on each side, so the newest `span` bars can never
- * confirm one; divergence against the live bar is therefore reported
+ * A pivot needs `span` closed bars on each side. Excluding the potentially live
+ * tail leaves the newest `span + 1` bars unconfirmed; live divergence is reported
  * separately as "未确认".
  * ponytail: fixed span=3, RSI-only divergence; add MACD/OBV variants when asked.
  * @module @dsh-trading/tool-market
  */
 
 import { rsi } from './indicators.js'
+import { trendlineCandidate } from './trendlines.js'
+import { detectSwingPoints, type SwingPoint } from './swing-points.js'
 
 type Bar = { time: string; high: number; low: number; close: number; volume: number }
 
@@ -33,6 +35,8 @@ export type Trendline = {
   p1: { time: string; price: number; index: number }
   p2: { time: string; price: number; index: number }
   touches: number
+  retests: number
+  status: 'candidate' | 'confirmed' | 'broken'
   currentValue: number
   broken: boolean
 }
@@ -42,93 +46,23 @@ const r1 = (v: number): number => Math.round(v * 10) / 10
 /** Within 0.05% counts as an equal high/low (double top/bottom), not a new extreme. */
 const EQ_TOL = 0.0005
 
-/**
- * Find the best trendline through confirmed swing pivots.
- * Uptrend: connect two rising swing lows; downtrend: two falling swing highs.
- * A line is valid if no bar's close crosses it between the anchors.
- * Touches: bars whose extreme comes within 0.15% of the line value.
- * 3+ touches = confirmed; broken = a close beyond the line after p2.
- */
+/** Same wick/independent-pivot validation as find_swing_points. */
 export function detectTrendlines(bars: readonly Bar[], allHighs: Swing[], allLows: Swing[]): Trendline[] {
   if (bars.length < 10) return []
-  const lines: Trendline[] = []
-
-  const lineAt = (p1: Swing, p2: Swing, idx: number): number => {
-    const t1 = p1.index, t2 = p2.index
-    if (t2 === t1) return p1.price
-    return p1.price + (p2.price - p1.price) * (idx - t1) / (t2 - t1)
-  }
-
-  const TOUCH_TOL = 0.0015 // 0.15% of price
-
-  // Try uptrend: pairs of rising lows (newest first for priority)
-  for (let j = allLows.length - 1; j >= 1; j--) {
-    for (let k = j - 1; k >= 0; k--) {
-      const p1 = allLows[k]!, p2 = allLows[j]!
-      if (p2.price <= p1.price) continue // not rising
-      // Validate: no close below the line between p1 and p2
-      let valid = true
-      for (let i = p1.index + 1; i < p2.index && i < bars.length; i++) {
-        const lv = lineAt(p1, p2, i)
-        if (bars[i]!.close < lv * (1 - TOUCH_TOL * 2)) { valid = false; break }
-      }
-      if (!valid) continue
-      // Count touches (bars whose low is within tolerance of the line)
-      let touches = 2
-      for (let i = p1.index; i < bars.length; i++) {
-        if (i === p1.index || i === p2.index) continue
-        const lv = lineAt(p1, p2, i)
-        if (Math.abs(bars[i]!.low - lv) / lv < TOUCH_TOL) touches++
-      }
-      // Check if broken after p2
-      let broken = false
-      for (let i = p2.index + 1; i < bars.length; i++) {
-        if (bars[i]!.close < lineAt(p1, p2, i) * (1 - TOUCH_TOL)) { broken = true; break }
-      }
-      const currentValue = r2(lineAt(p1, p2, bars.length - 1))
-      lines.push({
-        direction: 'up', touches, broken, currentValue,
-        p1: { time: p1.time, price: p1.price, index: p1.index },
-        p2: { time: p2.time, price: p2.price, index: p2.index },
-      })
-      break // best uptrend found
-    }
-    if (lines.some(l => l.direction === 'up')) break
-  }
-
-  // Try downtrend: pairs of falling highs (newest first)
-  for (let j = allHighs.length - 1; j >= 1; j--) {
-    for (let k = j - 1; k >= 0; k--) {
-      const p1 = allHighs[k]!, p2 = allHighs[j]!
-      if (p2.price >= p1.price) continue // not falling
-      let valid = true
-      for (let i = p1.index + 1; i < p2.index && i < bars.length; i++) {
-        const lv = lineAt(p1, p2, i)
-        if (bars[i]!.close > lv * (1 + TOUCH_TOL * 2)) { valid = false; break }
-      }
-      if (!valid) continue
-      let touches = 2
-      for (let i = p1.index; i < bars.length; i++) {
-        if (i === p1.index || i === p2.index) continue
-        const lv = lineAt(p1, p2, i)
-        if (Math.abs(bars[i]!.high - lv) / lv < TOUCH_TOL) touches++
-      }
-      let broken = false
-      for (let i = p2.index + 1; i < bars.length; i++) {
-        if (bars[i]!.close > lineAt(p1, p2, i) * (1 + TOUCH_TOL)) { broken = true; break }
-      }
-      const currentValue = r2(lineAt(p1, p2, bars.length - 1))
-      lines.push({
-        direction: 'down', touches, broken, currentValue,
-        p1: { time: p1.time, price: p1.price, index: p1.index },
-        p2: { time: p2.time, price: p2.price, index: p2.index },
-      })
-      break
-    }
-    if (lines.some(l => l.direction === 'down')) break
-  }
-
-  return lines
+  // Swing prices are display-rounded; use the actual wick for line geometry.
+  const raw = (points: Swing[], kind: 'high' | 'low') => points.map(p => ({
+    ...p, price: kind === 'high' ? bars[p.index]!.high : bars[p.index]!.low,
+  }))
+  return [
+    trendlineCandidate(bars, raw(allLows, 'low'), 'support'),
+    trendlineCandidate(bars, raw(allHighs, 'high'), 'resistance'),
+  ].filter((line): line is NonNullable<typeof line> => line !== null).map(line => ({
+    direction: line.kind === 'support' ? 'up' : 'down',
+    p1: { ...line.anchors[0], index: line.anchorIndices[0] },
+    p2: { ...line.anchors[1], index: line.anchorIndices[1] },
+    touches: line.touches, retests: line.retests, status: line.status,
+    currentValue: r2(line.projectedNow), broken: line.status === 'broken',
+  }))
 }
 
 export function priceStructure(bars: readonly Bar[], span = 3): Structure {
@@ -136,19 +70,13 @@ export function priceStructure(bars: readonly Bar[], span = 3): Structure {
   const rs = rsi(bars.map(b => b.close), 14)
   const highs: Swing[] = []
   const lows: Swing[] = []
-  for (let i = span; i < n - span; i++) {
-    let isH = true
-    let isL = true
-    for (let j = i - span; j <= i + span; j++) {
-      if (j === i) continue
-      // An equal extreme to the left disqualifies; to the right it doesn't, so a double bottom keeps its first pivot.
-      if (j < i ? bars[j]!.high >= bars[i]!.high : bars[j]!.high > bars[i]!.high) isH = false
-      if (j < i ? bars[j]!.low <= bars[i]!.low : bars[j]!.low < bars[i]!.low) isL = false
-    }
-    const r = rs[i] ?? null
-    if (isH) highs.push({ index: i, time: bars[i]!.time, price: r2(bars[i]!.high), rsi: r === null ? null : r2(r), label: null })
-    if (isL) lows.push({ index: i, time: bars[i]!.time, price: r2(bars[i]!.low), rsi: r === null ? null : r2(r), label: null })
-  }
+  // Same strict extrema and live-tail policy as find_swing_points.
+  const swings = detectSwingPoints(bars.slice(0, -1), span, span)
+  const display = (p: SwingPoint): Swing => ({
+    ...p, price: r2(p.price), rsi: rs[p.index] == null ? null : r2(rs[p.index]!), label: null,
+  })
+  highs.push(...swings.swingHighs.map(display))
+  lows.push(...swings.swingLows.map(display))
   const label = (a: Swing[], up: 'HH' | 'HL', down: 'LH' | 'LL'): void => {
     for (let k = 1; k < a.length; k++) {
       const d = (a[k]!.price - a[k - 1]!.price) / a[k - 1]!.price
@@ -239,7 +167,7 @@ export function renderStructure(s: Structure): string {
   if (s.trendlines.length === 0) return base
   const tl = s.trendlines.map(l => {
     const dir = l.direction === 'up' ? '上行支撑' : '下行压力'
-    const conf = l.touches >= 3 ? `${l.touches}触已确认` : `${l.touches}触待确认`
+    const conf = `${l.touches}个独立摆动触点，${l.retests}次后续回测，${l.status === 'broken' ? '已破线' : l.status === 'confirmed' ? '回测确认（非保证）' : '候选待回测'}`
     return `${dir} ${t(l.p1.time)} ${l.p1.price}→${t(l.p2.time)} ${l.p2.price}, 现值 ${l.currentValue}, ${conf}, ${l.broken ? '已破' : '未破'}`
   }).join(' | ')
   return `${base}\n  趋势线: ${tl}`

@@ -14,7 +14,7 @@ import { isAbsolute, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { parseArtifact, TIMEFRAME_MS, tradeReturn } from './artifact.js'
+import { barDurationMs, parseArtifact, TIMEFRAME_MS, tradeReturn } from './artifact.js'
 import type { BacktestArtifact } from './artifact.js'
 import { lintSource, LINT_RULES } from './checks/lookahead-lint.js'
 import type { LintFinding } from './checks/lookahead-lint.js'
@@ -232,7 +232,9 @@ export function apply(ctx: Context, config: Config): void {
       // The artifact promises entry/exit times anywhere INSIDE their bars, and
       // providers filter by bar-open time — so pad the window by whole bars,
       // or the first trade's own entry bar gets cropped out of its audit.
-      const periodMs = TIMEFRAME_MS[artifact.timeframe]
+      // Padding may over-fetch; 31 days safely covers every UTC calendar month.
+      // Do not reuse this upper bound as a monthly candle's actual duration.
+      const periodMs = TIMEFRAME_MS[artifact.timeframe] ?? 31 * 86_400_000
       let minEntry = Number.POSITIVE_INFINITY
       let maxExit = Number.NEGATIVE_INFINITY
       for (const trade of artifact.trades) {
@@ -250,18 +252,20 @@ export function apply(ctx: Context, config: Config): void {
         throw new Error(`provider '${providerId}' returned no candles for ${artifact.symbol} ${artifact.timeframe} in [${start}, ${end}] — audit needs the same data the backtest ran on`)
       }
 
+      // The coverage helpers use durationMs only for the final candle boundary.
+      const lastBarDurationMs = barDurationMs(artifact.timeframe, bars[bars.length - 1]!.time)
       const checks: CheckResult[] = []
       if (args.codePaths && args.codePaths.length > 0) {
         const { findings, scanned, unreadable, notes } = await lintPaths(args.codePaths)
         checks.push(lintCheck(findings, scanned, unreadable, notes))
       }
       checks.push(fillCheck(validateFills(artifact.trades, bars, {
-        durationMs: periodMs,
+        durationMs: lastBarDurationMs,
         ...args.priceTolerancePct !== undefined ? { priceTolerancePct: args.priceTolerancePct } : {},
       })))
 
       const barTimes = bars.map(b => Date.parse(b.time))
-      const independence = effectiveTrades(artifact.trades, barTimes, periodMs)
+      const independence = effectiveTrades(artifact.trades, barTimes, lastBarDurationMs)
       checks.push(independenceCheck(independence))
 
       const baseline = randomBaseline(independence.kept, bars, {

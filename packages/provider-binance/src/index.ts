@@ -43,12 +43,17 @@ export const Config: z<Config> = z.object({
   id: z.string().default('binance'),
 }) as unknown as z<Config>
 
+// Binance spot kline intervals, minus `1s` (sub-minute bars would flood the
+// candle pane) and plus nothing Binance does not actually serve.
 const TF_MAP: Record<Timeframe, string> = {
-  '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m',
-  '1h': '1h', '4h': '4h', '1d': '1d', '1w': '1w',
+  '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
+  '1h': '1h', '2h': '2h', '4h': '4h', '6h': '6h', '8h': '8h', '12h': '12h',
+  '1d': '1d', '3d': '3d', '1w': '1w', '1M': '1M',
 }
 
-const ALL_TIMEFRAMES: Timeframe[] = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w']
+const ALL_TIMEFRAMES: Timeframe[] = [
+  '1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '8h', '12h', '1d', '3d', '1w', '1M',
+]
 
 /** High-availability mirror hosts for Binance spot public klines. Includes official mirrors and domestic failover endpoints. */
 const SPOT_KLINE_HOSTS = [

@@ -43,7 +43,7 @@ describe("priceStructure", () => {
     expect(s.trend).toBe("down")
   })
 
-  it("treats an equal low as EQ (double bottom), keeping the first pivot", () => {
+  it("treats separated equal lows as EQ (double bottom)", () => {
     const d = priceStructure(mk([110, 108, 106, 104, 106, 108, 106, 104, 106, 108, 110, 112]))
     expect(d.lows.map(x => x.label)).toEqual([null, "EQ"])
   })

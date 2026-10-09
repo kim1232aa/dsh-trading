@@ -8,6 +8,7 @@ import { createContext, runInContext } from 'node:vm'
 import type { Candle } from '@dsh-trading/market-data'
 import { ema, macd, stochastic, bollinger, atr, adx, mfi } from './candle-indicators.js'
 import { rsi, sma, wma } from './indicators.js'
+import { detectSwingPoints, type SwingPoint } from './swing-points.js'
 
 export interface CustomIndicatorOptions {
   timeoutMs?: number
@@ -20,40 +21,7 @@ export interface CustomIndicatorResult {
   executionTimeMs: number
 }
 
-/** One confirmed pivot. */
-export interface SwingPoint { index: number; price: number; time: string }
-
-/**
- * Detect swing high/low pivot points (Williams-fractal style, generalised).
- *
- * A swing high at index i means highs[i] >  highs[j] for every j in [i-left, i+right], j≠i.
- * A swing low  at index i means  lows[i] <   lows[j] for every j in [i-left, i+right], j≠i.
- * Strict comparison (as TA-Lib FRACTAL / ta4j) so flat stretches don't spray duplicate pivots.
- * The last `right` bars can never be confirmed — a pivot needs its right arm closed.
- */
-export function detectSwingPoints(
-  candles: readonly Candle[],
-  left = 3,
-  right = 3,
-): { swingHighs: SwingPoint[]; swingLows: SwingPoint[] } {
-  const swingHighs: SwingPoint[] = []
-  const swingLows: SwingPoint[] = []
-  const l = Math.max(1, Math.floor(left))
-  const r = Math.max(1, Math.floor(right))
-  for (let i = l; i < candles.length - r; i++) {
-    let isHigh = true
-    let isLow = true
-    for (let j = i - l; j <= i + r; j++) {
-      if (j === i) continue
-      if (candles[j]!.high >= candles[i]!.high) isHigh = false
-      if (candles[j]!.low <= candles[i]!.low) isLow = false
-      if (!isHigh && !isLow) break
-    }
-    if (isHigh) swingHighs.push({ index: i, price: candles[i]!.high, time: candles[i]!.time })
-    if (isLow) swingLows.push({ index: i, price: candles[i]!.low, time: candles[i]!.time })
-  }
-  return { swingHighs, swingLows }
-}
+export { detectSwingPoints, type SwingPoint } from './swing-points.js'
 
 export type SwingLabel = 'HH' | 'LH' | 'EH' | 'HL' | 'LL' | 'EL' | 'H' | 'L'
 

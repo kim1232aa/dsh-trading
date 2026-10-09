@@ -59,13 +59,16 @@ describe('classifySwingStructure', () => {
 })
 
 describe('trendlineCandidate', () => {
-  it('anchors a falling resistance on the last two real swing highs', () => {
+  it('keeps the earlier anchors when a later independent swing confirms them', () => {
     const bars = zigzag([100, 120, 90, 112, 82, 104, 74])
     const { swingHighs } = detectSwingPoints(bars, 2, 2)
     const line = trendlineCandidate(bars, swingHighs, 'resistance')!
     expect(line.direction).toBe('falling')
-    const a = swingHighs[swingHighs.length - 2]!
-    const b = swingHighs[swingHighs.length - 1]!
+    const a = swingHighs[0]!
+    const b = swingHighs[1]!
+    expect(line.status).toBe('confirmed')
+    expect(line.retests).toBe(1)
+    expect(line.touches).toBe(3)
     expect(line.anchors[0]).toEqual({ time: a.time, price: a.price })
     expect(line.anchors[1]).toEqual({ time: b.time, price: b.price })
     expect(line.pathPoints[2]!.time).toBe(bars[bars.length - 1]!.time)
