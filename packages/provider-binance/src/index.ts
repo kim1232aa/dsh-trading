@@ -59,9 +59,6 @@ const ALL_TIMEFRAMES: Timeframe[] = [
 const SPOT_KLINE_HOSTS = [
   'https://data-api.binance.vision',
   'https://www.usnbweb.red',
-  'https://www.marketwebb.link',
-  'https://api.binance.info',
-  'https://api.binance.bz',
   'https://api.binance.com',
   'https://api1.binance.com',
   'https://api3.binance.com',
@@ -185,6 +182,19 @@ class BinanceProvider implements MarketDataProvider {
 
     const isFetchFailed = lastNetworkError?.name === 'TypeError' || lastNetworkError?.message?.includes('fetch failed')
     const isTimeout = lastNetworkError?.name === 'TimeoutError' || lastNetworkError?.message?.includes('timeout')
+
+    // High availability failover: when Binance hosts are blocked or unreachable in mainland China,
+    // seamlessly fall back to domestic-resilient Gate.io and OKX spot candlesticks.
+    try {
+      return await gateSpotCandles(query.symbol, query.timeframe, query.limit)
+    } catch {
+      try {
+        return await okxSpotCandles(query.symbol, query.timeframe, query.limit)
+      } catch {
+        // Fall through to error reporting below if all fallback venues fail
+      }
+    }
+
     const detail = isTimeout
       ? '连接行情接口超时 (6s)'
       : isFetchFailed
@@ -382,6 +392,61 @@ export function crowdVsWhaleOf(globalRatio: number | null, topPosRatio: number |
 }
 
 const GATE_URL = 'https://api.gateio.ws'
+
+const GATE_SPOT_TF: Partial<Record<Timeframe, string>> = {
+  '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m',
+  '1h': '1h', '4h': '4h', '1d': '1d', '1w': '7d',
+}
+
+async function gateSpotCandles(rawSymbol: string, timeframe: Timeframe, limit = 200): Promise<Candle[]> {
+  const symbol = normalizeSymbol(rawSymbol)
+  const base = symbol.replace(/(USDT|USDC)$/, '')
+  const quote = symbol.endsWith('USDC') ? 'USDC' : 'USDT'
+  const pair = `${base}_${quote}`
+  const interval = GATE_SPOT_TF[timeframe]
+  if (!interval) throw new Error(`Gate spot: unsupported timeframe ${timeframe}`)
+  const url = new URL('/api/v4/spot/candlesticks', GATE_URL)
+  url.searchParams.set('currency_pair', pair)
+  url.searchParams.set('interval', interval)
+  url.searchParams.set('limit', String(Math.min(limit, 1000)))
+  const res = await fetch(url, { signal: AbortSignal.timeout(5_000) })
+  if (!res.ok) throw new Error(`Gate spot ${res.status}: ${await res.text().catch(() => '')}`)
+  const rows = (await res.json()) as unknown[][]
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error(`Gate spot: no bars for ${pair}`)
+  return rows.map(r => ({
+    time: new Date(Number(r[0]) * 1000).toISOString(),
+    open: Number(r[5]),
+    high: Number(r[3]),
+    low: Number(r[4]),
+    close: Number(r[2]),
+    volume: Number(r[6]),
+  }))
+}
+
+const OKX_SPOT_TF: Partial<Record<Timeframe, string>> = {
+  '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
+  '1h': '1H', '2h': '2H', '4h': '4H', '6h': '6H', '12h': '12H',
+  '1d': '1D', '3d': '3D', '1w': '1W', '1M': '1M',
+}
+
+async function okxSpotCandles(rawSymbol: string, timeframe: Timeframe, limit = 200): Promise<Candle[]> {
+  const symbol = normalizeSymbol(rawSymbol)
+  const base = symbol.replace(/(USDT|USDC)$/, '')
+  const quote = symbol.endsWith('USDC') ? 'USDC' : 'USDT'
+  const instId = `${base}-${quote}`
+  const bar = OKX_SPOT_TF[timeframe]
+  if (!bar) throw new Error(`OKX spot: unsupported timeframe ${timeframe}`)
+  const data = await okxGet('/api/v5/market/candles', { instId, bar, limit: String(Math.min(limit, 300)) }) as unknown[][]
+  if (!Array.isArray(data) || data.length === 0) throw new Error(`OKX spot: no bars for ${instId}`)
+  return data.slice().reverse().map(r => ({
+    time: new Date(Number(r[0])).toISOString(),
+    open: Number(r[1]),
+    high: Number(r[2]),
+    low: Number(r[3]),
+    close: Number(r[4]),
+    volume: Number(r[5]),
+  }))
+}
 
 /**
  * Gate.io USDT perpetual (ETHUSDT → ETH_USDT). Gate's own book, so OI and

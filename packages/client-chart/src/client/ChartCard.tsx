@@ -14,8 +14,8 @@
  */
 import { Component, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, ErrorInfo, ReactNode } from 'react'
-import { ActionType, TooltipShowRule, dispose, init, registerIndicator, registerOverlay } from 'klinecharts'
-import type { Chart, OverlayCreateFiguresCallbackParams, YAxisType } from 'klinecharts'
+import { ActionType, TooltipShowRule, dispose, init, registerIndicator, registerOverlay, utils } from 'klinecharts'
+import type { Chart, YAxisType } from 'klinecharts'
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 import { publishLatestChart } from './latest.js'
 import { annotationDigest, contentText, readChartPayload } from './payload.js'
@@ -31,6 +31,7 @@ import { mtfSRZones, mtfSRIndicator } from './indicators/mtf-sr.js'
 import { entrySignalIndicator } from './indicators/entry-signal.js'
 import { rsiGridIndicator } from './indicators/rsi-grid.js'
 import { detectPricePrecision, formatPrice } from './precision.js'
+import { createAnnotationOverlays } from './annotation-overlays.js'
 
 export { evasiveSuperTrend } from './indicators/evasive-st.js'
 export { nadarayaWatsonTrend } from './indicators/nadaraya-watson.js'
@@ -48,16 +49,6 @@ const PANE_HEIGHT = 90
  * then fall back to whatever the canvas picks. Name real UI faces per platform.
  */
 const FONT_FAMILY = 'system-ui, -apple-system, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif'
-
-/** Mark captions: legible size, and a backing so they read over candles. */
-function labelStyle(color: string): Record<string, unknown> {
-  return {
-    color, size: 11, weight: 500, family: FONT_FAMILY,
-    backgroundColor: 'rgba(22,24,28,0.72)', borderRadius: 2,
-    paddingLeft: 3, paddingRight: 3, paddingTop: 1, paddingBottom: 1,
-    align: 'right',
-  }
-}
 
 type Palette = {
   text: string
@@ -526,134 +517,11 @@ function ensureRegistered(): void {
   registerIndicator(entrySignalIndicator as never)
   registerIndicator(rsiGridIndicator as never)
   // Overlay shapes for the draw primitives. extendData: { color, dashed, label }.
-  registerOverlay({
-    name: 'tm_hline',
-    totalStep: 2,
-    lock: true,
-    createPointFigures: ({ coordinates, bounding, overlay }: OverlayCreateFiguresCallbackParams) => {
-      const y = coordinates[0]?.y
-      if (y === undefined) return []
-      const ext = (overlay.extendData ?? {}) as Record<string, unknown>
-      const color = typeof ext['color'] === 'string' ? ext['color'] : '#888888'
-      const figures: unknown[] = [{
-        type: 'line',
-        attrs: { coordinates: [{ x: 0, y }, { x: bounding.width, y }] },
-        styles: { style: typeof ext['dashed'] === 'boolean' && ext['dashed'] ? 'dashed' : 'solid', color },
-        ignoreEvent: true,
-      }]
-      // `lane` comes from the layout pass, which is the only place that can
-      // see every line at once: a label drawn here knows its own price and
-      // nothing else, so left to itself it lands at the same x as every
-      // neighbour and they pile up illegibly.
-      const lane = typeof ext['lane'] === 'number' ? ext['lane'] : 0
-      // A lane only exists if the pane is wide enough to hold it. The layout
-      // pass runs before any geometry is known, so a narrow column could be
-      // handed lane 2 and print its caption off the right edge — placed as far
-      // as the pass knows, invisible as far as the reader is concerned.
-      const usableLanes = Math.max(1, Math.floor((bounding.width - LABEL_AXIS_INSET) / LABEL_LANE_WIDTH))
-      if (lane >= 0 && lane < usableLanes && typeof ext['label'] === 'string' && ext['label'] !== '') {
-        figures.push({
-          type: 'text',
-          attrs: { x: labelAnchorX(bounding.width, lane, ext['label']), y: y - 4, text: ext['label'], baseline: 'bottom' },
-          styles: labelStyle(color),
-          ignoreEvent: true,
-        })
-      }
-      return figures as never
-    },
-  } as never)
-  registerOverlay({
-    name: 'tm_region',
-    totalStep: 3,
-    lock: true,
-    createPointFigures: ({ coordinates, bounding, overlay }: OverlayCreateFiguresCallbackParams) => {
-      const y0 = coordinates[0]?.y
-      const y1 = coordinates[1]?.y
-      if (y0 === undefined || y1 === undefined) return []
-      const ext = (overlay.extendData ?? {}) as Record<string, unknown>
-      const color = typeof ext['color'] === 'string' ? ext['color'] : '#888888'
-      const top = Math.min(y0, y1)
-      const figures: unknown[] = [{
-        type: 'rect',
-        attrs: { x: 0, y: top, width: bounding.width, height: Math.abs(y1 - y0) },
-        styles: { style: 'fill', color: `${color}26` },
-        ignoreEvent: true,
-      }]
-      // Same lane pass as hlines: a zone edge often shares a price with a
-      // scenario trigger, and two captions at x=6 on one y print over each other.
-      const lane = typeof ext['lane'] === 'number' ? ext['lane'] : 0
-      const usableLanes = Math.max(1, Math.floor((bounding.width - LABEL_AXIS_INSET) / LABEL_LANE_WIDTH))
-      if (lane >= 0 && lane < usableLanes && typeof ext['label'] === 'string' && ext['label'] !== '') {
-        figures.push({
-          type: 'text',
-          attrs: { x: labelAnchorX(bounding.width, lane, ext['label']), y: top - 4, text: ext['label'], baseline: 'bottom' },
-          styles: labelStyle(color),
-          ignoreEvent: true,
-        })
-      }
-      return figures as never
-    },
-  } as never)
-  registerOverlay({
-    // totalStep MUST be 2, and 2 is klinecharts' minimum (a lower value is
-    // coerced to 1). The library treats an overlay as still being drawn until
-    // `points.length >= totalStep - 1`; at 14 a 12-point path (the producer's
-    // cap) never finishes, and an unfinished overlay is parked in the store's
-    // single in-progress slot rather than the instance list — so only the LAST
-    // path ever reaches the chart and the earlier ones vanish while the table
-    // below still lists them. Worse, the in-progress path follows the cursor
-    // (the mouse-move handler does not check `lock`) and bakes a junk vertex in
-    // on every click. Harmless in a chat bubble nobody hovers; permanent in an
-    // always-on column. We never draw interactively — drawPrimitive always
-    // supplies the whole point list — so finishing immediately loses nothing.
-    name: 'tm_polyline',
-    totalStep: 2,
-    lock: true,
-    createPointFigures: ({ coordinates, overlay }: OverlayCreateFiguresCallbackParams) => {
-      if (coordinates.length < 2) return []
-      const ext = (overlay.extendData ?? {}) as Record<string, unknown>
-      const color = typeof ext['color'] === 'string' ? ext['color'] : '#888888'
-      const lineCoords = [...coordinates]
-      let labelX = coordinates[coordinates.length - 1]!.x + 4
-      let labelY = coordinates[coordinates.length - 1]!.y
-
-      // If at least 2 points (trendline or channel boundary), extend the last segment forward to the right!
-      if (coordinates.length >= 2) {
-        const lastIdx = coordinates.length - 1
-        const p0 = coordinates[lastIdx - 1]
-        const p1 = coordinates[lastIdx]
-        if (p0 && p1 && Number.isFinite(p0.x) && Number.isFinite(p0.y) && Number.isFinite(p1.x) && Number.isFinite(p1.y)) {
-          const dx = p1.x - p0.x
-          const dy = p1.y - p0.y
-          if (dx > 0) {
-            const targetX = p1.x + 2500
-            const targetY = p1.y + (dy / dx) * (targetX - p1.x)
-            if (Number.isFinite(targetY)) {
-              lineCoords[lastIdx] = { x: targetX, y: targetY }
-              labelX = targetX + 4
-              labelY = targetY
-            }
-          }
-        }
-      }
-
-      const figures: unknown[] = [{
-        type: 'line',
-        attrs: { coordinates: lineCoords },
-        styles: { style: typeof ext['dashed'] === 'boolean' && ext['dashed'] ? 'dashed' : 'solid', color },
-        ignoreEvent: true,
-      }]
-      if (typeof ext['label'] === 'string' && ext['label'] !== '') {
-        figures.push({
-          type: 'text',
-          attrs: { x: labelX, y: labelY, text: ext['label'], baseline: 'middle' },
-          styles: labelStyle(color),
-          ignoreEvent: true,
-        })
-      }
-      return figures as never
-    },
-  } as never)
+  // Register exactly the callbacks exercised by the overlay regression tests.
+  for (const overlay of createAnnotationOverlays(FONT_FAMILY, (text, style) =>
+    utils.calcTextWidth(text, style.size, style.weight, style.family))) {
+    registerOverlay(overlay)
+  }
 }
 
 function useDark(): boolean {
@@ -777,32 +645,6 @@ const CHIP_DEFS: ChipDef[] = [
   { id: 'bb', indicator: { name: 'TM_BB', figures: { upper: 'bb_upper', middle: 'bb_middle', lower: 'bb_lower' }, overlay: true }, label: ind => ({ text: '布林(20,2)', state: get(ind['bollinger20'], 'state') }) },
   { id: 'ma', label: ind => ({ text: '均线位置', state: get(ind['movingAverages'], 'closeVs') }) },
 ]
-
-/** Horizontal step between label lanes, in px. */
-const LABEL_LANE_WIDTH = 150
-
-/**
- * Width of the Y-axis price column. It sits INSIDE the pane bounding box, so a
- * caption whose right edge is `width - 6` draws across the price tag. The
- * anchor must clear the whole column, not just the pill.
- */
-const LABEL_AXIS_INSET = 64
-
-/** 11px CJK is ~11px wide; ASCII is ~6.5. */
-function labelWidthPx(text: string): number {
-  let width = 0
-  for (const ch of text) width += ch.charCodeAt(0) > 0xff ? 11 : 6.5
-  return Math.ceil(width) + 8
-}
-
-/**
- * Right edge of a right-aligned caption. The text grows LEFT from this x, so
- * the anchor itself must sit left of the Y-axis column by the caption's own
- * width — otherwise a long label runs back into the price tag.
- */
-export function labelAnchorX(paneWidth: number, lane: number, text: string): number {
-  return paneWidth - LABEL_AXIS_INSET - lane * LABEL_LANE_WIDTH - labelWidthPx(text)
-}
 
 /** Lanes available before a label is dropped rather than stacked. */
 const LABEL_LANES = 4

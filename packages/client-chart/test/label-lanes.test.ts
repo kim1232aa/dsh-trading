@@ -7,7 +7,7 @@
  * it lives outside the per-overlay renderer — and why it is worth pinning.
  */
 import { describe, expect, it } from 'vitest'
-import { assignLabelLanes, labelAnchorX } from '../src/client/ChartCard.js'
+import { assignLabelLanes } from '../src/client/ChartCard.js'
 
 describe('assignLabelLanes', () => {
   it('keeps well-separated lines in the first lane', () => {
@@ -57,25 +57,5 @@ describe('assignLabelLanes', () => {
 
   it('handles an empty set', () => {
     expect(assignLabelLanes([], 100, 200)).toEqual([])
-  })
-})
-
-describe('labelAnchorX', () => {
-  it('places a caption so its right end clears the Y-axis column', () => {
-    // Right-aligned text grows left from x, so x must sit left of the axis
-    // column (64px) by the caption's own width.
-    const text = '今日低点'
-    const x = labelAnchorX(1000, 0, text)
-    expect(x).toBeLessThan(1000 - 64 - 30)
-    expect(x).toBeGreaterThan(1000 - 64 - 80)
-  })
-
-  it('keeps a long CJK caption entirely left of the axis column', () => {
-    const text = '今日探底缓冲带(09-10低点-今日低点)'
-    expect(labelAnchorX(1000, 0, text)).toBeLessThan(1000 - 64 - 150)
-  })
-
-  it('steps the next lane a full lane further left', () => {
-    expect(labelAnchorX(1000, 1, '今日低点') - labelAnchorX(1000, 0, '今日低点')).toBe(-150)
   })
 })
