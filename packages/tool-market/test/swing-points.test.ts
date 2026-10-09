@@ -71,7 +71,8 @@ describe('trendlineCandidate', () => {
     expect(line.touches).toBe(3)
     expect(line.anchors[0]).toEqual({ time: a.time, price: a.price })
     expect(line.anchors[1]).toEqual({ time: b.time, price: b.price })
-    expect(line.pathPoints[2]!.time).toBe(bars[bars.length - 1]!.time)
+    expect(line.pathPoints[line.pathPoints.length - 1]!.time).toBe(bars[bars.length - 1]!.time)
+    expect(line.pathPoints).toHaveLength(4)
     expect(line.closesBeyond).toBe(0)
   })
 

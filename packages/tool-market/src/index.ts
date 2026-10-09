@@ -939,7 +939,9 @@ export function apply(ctx: Context, config: Config): void {
         `- 最近摆动点：${recent.map(p => `${p.label} ${fmt(p.price)} @ ${p.time}`).join('；') || '无'}`,
         ...trendlines.map(t =>
           `- ${t.kind === 'resistance' ? '阻力' : '支撑'}趋势线候选：${fmt(t.anchors[0].price)}@${t.anchors[0].time} → ${fmt(t.anchors[1].price)}@${t.anchors[1].time}，` +
-          `当前投影 ${fmt(t.projectedNow)}，独立摆动触点 ${t.touches} 个，后续回测 ${t.retests} 次，收盘越线 ${t.closesBeyond} 根，` +
+          `当前投影 ${fmt(t.projectedNow)}，独立摆动触点 ${t.touches} 个` +
+          `${t.touchPoints && t.touchPoints.length > 0 ? ` [${t.touchPoints.map((tp: any, idx: number) => `点${idx + 1}:${fmt(tp.price)}@${tp.time.slice(11, 16)}`).join('，')}]` : ''}，` +
+          `后续回测 ${t.retests} 次，收盘越线 ${t.closesBeyond} 根，` +
           `${t.status === 'broken' ? '已破线（不作有效支撑/阻力）' : t.status === 'confirmed' ? '回测确认（几何检验，非预测保证）' : '两点候选（待后续独立回测）'}；算术坐标`),
         ...(trendlines.length === 0 ? ['- 无符合条件的趋势线；不强行连线。'] : []),
       ].join('\n')
