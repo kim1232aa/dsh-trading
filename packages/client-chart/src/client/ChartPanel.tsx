@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
 import type { ChartOwnerProps } from '@dsh-trading/client-frame/client'
-import { ChartBody, ChartErrorBoundary } from './ChartCard.js'
+import { ChartBody, ChartErrorBoundary, matchDerivativeHistory } from './ChartCard.js'
 import { getLatestChart, subscribeLatestChart } from './latest.js'
 import { decideFollow } from './follow.js'
 import { mergeMarks, mergeTail, postureColor, readMarks, recallMarks, rememberMarks, withCandles } from './market-client.js'
@@ -318,14 +318,10 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
     }
   }, [market, symbol, providerId, live])
 
-  // Crosshair hover: match corresponding historical bar from data.history
+  // Crosshair hover: same 15m window as ChartCard.matchDerivativeHistory (not 5m chips).
   const historyBar = useMemo(() => {
     if (!hoveredTime || !data?.history || data.history.length === 0) return null
-    const sec = Math.floor(hoveredTime / 1000)
-    return data.history.find(h => {
-      const hSec = Math.floor(Date.parse(h.time) / 1000)
-      return Math.abs(hSec - sec) < 300 // within 5m
-    }) ?? null
+    return matchDerivativeHistory(data.history, hoveredTime) ?? null
   }, [hoveredTime, data])
 
   if (providerId === 'cn' || data === null) return null
@@ -396,7 +392,7 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
         <span title="主动买/卖量比（成交口径）">主动买卖<span style={VALUE}>{target.takerBuySellRatio.toFixed(2)}</span></span>
       ) : null}
       {data?.cvd1h != null ? (
-        <span title={`近1h主动买卖差。${data.cvdNote ?? ''} 仅描述背离，非信号。`}>CVD1h<span style={VALUE}>{formatUsdtCn(data.cvd1h)}</span>{data.cvdNote ? <span style={{ marginLeft: 3, opacity: 0.85 }}>{data.cvdNote}</span> : null}</span>
+        <span title={`近1h主动买卖差（币数，非USDT）。${data.cvdNote ?? ''} 仅描述背离，非信号。`}>CVD1h<span style={VALUE}>{compact.format(data.cvd1h)}</span>{data.cvdNote ? <span style={{ marginLeft: 3, opacity: 0.85 }}>{data.cvdNote}</span> : null}</span>
       ) : null}
       {data?.basisPct != null ? (
         <span title="标记相对指数；正=升水。">基差<span style={VALUE}>{`${data.basisPct >= 0 ? '+' : ''}${data.basisPct.toFixed(3)}%`}</span></span>

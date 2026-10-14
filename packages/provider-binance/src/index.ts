@@ -518,6 +518,38 @@ function rowNear(
   return bestDiff <= slackMs ? best : undefined
 }
 
+/** Match an OKX rubik tuple row `[ts, ...]` by timestamp (same slack as rowNear). */
+function rowNearTs(
+  rows: readonly (readonly string[])[] | undefined,
+  ts: number,
+  slackMs = 150_000,
+): readonly string[] | undefined {
+  if (!rows) return undefined
+  let best: readonly string[] | undefined
+  let bestDiff = slackMs + 1
+  for (const row of rows) {
+    const t = num(row[0])
+    if (t === null) continue
+    const d = Math.abs(t - ts)
+    if (d < bestDiff) {
+      best = row
+      bestDiff = d
+    }
+  }
+  return bestDiff <= slackMs ? best : undefined
+}
+
+/** OKX taker row `[ts, sellVol, buyVol]` → buy/sell. Null when sell=0 (no sentinel 99 in history). */
+function okxTakerRatioFromRow(row: readonly string[] | undefined, allowSentinel = false): number | null {
+  if (!row) return null
+  const sell = num(row[1])
+  const buy = num(row[2])
+  if (buy === null || sell === null) return null
+  if (sell > 0) return Number((buy / sell).toFixed(4))
+  if (allowSentinel && buy > 0) return 99
+  return null
+}
+
 export interface PostureFactors {
   takerRatio?: number | null | undefined
   fundingRate?: number | null | undefined
@@ -1039,12 +1071,14 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
 
   // Each leg degrades alone; no OI → getDerivatives falls through to Gate.
   // 5m hist covers ~8h (1h/4h); 15m hist covers ~25h for Δ24h.
-  const [fundingData, oiData, oihData, oih15Data, topData, takerData, markData, indexData] = await Promise.all([
+  const [fundingData, oiData, oihData, oih15Data, topData, accData, takerData, markData, indexData] = await Promise.all([
     okxGet('/api/v5/public/funding-rate', { instId }).catch(() => null),
     okxGet('/api/v5/public/open-interest', { instType: 'SWAP', instId }).catch(() => null),
     okxGet('/api/v5/rubik/stat/contracts/open-interest-history', { instId, period: '5m' }).catch(() => null),
     okxGet('/api/v5/rubik/stat/contracts/open-interest-history', { instId, period: '15m' }).catch(() => null),
     okxGet('/api/v5/rubik/stat/contracts/long-short-position-ratio-contract-top-trader', { instId, period: '5m' }).catch(() => null),
+    // Account-count long/short uses ccy (base), not instId — see OKX rubik docs.
+    okxGet('/api/v5/rubik/stat/contracts/long-short-account-ratio', { ccy: base, period: '5m' }).catch(() => null),
     okxGet('/api/v5/rubik/stat/taker-volume-contract', { instId, period: '5m', unit: '1' }).catch(() => null),
     okxGet('/api/v5/public/mark-price', { instType: 'SWAP', instId }).catch(() => null),
     okxGet('/api/v5/market/index-tickers', { instId: `${base}-${quote}` }).catch(() => null),
@@ -1057,6 +1091,8 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
   const oih = (oihData as Array<[string, string, string, string]> | null) ?? []
   const oih15 = (oih15Data as Array<[string, string, string, string]> | null) ?? []
   const top = (topData as Array<[string, string]> | null) ?? []
+  // Newest first: [ts, longShortRatio] — account-count ratio (ccy)
+  const acc = (accData as Array<[string, string]> | null) ?? []
   // Newest first: [ts, sellVol, buyVol]
   const taker = (takerData as Array<[string, string, string]> | null) ?? []
   const markRow = (markData as Array<Record<string, unknown>> | null)?.[0] ?? {}
@@ -1137,11 +1173,8 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
   const priceChangePct24h = pctChange(livePx, a24.px)
 
   const topPositionRatio = num(top[0]?.[1])
-  const sell = num(taker[0]?.[1])
-  const buy = num(taker[0]?.[2])
-  const takerBuySellRatio = buy !== null && sell !== null && sell > 0
-    ? Number((buy / sell).toFixed(4))
-    : buy !== null && sell === 0 && buy > 0 ? 99 : null
+  const longShortRatio = num(acc[0]?.[1])
+  const takerBuySellRatio = okxTakerRatioFromRow(taker[0], true)
   // CVD over ~1h from 5m taker bars (newest first).
   let cvd1h: number | null = null
   {
@@ -1163,9 +1196,9 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
   const markPx = num(markRow['markPx'])
   const idxPx = num(indexRow['idxPx']) ?? num(markRow['idxPx'])
   const basis = basisPct(markPx, idxPx)
-  // OKX rubik top-trader is position-size ratio; no global account ratio on this endpoint.
-  const crowdVsWhale = null
+  const crowdVsWhale = crowdVsWhaleOf(longShortRatio, topPositionRatio)
   const readings = positionReadings({
+    longShortRatio,
     topPositionRatio,
     takerBuySellRatio,
     fundingRate,
@@ -1173,26 +1206,42 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
   })
 
   const posture = oiChangePct1h !== null && priceChangePct1h !== null
-    ? postureOf(priceChangePct1h, oiChangePct1h, true, { takerRatio: takerBuySellRatio, fundingRate }) : null
+    ? postureOf(priceChangePct1h, oiChangePct1h, true, {
+      takerRatio: takerBuySellRatio,
+      fundingRate,
+      crowdVsWhale,
+    }) : null
   const quadrant = quadrantFields(priceChangePct1h, oiChangePct1h, true)
 
+  // Align ratio series onto OI hist by timestamp — never stamp the live snapshot on every bar.
   const history: DerivativeBar[] = [...oih].reverse().map((row, i, asc) => {
     const cur = pt(row)
     const prev = i > 0 ? pt(asc[i - 1]) : null
     const dOi = prev ? pctChange(cur.oi, prev.oi) : null
     const dPx = prev ? pctChange(cur.px, prev.px) : null
+    const barTs = num(row[0])
+    const tpItem = barTs !== null ? rowNearTs(top, barTs) : undefined
+    const lsItem = barTs !== null ? rowNearTs(acc, barTs) : undefined
+    const tkItem = barTs !== null ? rowNearTs(taker, barTs) : undefined
+    const barTop = tpItem ? num(tpItem[1]) : null
+    const barLs = lsItem ? num(lsItem[1]) : null
+    const barTaker = okxTakerRatioFromRow(tkItem, false)
     return {
-      time: new Date(num(row[0]) ?? Date.now()).toISOString(),
+      time: new Date(barTs ?? Date.now()).toISOString(),
       openInterest: cur.oi,
       openInterestValue: num(row[3]),
-      longShortRatio: null,
-      takerBuySellRatio,
-      topPositionRatio,
+      longShortRatio: barLs,
+      takerBuySellRatio: barTaker,
+      topPositionRatio: barTop,
       posture: dOi !== null && dPx !== null ? postureOf(dPx, dOi, false, {
-        takerRatio: takerBuySellRatio,
-        fundingRate,
+        takerRatio: barTaker,
       }) : null,
       ...quadrantFields(dPx, dOi, false),
+      readings: positionReadings({
+        longShortRatio: barLs,
+        topPositionRatio: barTop,
+        takerBuySellRatio: barTaker,
+      }),
     }
   })
 
@@ -1217,8 +1266,8 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
     fundingRateAnnualizedPct: fundingAnnualizedPct(fundingRate),
     fundingLabel: fundingRate !== null ? fundingLabelOf(fundingRate) : null,
     nextFundingTime,
-    longShortRatio: null,
-    longShortRatioKind: 'top_positions',
+    longShortRatio,
+    longShortRatioKind: 'global_accounts',
     topPositionRatio,
     takerBuySellRatio,
     cvd1h,

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   closestSymbol,
   crowdVsWhaleOf,
@@ -161,8 +161,16 @@ describe('OKX derivatives live smoke', () => {
     expect(d.fundingRate).not.toBeNull()
     expect(d.fundingRateAnnualizedPct).not.toBeNull()
     expect(d.fundingLabel).toMatch(/中性|偏多|偏空|拥挤/)
-    expect(d.longShortRatioKind).toBe('top_positions')
+    expect(d.longShortRatioKind).toBe('global_accounts')
+    expect(d.longShortRatio === null || d.longShortRatio > 0).toBe(true)
     expect(d.oiChangePct1h === null || Number.isFinite(d.oiChangePct1h)).toBe(true)
+    // History must vary (not a flat live-stamp line)
+    if (d.history && d.history.length > 5) {
+      const tops = d.history.map(h => h.topPositionRatio).filter((v): v is number => v != null)
+      expect(new Set(tops.map(v => v.toFixed(4))).size).toBeGreaterThan(1)
+      const ls = d.history.map(h => h.longShortRatio).filter((v): v is number => v != null)
+      expect(ls.length).toBeGreaterThan(0)
+    }
     expect(d.oiChangePct24h === null || Number.isFinite(d.oiChangePct24h)).toBe(true)
     if (d.liquidationSummary) {
       expect(d.liquidationSummary).toContain('爆仓')
@@ -256,5 +264,79 @@ describe('OKX liquidations unit (ctVal)', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+})
+
+describe('OKX derivatives history alignment (no live stamp)', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('aligns topPos + account ratio by timestamp; does not stamp live onto every bar', async () => {
+    const t0 = 1_790_000_000_000
+    // 5 bars newest-first, 5m apart — each with a DISTINCT top-trader ratio
+    const oihRows = Array.from({ length: 13 }, (_, i) => {
+      const ccy = i === 0 ? 102 : 100
+      const px = i === 0 ? 2970 : 3000
+      return [String(t0 - i * 300_000), String(ccy * 10), String(ccy), String(ccy * px)]
+    })
+    const topRows = Array.from({ length: 13 }, (_, i) => [
+      String(t0 - i * 300_000),
+      String(0.90 + i * 0.01), // 0.90, 0.91, … distinct
+    ])
+    const accRows = Array.from({ length: 13 }, (_, i) => [
+      String(t0 - i * 300_000),
+      String(1.50 + i * 0.02), // 1.50, 1.52, …
+    ])
+    // Newest taker has sell=0 (would produce sentinel 99 if stamped live)
+    const takerRows = Array.from({ length: 13 }, (_, i) => [
+      String(t0 - i * 300_000),
+      i === 0 ? '0' : '100',
+      i === 0 ? '50' : String(80 + i),
+    ])
+    const bodies: Record<string, unknown> = {
+      'open-interest-history': oihRows,
+      'open-interest': [{ oi: '1020', oiCcy: '102', oiUsd: '302940', ts: String(t0) }],
+      'funding-rate': [{ fundingRate: '0.0001', nextFundingTime: String(t0 + 8 * 3600_000) }],
+      'long-short-position-ratio-contract-top-trader': topRows,
+      'long-short-account-ratio': accRows,
+      'taker-volume-contract': takerRows,
+      'mark-price': [{ markPx: '2970' }],
+      'index-tickers': [{ idxPx: '2968' }],
+    }
+    vi.stubGlobal('fetch', async (url: URL | Request | string) => {
+      const u = String(url)
+      // Longer keys first so open-interest-history wins over open-interest
+      const key = Object.keys(bodies)
+        .sort((a, b) => b.length - a.length)
+        .find(k => u.includes(k))
+      return new Response(
+        JSON.stringify(key ? { code: '0', data: bodies[key] } : { code: '404' }),
+        { status: key ? 200 : 404 },
+      )
+    })
+
+    const d = await okxDerivatives('ETHUSDT')
+    expect(d.longShortRatioKind).toBe('global_accounts')
+    expect(d.longShortRatio).toBeCloseTo(1.50, 4) // latest account ratio
+    expect(d.topPositionRatio).toBeCloseTo(0.90, 4)
+
+    const hist = d.history ?? []
+    expect(hist.length).toBeGreaterThan(5)
+    const topVals = hist.map(h => h.topPositionRatio).filter((v): v is number => v !== null && v !== undefined)
+    const uniqueTop = new Set(topVals.map(v => v.toFixed(4)))
+    expect(uniqueTop.size).toBeGreaterThan(1)
+
+    const lsVals = hist.map(h => h.longShortRatio).filter((v): v is number => v !== null && v !== undefined)
+    expect(lsVals.length).toBeGreaterThan(0)
+    expect(lsVals.every(v => v === null)).toBe(false)
+    const uniqueLs = new Set(lsVals.map(v => v.toFixed(4)))
+    expect(uniqueLs.size).toBeGreaterThan(1)
+
+    // Newest hist bar (last after reverse) aligns to newest top=0.90 / ls=1.50
+    const newest = hist[hist.length - 1]!
+    expect(newest.topPositionRatio).toBeCloseTo(0.90, 4)
+    expect(newest.longShortRatio).toBeCloseTo(1.50, 4)
+    // sell=0 on newest → history must NOT get sentinel 99
+    expect(newest.takerBuySellRatio).not.toBe(99)
+    expect(newest.takerBuySellRatio).toBeNull()
   })
 })

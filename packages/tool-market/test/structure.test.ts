@@ -133,13 +133,16 @@ describe("okxDerivatives", () => {
       "open-interest-history": oihRows,
       "open-interest": [{ oi: "1020", oiCcy: "102", oiUsd: "302940", ts: "1790965584103" }],
       "funding-rate": [{ fundingRate: "0.0001", nextFundingTime: "1790985600000" }],
-      "top-trader": [["1790971800000", "0.92"]],
+      "long-short-position-ratio-contract-top-trader": [["1790971800000", "0.92"]],
+      "long-short-account-ratio": [["1790971800000", "1.55"]],
       "taker-volume-contract": [["1790971500000", "200", "100"]],
       "mark-price": [{ markPx: "2970" }],
       "index-tickers": [{ idxPx: "2968" }],
     }
     vi.stubGlobal("fetch", async (url: URL) => {
-      const key = Object.keys(bodies).find(k => String(url).includes(k))
+      const key = Object.keys(bodies)
+        .sort((a, b) => b.length - a.length)
+        .find(k => String(url).includes(k))
       return new Response(JSON.stringify(key ? { code: "0", data: bodies[key] } : { code: "404" }), { status: key ? 200 : 404 })
     })
     const d = await okxDerivatives("ETHUSDT")
@@ -151,6 +154,7 @@ describe("okxDerivatives", () => {
     expect(d.fundingLabel).toBe("中性≈0.01%/8h")
     expect(d.fundingRateAnnualizedPct).toBeCloseTo(10.95, 2)
     expect(d.basisPct).toBeCloseTo(0.0674, 2)
-    expect(d.longShortRatioKind).toBe("top_positions")
+    expect(d.longShortRatioKind).toBe("global_accounts")
+    expect(d.longShortRatio).toBe(1.55)
   })
 })
