@@ -263,7 +263,7 @@ export class CnMarketProvider implements MarketDataProvider {
     url.searchParams.set('fields2', 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61')
     url.searchParams.set('lmt', String(limit))
 
-    const res = await fetch(url)
+    const res = await fetchT(url)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
     const data = await res.json() as { data?: { klines?: string[] } }
@@ -272,7 +272,7 @@ export class CnMarketProvider implements MarketDataProvider {
       throw new Error(`empty klines from Eastmoney for ${sym.secid}`)
     }
 
-    return rawKlines.map(line => {
+    return finiteBars(rawKlines.map(line => {
       // format: "time,open,close,high,low,volume,amount,amplitude,changePct,changeAmount,turnover"
       const parts = line.split(',')
       return {
@@ -283,7 +283,7 @@ export class CnMarketProvider implements MarketDataProvider {
         low: Number(parts[4]),
         volume: Number(parts[5]) * 100, // EM reports 手 (100 shares); Sina reports shares
       }
-    })
+    }))
   }
 
   private async fetchSina(sym: CnSymbolInfo, query: OhlcvQuery): Promise<Candle[]> {
@@ -297,7 +297,7 @@ export class CnMarketProvider implements MarketDataProvider {
     url.searchParams.set('ma', 'no')
     url.searchParams.set('datalen', String(limit))
 
-    const res = await fetch(url)
+    const res = await fetchT(url)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
     const text = await res.text()
@@ -319,14 +319,14 @@ export class CnMarketProvider implements MarketDataProvider {
       throw new Error(`empty klines from Sina for ${sym.sinaSymbol}`)
     }
 
-    return rows.map(r => ({
+    return finiteBars(rows.map(r => ({
       time: cnTimeToIso(r.day),
       open: Number(r.open),
       high: Number(r.high),
       low: Number(r.low),
       close: Number(r.close),
       volume: Number(r.volume),
-    }))
+    })))
   }
 
   async getMoneyFlow(symbol: string): Promise<MoneyFlow> {
@@ -338,7 +338,7 @@ export class CnMarketProvider implements MarketDataProvider {
     url.searchParams.set('fields2', 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65')
     url.searchParams.set('lmt', '5')
 
-    const res = await fetch(url)
+    const res = await fetchT(url)
     if (!res.ok) throw new Error(`Eastmoney fflow HTTP ${res.status}`)
 
     const json = await res.json() as {
@@ -368,7 +368,7 @@ export class CnMarketProvider implements MarketDataProvider {
       const qUrl = new URL('https://push2.eastmoney.com/api/qt/stock/get')
       qUrl.searchParams.set('secid', sym.secid)
       qUrl.searchParams.set('fields', 'f48,f58')
-      const qRes = await fetch(qUrl)
+      const qRes = await fetchT(qUrl)
       if (qRes.ok) {
         const qJson = await qRes.json() as { data?: { f48?: number } }
         const turnover = qJson?.data?.f48
@@ -399,7 +399,7 @@ export class CnMarketProvider implements MarketDataProvider {
 
   async getOrderbook(symbol: string): Promise<Orderbook> {
     const { sinaSymbol } = parseCnSymbol(symbol)
-    const res = await fetch(`${this.tencentBaseURL}/q=${sinaSymbol}`)
+    const res = await fetchT(`${this.tencentBaseURL}/q=${sinaSymbol}`)
     if (!res.ok) throw new Error(`Tencent quote HTTP ${res.status} for ${symbol}`)
     const text = await res.text()
     const { orderbook } = parseTencentQuote(text, symbol)
@@ -408,12 +408,24 @@ export class CnMarketProvider implements MarketDataProvider {
 
   async getFundamentals(symbol: string): Promise<FundamentalsPackage> {
     const { sinaSymbol } = parseCnSymbol(symbol)
-    const res = await fetch(`${this.tencentBaseURL}/q=${sinaSymbol}`)
+    const res = await fetchT(`${this.tencentBaseURL}/q=${sinaSymbol}`)
     if (!res.ok) throw new Error(`Tencent quote HTTP ${res.status} for ${symbol}`)
     const text = await res.text()
     const { fundamentals } = parseTencentQuote(text, symbol)
     return fundamentals
   }
+}
+
+
+/** Upstream quote endpoints occasionally hang; never let a tool call wait forever. */
+const FETCH_TIMEOUT_MS = 8_000
+function fetchT(input: string | URL): Promise<Response> {
+  return fetch(input, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
+}
+
+/** Drop rows whose OHLC did not parse — a NaN bar poisons every indicator downstream. */
+export function finiteBars(bars: Candle[]): Candle[] {
+  return bars.filter(b => [b.open, b.high, b.low, b.close].every(Number.isFinite) && !Number.isNaN(Date.parse(b.time)))
 }
 
 export function apply(ctx: Context, config: Config): void {

@@ -20,10 +20,10 @@ export interface Config {
 }
 
 export const name = 'tasks-schedule'
-export const inject = {
-  required: ['tools'],
-  optional: ['marketData'],
-} as const
+// cordis treats every key of an inject map as REQUIRED (a {required, optional}
+// object would make it wait for services literally named "required"/"optional"
+// forever). The trading bundle always provides marketData, so require it.
+export const inject = ['tools', 'marketData'] as const
 
 export function apply(ctx: Context, config: Config = {}): void {
   const tasksFilePath = resolve(process.cwd(), config.tasksFilePath ?? './data/tasks.json')

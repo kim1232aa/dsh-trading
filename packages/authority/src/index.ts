@@ -3,7 +3,7 @@
  * @module @dsh-trading/authority
  */
 
-import { Context, Service } from '@deepseek-ai/cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import Schema from '@deepseek-ai/schemastery'
 import { AuthorityEngine } from './verifier.js'
@@ -12,22 +12,21 @@ import type { AuthorityCheckRequest, AuthorityVerdict } from './types.js'
 export type * from './types.js'
 export { AuthorityEngine, canonicalizePayload, signGrant, verifyGrantSignature } from './verifier.js'
 
-declare module '@deepseek-ai/cordis' {
-  interface Context {
-    authority: AuthorityService
-  }
-}
 
 export interface AuthorityConfig {
   grantPath?: string | undefined
   publicKeyPem?: string | undefined
 }
 
-export class AuthorityService extends Service {
+// A plain object, not a cordis Service: constructing a Service inside apply()
+// and assigning ctx.authority by hand is not a supported pattern, and
+// combined with the old `export default apply` made cordis instantiate the
+// plugin as a class before its inject list was honoured (boot error:
+// 'cannot get property "tools" without inject').
+export class AuthorityService {
   readonly engine: AuthorityEngine
 
-  constructor(ctx: Context, config: AuthorityConfig = {}) {
-    super(ctx, 'authority')
+  constructor(_ctx: Context | undefined, config: AuthorityConfig = {}) {
     this.engine = new AuthorityEngine({
       grantPath: config.grantPath,
       publicKey: config.publicKeyPem,
@@ -43,7 +42,6 @@ export const inject = ['tools'] as const
 
 export function apply(ctx: Context, config: AuthorityConfig = {}): void {
   const service = new AuthorityService(ctx, config)
-  ctx.authority = service
 
   ctx.tools.register(defineTool({
     name: 'check_trade_authority',
@@ -108,4 +106,3 @@ export const Config = Schema.object({
   publicKeyPem: Schema.string().description('Ed25519 public key in PEM or SPKI format.'),
 }) as unknown as Schema<AuthorityConfig>
 
-export default apply

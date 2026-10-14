@@ -145,3 +145,11 @@ describe('CnMarketProvider Routing', () => {
     expect(fundamentals.marketCap).toBe(19800.50 * 1e8)
   })
 })
+
+describe('finiteBars', () => {
+  it('drops rows with unparseable prices or times', async () => {
+    const { finiteBars } = await import('../src/index.js')
+    const ok = { time: '2026-01-02T00:00:00.000Z', open: 1, high: 2, low: 0.5, close: 1.5, volume: 10 }
+    expect(finiteBars([ok, { ...ok, close: NaN }, { ...ok, time: 'bogus' }])).toEqual([ok])
+  })
+})
