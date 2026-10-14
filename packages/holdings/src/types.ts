@@ -83,8 +83,30 @@ export interface PortfolioSummary {
   shortExposure: Record<string, number>
   /** Net = long − short. */
   netExposure: Record<string, number>
-  /** Largest single-name |weightPct|. */
+  /** Largest single-name |weightPct| (vs base NAV when FX book present, else per-currency). */
   maxWeightPct: number | null
   maxWeightSymbol: string | null
   stagedTradesCount: number
+  /** Cross-currency NAV in `baseCurrency` (crypto desk default: USDT). */
+  nav?: NavSummary
+}
+
+/** Portfolio marked into one base currency via a public FX book. */
+export interface NavSummary {
+  baseCurrency: Currency
+  /** ISO date / stamp of the FX book. */
+  asOf: string
+  /** Where rates came from (URL). */
+  source: string
+  /** 1 unit of key → baseCurrency units. */
+  rates: Record<string, number>
+  totalNav: number
+  totalCostNav: number
+  totalUnrealizedPnlNav: number
+  totalUnrealizedPnlPct: number
+  totalTodayPnlNav: number
+  longExposureNav: number
+  shortExposureNav: number
+  netExposureNav: number
+  note: string
 }

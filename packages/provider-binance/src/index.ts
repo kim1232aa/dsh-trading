@@ -30,6 +30,13 @@ export interface Config {
   futuresURL: string
   /** Provider id for multi-provider setups. */
   id: string
+  /**
+   * Also register an `okx` provider (spot klines + SWAP derivatives including
+   * liquidations). Default true — crypto desks want Binance + OKX side by side.
+   */
+  registerOkx: boolean
+  /** Catalogue for the OKX provider (same tickers, OKX notation under the hood). */
+  okxSymbols: string[]
 }
 
 export const Config: z<Config> = z.object({
@@ -41,6 +48,10 @@ export const Config: z<Config> = z.object({
   // USDⓈ-M perpetuals: open interest, funding, long/short. Public, no key.
   futuresURL: z.string().default('https://fapi.binance.com'),
   id: z.string().default('binance'),
+  registerOkx: z.boolean().default(true),
+  okxSymbols: z.array(z.string()).default([
+    'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT',
+  ]),
 }) as unknown as z<Config>
 
 // Binance spot kline intervals, minus `1s` (sub-minute bars would flood the
@@ -845,6 +856,45 @@ async function okxGet(path: string, params?: Record<string, string>): Promise<un
   throw firstErr ?? new Error(`All OKX endpoints unreachable for ${path}`)
 }
 
+
+/** Recent OKX SWAP liquidations (~1h window). Notional ≈ sz * bkPx (contracts×price for linear). */
+export async function okxLiquidations1h(rawSymbol: string): Promise<{
+  longUsd: number
+  shortUsd: number
+  summary: string
+}> {
+  const symbol = normalizeSymbol(rawSymbol)
+  const base = symbol.replace(/(USDT|USDC)$/, '')
+  const quote = symbol.endsWith('USDC') ? 'USDC' : 'USDT'
+  const uly = `${base}-${quote}`
+  const data = await okxGet('/api/v5/public/liquidation-orders', {
+    instType: 'SWAP',
+    uly,
+    state: 'filled',
+  }) as Array<{ details?: Array<Record<string, unknown>> }> | null
+  const cutoff = Date.now() - 60 * 60 * 1000
+  let longUsd = 0
+  let shortUsd = 0
+  const details = (data ?? []).flatMap(row => row.details ?? [])
+  for (const d of details) {
+    const ts = num(d['ts'] ?? d['time']) ?? 0
+    if (ts < cutoff) continue
+    const px = num(d['bkPx']) ?? 0
+    const sz = num(d['sz']) ?? 0
+    const notional = Math.abs(px * sz)
+    // posSide long liquidated → longs flushed; short → shorts flushed
+    const side = String(d['posSide'] ?? '')
+    if (side === 'long') longUsd += notional
+    else if (side === 'short') shortUsd += notional
+  }
+  const fmt = (v: number): string => v >= 1e6 ? `${(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `${(v / 1e3).toFixed(1)}k` : v.toFixed(0)
+  return {
+    longUsd: Number(longUsd.toFixed(2)),
+    shortUsd: Number(shortUsd.toFixed(2)),
+    summary: `近1h爆仓 多 ${fmt(longUsd)} / 空 ${fmt(shortUsd)} USDT`,
+  }
+}
+
 /**
  * OKX perpetual futures (ETHUSDT -> ETH-USDT-SWAP).
  * Multi-domain resilient with live open interest, funding rate, top positions, and taker volume.
@@ -923,6 +973,18 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
     }
   })
 
+  let liquidationLongUsd1h: number | null = null
+  let liquidationShortUsd1h: number | null = null
+  let liquidationSummary: string | null = null
+  try {
+    const liq = await okxLiquidations1h(symbol)
+    liquidationLongUsd1h = liq.longUsd
+    liquidationShortUsd1h = liq.shortUsd
+    liquidationSummary = liq.summary
+  } catch {
+    // liquidations are best-effort
+  }
+
   return {
     source: 'OKX',
     openInterest: oi,
@@ -940,6 +1002,40 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
     quadrant: quadrant.quadrant,
     quadrantNote: quadrant.quadrantNote,
     history,
+    liquidationLongUsd1h,
+    liquidationShortUsd1h,
+    liquidationSummary,
+  }
+}
+
+
+
+/** First-class OKX spot + SWAP provider (id: `okx`). Shares symbol catalogue with Binance tickers. */
+export class OkxMarketProvider implements MarketDataProvider {
+  readonly id: string
+  readonly description: string
+  constructor(
+    id: string,
+    private readonly symbols: string[],
+  ) {
+    this.id = id
+    this.description = `OKX public spot klines + SWAP derivatives (${symbols.length} symbols)`
+  }
+
+  matchesSymbol(symbol: string): boolean {
+    return isBinanceSymbol(symbol)
+  }
+
+  async listSymbols(): Promise<InstrumentInfo[]> {
+    return this.symbols.map(symbol => ({ symbol, timeframes: [...ALL_TIMEFRAMES] }))
+  }
+
+  async getOhlcv(query: OhlcvQuery): Promise<Candle[]> {
+    return okxSpotCandles(query.symbol, query.timeframe, query.limit ?? 200)
+  }
+
+  async getDerivatives(rawSymbol: string): Promise<Derivatives> {
+    return okxDerivatives(rawSymbol)
   }
 }
 
@@ -947,4 +1043,9 @@ export function apply(ctx: Context, config: Config): void {
   ctx.effect(() => ctx.marketData.register(
     new BinanceProvider(config.id ?? 'binance', config.symbols, config.baseURL, config.futuresURL ?? 'https://fapi.binance.com'),
   ))
+  if (config.registerOkx !== false) {
+    ctx.effect(() => ctx.marketData.register(
+      new OkxMarketProvider('okx', config.okxSymbols?.length ? config.okxSymbols : config.symbols),
+    ))
+  }
 }

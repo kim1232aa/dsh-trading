@@ -10,6 +10,8 @@ import {
   quadrantOf,
   sampleAtOrBefore,
   isBinanceSymbol,
+  okxLiquidations1h,
+  okxDerivatives,
 } from '../src/index.js'
 
 describe('Binance Provider Helpers', () => {
@@ -139,4 +141,17 @@ describe('isBinanceSymbol', () => {
     expect(isBinanceSymbol('HK.00700')).toBe(false)
     expect(isBinanceSymbol('CC.BTCUSDT')).toBe(false)
   })
+})
+
+describe('OKX derivatives live smoke', () => {
+  it('returns OI/funding and optional liquidations for BTC', async () => {
+    const d = await okxDerivatives('BTCUSDT')
+    expect(d.source).toBe('OKX')
+    expect(d.openInterest).toBeGreaterThan(0)
+    expect(d.fundingRate).not.toBeNull()
+    // liquidations best-effort
+    if (d.liquidationSummary) {
+      expect(d.liquidationSummary).toContain('爆仓')
+    }
+  }, 30_000)
 })

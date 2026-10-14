@@ -4,6 +4,7 @@
  * @module @dsh-trading/holdings
  */
 
+import type { FxBook } from './fx.js'
 import type { AssetClass, Currency, HoldingPosition, PortfolioSummary, StagedTrade } from './types.js'
 
 /** Heuristically infers asset class and quote currency from symbol ticker. */
@@ -226,10 +227,11 @@ export function updatePositionMarketValue(
   }
 }
 
-/** Summarizes portfolio positions into broker-style totals grouped by currency. */
+/** Summarizes portfolio positions into broker-style totals grouped by currency (+ optional USDT NAV). */
 export function summarizePortfolio(
   positions: HoldingPosition[],
   stagedTradesCount = 0,
+  fx?: FxBook,
 ): PortfolioSummary {
   const totalMarketValue: Record<string, number> = {}
   const totalCost: Record<string, number> = {}
@@ -239,18 +241,22 @@ export function summarizePortfolio(
   const longExposure: Record<string, number> = {}
   const shortExposure: Record<string, number> = {}
 
-  // First pass: absolute market-value totals per currency for weight denominator.
+  const rate = (ccy: string): number => (fx ? (fx.rates[ccy] ?? 1) : 1)
+
+  // Weight denominator: base-NAV abs when FX present, else per-currency abs MV.
+  let absNav = 0
   const absMv: Record<string, number> = {}
   for (const pos of positions) {
     const mv = Math.abs(pos.marketValue ?? 0)
     absMv[pos.currency] = (absMv[pos.currency] ?? 0) + mv
+    if (fx) absNav += mv * rate(pos.currency)
   }
 
   const enriched: HoldingPosition[] = positions.map((pos) => {
-    const cur = pos.currency
     const mv = pos.marketValue ?? 0
-    const denom = absMv[cur] ?? 0
-    const weightPct = denom > 0 ? round((Math.abs(mv) / denom) * 100, 2) : 0
+    const weightPct = fx
+      ? (absNav > 0 ? round((Math.abs(mv) * rate(pos.currency) / absNav) * 100, 2) : 0)
+      : ((absMv[pos.currency] ?? 0) > 0 ? round((Math.abs(mv) / (absMv[pos.currency] ?? 1)) * 100, 2) : 0)
     return { ...pos, weightPct, costBasis: round(Math.abs(pos.quantity) * pos.averageCost, 4) }
   })
 
@@ -287,6 +293,37 @@ export function summarizePortfolio(
     }
   }
 
+  let nav: PortfolioSummary['nav']
+  if (fx) {
+    let totalNav = 0, totalCostNav = 0, totalUnrealizedPnlNav = 0, totalTodayPnlNav = 0
+    let longExposureNav = 0, shortExposureNav = 0
+    for (const pos of enriched) {
+      const r = rate(pos.currency)
+      const mv = (pos.marketValue ?? 0) * r
+      totalNav += mv
+      totalCostNav += (pos.costBasis ?? 0) * r
+      totalUnrealizedPnlNav += (pos.unrealizedPnl ?? 0) * r
+      totalTodayPnlNav += (pos.todayPnl ?? 0) * r
+      if (mv >= 0) longExposureNav += mv
+      else shortExposureNav += Math.abs(mv)
+    }
+    nav = {
+      baseCurrency: fx.baseCurrency,
+      asOf: fx.asOf,
+      source: fx.source,
+      rates: { ...fx.rates },
+      totalNav: round(totalNav, 2),
+      totalCostNav: round(totalCostNav, 2),
+      totalUnrealizedPnlNav: round(totalUnrealizedPnlNav, 2),
+      totalUnrealizedPnlPct: totalCostNav > 0 ? round((totalUnrealizedPnlNav / totalCostNav) * 100, 2) : 0,
+      totalTodayPnlNav: round(totalTodayPnlNav, 2),
+      longExposureNav: round(longExposureNav, 2),
+      shortExposureNav: round(shortExposureNav, 2),
+      netExposureNav: round(longExposureNav - shortExposureNav, 2),
+      note: `NAV in ${fx.baseCurrency}; USD≈USDT near-par; fiat via public USD book (${fx.source}). Research mark, not settlement.`,
+    }
+  }
+
   return {
     positions: enriched,
     totalMarketValue,
@@ -301,6 +338,7 @@ export function summarizePortfolio(
     maxWeightPct,
     maxWeightSymbol,
     stagedTradesCount,
+    ...(nav ? { nav } : {}),
   }
 }
 

@@ -9,6 +9,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { MarketData } from '@dsh-trading/market-data'
+import { fetchFxBook } from './fx.js'
 import {
   createEmptyPosition,
   inferAssetClassAndCurrency,
@@ -28,16 +29,20 @@ declare module '@deepseek-ai/cordis' {
 export * from './types.js'
 export * from './ledger.js'
 export * from './store.js'
+export * from './fx.js'
 
 export const name = 'holdings'
 export const inject = ['tools', 'marketData']
 
 export interface Config {
   storeDir: string
+  /** Portfolio NAV base. Crypto desk default: USDT. */
+  baseCurrency: Currency
 }
 
 export const Config: z<Config> = z.object({
   storeDir: z.string().default('./data/holdings'),
+  baseCurrency: z.string().default('USDT'),
 }) as unknown as z<Config>
 
 export function apply(ctx: Context, config: Config): void {
@@ -104,7 +109,14 @@ export function apply(ctx: Context, config: Config): void {
         }
       }
 
-      const summary = await store.getPortfolioSummary()
+      let fxBook = undefined as Awaited<ReturnType<typeof fetchFxBook>> | undefined
+      try {
+        fxBook = await fetchFxBook((config.baseCurrency as Currency) ?? 'USDT')
+      } catch {
+        // Per-currency totals still work without FX.
+      }
+      const stagedCount = (await store.listStagedTrades()).length
+      const summary = summarizePortfolio(await store.getPositions(), stagedCount, fxBook)
       positions = summary.positions
       if (args.symbols && args.symbols.length > 0) {
         const filterSet = new Set(args.symbols.map(s => s.toUpperCase()))
@@ -145,6 +157,13 @@ export function apply(ctx: Context, config: Config): void {
         if (summary.maxWeightSymbol) {
           lines.push(`集中度: 最大单票 ${summary.maxWeightSymbol} ${summary.maxWeightPct}%`)
         }
+        if (summary.nav) {
+          const n = summary.nav
+          const s = n.totalUnrealizedPnlNav >= 0 ? '+' : ''
+          const t = n.totalTodayPnlNav >= 0 ? '+' : ''
+          lines.push(`净值[${n.baseCurrency}]: ${n.totalNav} | 成本 ${n.totalCostNav} | 未实现 ${s}${n.totalUnrealizedPnlNav} (${n.totalUnrealizedPnlPct}%) | 今盈亏 ${t}${n.totalTodayPnlNav} | 多/空/净 ${n.longExposureNav}/${n.shortExposureNav}/${n.netExposureNav}`)
+          lines.push(`汇率口径: ${n.note} | asOf ${n.asOf}`)
+        }
       }
 
       if (summary.stagedTradesCount > 0) {
@@ -166,6 +185,7 @@ export function apply(ctx: Context, config: Config): void {
           netExposure: summary.netExposure,
           maxWeightPct: summary.maxWeightPct,
           maxWeightSymbol: summary.maxWeightSymbol,
+          nav: summary.nav,
         }) as any,
         stagedTradesCount: summary.stagedTradesCount,
       }

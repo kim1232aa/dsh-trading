@@ -788,7 +788,7 @@ export function apply(ctx: Context, config: Config): void {
     name: 'screen_market',
     description: 'Scan a universe of symbols across technical patterns: bullish alignment (MA20>MA50>MA200), bearish alignment (MA20<MA50<MA200), volume breakout/breakdown (1.8x+ volume breaking 20-bar resistance/support), oversold rebound (RSI<32 with reversal candle), or overbought reversal (RSI>68 with bearish candle).',
     parameters: {
-      symbols: { type: 'array', items: { type: 'string' }, description: 'Symbols to scan. Defaults to hot crypto and A-share tickers if omitted.' },
+      symbols: { type: 'array', items: { type: 'string' }, description: 'Symbols to scan. Defaults to major USDT pairs if omitted.' },
       timeframe: { type: 'string', enum: [...TIMEFRAMES], description: 'Timeframe interval (default "1d").' },
       patterns: { type: 'array', items: { type: 'string', enum: ['bullish_alignment', 'volume_breakout', 'oversold_reversal', 'bearish_alignment', 'volume_breakdown', 'overbought_reversal'] }, description: 'Patterns to filter for. Defaults to all six.' },
       provider: { type: 'string', description: 'Market-data provider id (omit for default).' },
@@ -811,7 +811,7 @@ export function apply(ctx: Context, config: Config): void {
       const provider = ctx.marketData.provider(args.provider)
       const symbolsToScan = args.symbols && args.symbols.length > 0
         ? args.symbols
-        : ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'BNBUSDT', '600519', '000001', 'sh000001']
+        : ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'DOGEUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'AVAXUSDT']
       const matches = await screenUniverse(provider, symbolsToScan, (args.timeframe as Timeframe) ?? '1d', args.patterns as any)
       return {
         scannedCount: symbolsToScan.length,

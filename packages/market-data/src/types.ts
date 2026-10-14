@@ -215,4 +215,10 @@ export interface Derivatives {
   readings?: PositionReading[]
   /** Historical derivative bars aligned with recent candles. */
   history?: DerivativeBar[]
+  /** Sum of long liquidations (USD notional) over ~1h, when the venue serves it. */
+  liquidationLongUsd1h?: number | null
+  /** Sum of short liquidations (USD notional) over ~1h. */
+  liquidationShortUsd1h?: number | null
+  /** One-line liquidation summary for the model/UI. */
+  liquidationSummary?: string | null
 }
