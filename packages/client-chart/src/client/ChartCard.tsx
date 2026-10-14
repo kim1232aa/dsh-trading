@@ -253,7 +253,8 @@ export const EDITABLE: {
   { name: 'NW_TREND', title: '核回归趋势(QuantAlgo)', defaults: [50, 8, 2.0, 1.8], defaultVisible: false, params: [period('回溯周期'), { label: '带宽', min: 1, max: 50, step: 1 }, { label: '倍数', min: 0.5, max: 10, step: 0.1 }, { label: '通道倍数', min: 0.5, max: 10, step: 0.1 }] },
   { name: 'OB_BB', title: '订单块/破坏块(RWB)', defaults: [], defaultVisible: false, params: [] },
   { name: 'MTF_SR', title: '多周期支撑阻力(Syndicate)', defaults: [5], defaultVisible: false, params: [period('Pivot周期')] },
-  { name: 'OI_POSTURE', title: '持仓动向', pane: 'pane_oi_posture', defaults: [], params: [] },
+  { name: 'OI_POSTURE', title: '合约OI', pane: 'pane_oi_posture', defaults: [], params: [] },
+  { name: 'LSR_RATIO', title: '多空比', pane: 'pane_lsr', defaults: [], params: [] },
   { name: 'ENTRY_SIGNAL', title: '多空观察信号(未验证)', defaults: [60, 4], defaultVisible: false, params: [period('ST周期'), { label: 'ST倍数', min: 0.1, max: 20, step: 0.1 }] },
 ]
 
@@ -408,6 +409,115 @@ const FOLD = {
 
 let registered = false
 
+
+/** Match a derivative history bar to a candle open time (within 15 minutes). */
+export function matchDerivativeHistory(
+  history: PanelDerivativeBar[],
+  timestampMs: number,
+): PanelDerivativeBar | undefined {
+  const kSec = Math.floor(timestampMs / 1000)
+  let bestDiff = Infinity
+  let matched: PanelDerivativeBar | undefined
+  for (const h of history) {
+    const sec = Math.floor(Date.parse(h.time) / 1000)
+    if (!Number.isFinite(sec)) continue
+    const diff = Math.abs(sec - kSec)
+    if (diff < bestDiff && diff <= 900) {
+      bestDiff = diff
+      matched = h
+    }
+  }
+  return matched
+}
+
+export type OiPostureRow = {
+  oi?: number
+  oiMa?: number
+  deltaOi?: number
+  bar?: PanelDerivativeBar
+}
+
+/** OI_POSTURE subplot series: coin OI + MA. Ratios live in tooltip/chips and LSR_RATIO pane. */
+export function calcOiPostureRows(
+  kLineDataList: { timestamp?: number }[],
+  history: PanelDerivativeBar[],
+  maPeriod = 14,
+): OiPostureRow[] {
+  if (!Array.isArray(history) || history.length === 0) {
+    return kLineDataList.map(() => ({}))
+  }
+  const deltas = history.map((h, idx) => {
+    const prev = idx > 0 ? history[idx - 1] : undefined
+    const curVal = contractOpenInterest(h)
+    const prevVal = prev ? contractOpenInterest(prev) : null
+    return curVal !== null && prevVal !== null ? curVal - prevVal : 0
+  })
+  const oiValues: (number | undefined)[] = []
+  return kLineDataList.map(k => {
+    const ts = k.timestamp
+    if (ts === undefined) {
+      oiValues.push(undefined)
+      return {}
+    }
+    const bar = matchDerivativeHistory(history, ts)
+    if (!bar) {
+      oiValues.push(undefined)
+      return {}
+    }
+    const histIdx = history.indexOf(bar)
+    const oi = contractOpenInterest(bar)
+    if (oi === null) {
+      oiValues.push(undefined)
+      return {}
+    }
+    oiValues.push(oi)
+    let sum = 0
+    let count = 0
+    for (let j = oiValues.length - 1; j >= 0 && count < maPeriod; j--) {
+      const val = oiValues[j]
+      if (val !== undefined) {
+        sum += val
+        count++
+      }
+    }
+    const oiMa = count > 0 ? sum / count : undefined
+    return { oi, oiMa, deltaOi: histIdx >= 0 ? deltas[histIdx] : 0, bar }
+  })
+}
+
+export type LsrRatioRow = {
+  lsr?: number
+  topPos?: number
+  mid?: number
+  bar?: PanelDerivativeBar
+}
+
+/**
+ * LSR_RATIO subplot: account long/short ratio + top-trader position ratio.
+ * mid=1 is the net-long / net-short boundary (>1 净多).
+ */
+export function calcLsrRatioRows(
+  kLineDataList: { timestamp?: number }[],
+  history: PanelDerivativeBar[],
+): LsrRatioRow[] {
+  if (!Array.isArray(history) || history.length === 0) {
+    return kLineDataList.map(() => ({}))
+  }
+  return kLineDataList.map(k => {
+    const ts = k.timestamp
+    if (ts === undefined) return {}
+    const bar = matchDerivativeHistory(history, ts)
+    if (!bar) return {}
+    const lsr = bar.longShortRatio != null && Number.isFinite(bar.longShortRatio) ? bar.longShortRatio : undefined
+    const topPos = bar.topPositionRatio != null && Number.isFinite(bar.topPositionRatio) ? bar.topPositionRatio : undefined
+    if (lsr === undefined && topPos === undefined) return {}
+    return { lsr, topPos, mid: 1, bar }
+  })
+}
+
+const DERIV_HISTORY_INDICATORS = new Set(['OI_POSTURE', 'LSR_RATIO'])
+
+
 function ensureRegistered(): void {
   if (registered) return
   registered = true
@@ -479,7 +589,7 @@ function ensureRegistered(): void {
 
   registerIndicator({
     name: 'OI_POSTURE',
-    shortName: '持仓动向',
+    shortName: '合约OI',
     series: 'volume',
     precision: 2,
     shouldFormatBigNumber: true,
@@ -506,62 +616,8 @@ function ensureRegistered(): void {
     ],
     calc: (kLineDataList: { timestamp?: number }[], indicator: { extendData?: unknown; calcParams?: number[] }) => {
       const history = (indicator.extendData ?? []) as PanelDerivativeBar[]
-      if (!Array.isArray(history) || history.length === 0) {
-        return kLineDataList.map(() => ({}))
-      }
-      const histParsed = history.map((h, idx) => {
-        const sec = Math.floor(Date.parse(h.time) / 1000)
-        const prev = idx > 0 ? history[idx - 1] : undefined
-        const curVal = contractOpenInterest(h)
-        const prevVal = prev ? contractOpenInterest(prev) : null
-        const delta = curVal !== null && prevVal !== null ? curVal - prevVal : 0
-        return {
-          bar: h,
-          sec,
-          delta,
-        }
-      })
-
       const maPeriod = (indicator.calcParams?.[0] as number | undefined) ?? 14
-      const oiValues: (number | undefined)[] = []
-
-      return kLineDataList.map(k => {
-        const ts = k.timestamp
-        if (ts === undefined) return {}
-        const kSec = Math.floor(ts / 1000)
-        let bestDiff = Infinity
-        let matched: typeof histParsed[number] | undefined
-        for (const item of histParsed) {
-          const diff = Math.abs(item.sec - kSec)
-          if (diff < bestDiff && diff <= 900) {
-            bestDiff = diff
-            matched = item
-          }
-        }
-        const oi = matched ? contractOpenInterest(matched.bar) : null
-        if (!matched || oi === null) {
-          oiValues.push(undefined)
-          return {}
-        }
-        oiValues.push(oi)
-        let sum = 0
-        let count = 0
-        for (let j = oiValues.length - 1; j >= 0 && count < maPeriod; j--) {
-          const val = oiValues[j]
-          if (val !== undefined) {
-            sum += val
-            count++
-          }
-        }
-        const oiMa = count > 0 ? sum / count : undefined
-
-        return {
-          oi,
-          oiMa,
-          deltaOi: matched.delta,
-          bar: matched.bar,
-        }
-      })
+      return calcOiPostureRows(kLineDataList, history, maPeriod)
     },
     createTooltipDataSource: ({ indicator, crosshair, kLineDataList }: {
       indicator: { calcParams?: number[]; extendData?: unknown; result?: Record<string, unknown>[] }
@@ -571,20 +627,16 @@ function ensureRegistered(): void {
       const res = indicator.result ?? []
       const history = (indicator.extendData ?? []) as PanelDerivativeBar[]
       if (!Array.isArray(history) || history.length === 0) {
-        return { name: '持仓动向', calcParamsText: '', values: [] }
+        return { name: '合约OI', calcParamsText: '', values: [] }
       }
       const dataIndex = crosshair.dataIndex ?? (kLineDataList.length - 1)
-      const row = res[dataIndex] as { oi?: number; oiMa?: number; deltaOi?: number; bar?: PanelDerivativeBar } | undefined
+      const row = res[dataIndex] as OiPostureRow | undefined
       const ts = crosshair.kLineData?.timestamp ?? kLineDataList[dataIndex]?.timestamp
 
       let target: PanelDerivativeBar | undefined = row?.bar
       let deltaVal: number | undefined = row?.deltaOi
       if (!target && ts !== undefined) {
-        const sec = Math.floor(ts / 1000)
-        target = history.find(h => {
-          const hSec = Math.floor(Date.parse(h.time) / 1000)
-          return Math.abs(hSec - sec) <= 900
-        })
+        target = matchDerivativeHistory(history, ts)
       }
       // Strictly prevent time-travel leakage: only fallback to latest live snapshot on the newest candle
       if (!target && dataIndex >= kLineDataList.length - 1) {
@@ -593,7 +645,7 @@ function ensureRegistered(): void {
 
       if (!target) {
         return {
-          name: '持仓动向',
+          name: '合约OI',
           calcParamsText: '',
           values: [
             { title: '币数: ', value: { text: '—', color: '#8b949e' } },
@@ -608,9 +660,9 @@ function ensureRegistered(): void {
       const pColor = postureColor(postureText).color
       const oiContracts = contractOpenInterest(target)
       const oiText = oiContracts !== null ? compact.format(oiContracts) : '—'
-      const lsrText = target.longShortRatio ? target.longShortRatio.toFixed(2) : '—'
-      const topPos = target.topPositionRatio ? target.topPositionRatio.toFixed(2) : null
-      const tkText = target.takerBuySellRatio ? target.takerBuySellRatio.toFixed(2) : null
+      const lsrText = target.longShortRatio != null ? target.longShortRatio.toFixed(2) : '—'
+      const topPos = target.topPositionRatio != null ? target.topPositionRatio.toFixed(2) : null
+      const tkText = target.takerBuySellRatio != null ? target.takerBuySellRatio.toFixed(2) : null
       const deltaText = deltaVal !== undefined && Number.isFinite(deltaVal)
         ? `${deltaVal >= 0 ? '+' : ''}${compact.format(deltaVal)}`
         : null
@@ -620,7 +672,7 @@ function ensureRegistered(): void {
         { title: 'OI名义: ', value: { text: target.openInterestValue ? formatUsdtCnLocal(target.openInterestValue) : '—', color: '#8b949e' } },
       ]
       if (row?.oiMa !== undefined && Number.isFinite(row.oiMa)) {
-        values.push({ title: 'OI均线: ', value: { text: formatUsdtCnLocal(row.oiMa), color: '#f59e0b' } })
+        values.push({ title: 'OI均线: ', value: { text: compact.format(row.oiMa), color: '#f59e0b' } })
       }
       if (deltaText) {
         values.push({ title: 'Δ币数: ', value: { text: deltaText, color: deltaVal! >= 0 ? '#22c55e' : '#ef4444' } })
@@ -635,10 +687,107 @@ function ensureRegistered(): void {
       }
       const p = indicator.calcParams?.[0] ?? 14
       return {
-        name: '持仓动向',
+        name: '合约OI',
         calcParamsText: `(${p})`,
         values,
       }
+    },
+  } as never)
+
+  registerIndicator({
+    name: 'LSR_RATIO',
+    shortName: '多空比',
+    series: 'normal',
+    precision: 2,
+    shouldFormatBigNumber: false,
+    calcParams: [],
+    figures: [
+      {
+        key: 'lsr',
+        title: '账户人数比: ',
+        type: 'line',
+        styles: () => ({ color: '#58a6ff', size: 1.5 }),
+      },
+      {
+        key: 'topPos',
+        title: '大户持仓比: ',
+        type: 'line',
+        styles: () => ({ color: '#ffa726', size: 1.5 }),
+      },
+      {
+        key: 'mid',
+        title: '中性1: ',
+        type: 'line',
+        styles: () => ({ color: '#768390', size: 1, style: 'dashed', dashedValue: [4, 3] }),
+      },
+    ],
+    styles: {
+      lines: [
+        { color: '#58a6ff', size: 1.5, style: 'solid', smooth: false, dashedValue: [2, 2] },
+        { color: '#ffa726', size: 1.5, style: 'solid', smooth: false, dashedValue: [2, 2] },
+        { color: '#768390', size: 1, style: 'dashed', smooth: false, dashedValue: [4, 3] },
+      ],
+    },
+    calc: (kLineDataList: { timestamp?: number }[], indicator: { extendData?: unknown }) => {
+      const history = (indicator.extendData ?? []) as PanelDerivativeBar[]
+      return calcLsrRatioRows(kLineDataList, history)
+    },
+    createTooltipDataSource: ({ indicator, crosshair, kLineDataList }: {
+      indicator: { extendData?: unknown; result?: Record<string, unknown>[] }
+      crosshair: { dataIndex?: number; kLineData?: { timestamp?: number } }
+      kLineDataList: { timestamp?: number }[]
+    }) => {
+      const res = indicator.result ?? []
+      const history = (indicator.extendData ?? []) as PanelDerivativeBar[]
+      if (!Array.isArray(history) || history.length === 0) {
+        return { name: '多空比', calcParamsText: '', values: [] }
+      }
+      const dataIndex = crosshair.dataIndex ?? (kLineDataList.length - 1)
+      const row = res[dataIndex] as LsrRatioRow | undefined
+      const ts = crosshair.kLineData?.timestamp ?? kLineDataList[dataIndex]?.timestamp
+      let target: PanelDerivativeBar | undefined = row?.bar
+      if (!target && ts !== undefined) target = matchDerivativeHistory(history, ts)
+      if (!target && dataIndex >= kLineDataList.length - 1) target = history[history.length - 1]
+      if (!target) {
+        return {
+          name: '多空比',
+          calcParamsText: '',
+          values: [{ title: '说明: ', value: { text: '无历史比值', color: '#8b949e' } }],
+        }
+      }
+      const ratioColor = (v: number | null | undefined) => {
+        if (v == null || !Number.isFinite(v)) return '#8b949e'
+        if (v > 1) return '#22c55e'
+        if (v < 1) return '#ef4444'
+        return '#c9d1d9'
+      }
+      const lsr = target.longShortRatio
+      const topPos = target.topPositionRatio
+      const topAcc = target.topAccountRatio
+      const values: { title: string; value: { text: string; color: string } }[] = [
+        {
+          title: '账户人数比: ',
+          value: {
+            text: lsr != null ? `${lsr.toFixed(2)}${lsr > 1 ? '(>1净多)' : lsr < 1 ? '(<1净空)' : '(=1)'}` : '—',
+            color: ratioColor(lsr),
+          },
+        },
+        {
+          title: '大户持仓比: ',
+          value: {
+            text: topPos != null ? `${topPos.toFixed(2)}${topPos > 1 ? '(>1净多)' : topPos < 1 ? '(<1净空)' : '(=1)'}` : '—',
+            color: ratioColor(topPos),
+          },
+        },
+      ]
+      if (topAcc != null) {
+        values.push({
+          title: '大户账户比: ',
+          value: { text: topAcc.toFixed(2), color: ratioColor(topAcc) },
+        })
+      }
+      values.push({ title: '中性线: ', value: { text: '1.00', color: '#768390' } })
+      return { name: '多空比', calcParamsText: '', values }
     },
   } as never)
   registerIndicator(evasiveSuperTrendIndicator as never)
@@ -926,7 +1075,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     })))
     for (const def of EDITABLE) {
       const s = settingsRef.current[def.name]!
-      const ext = def.name === 'OI_POSTURE' ? derivativesRef.current?.history : undefined
+      const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivativesRef.current?.history : undefined
       if (def.pane !== undefined) {
         // Own pane: created only when shown, so a hidden one doesn't leave a blank strip.
         if (s.visible) chart.createIndicator({ name: def.name, calcParams: s.params, extendData: ext }, false, { id: def.pane, height: PANE_HEIGHT })
@@ -1031,7 +1180,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     if (chart === null) return
     for (const def of EDITABLE) {
       const s = settings[def.name]!
-      const ext = def.name === 'OI_POSTURE' ? derivatives?.history : undefined
+      const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivatives?.history : undefined
       if (def.pane !== undefined) {
         const exists = chart.getIndicatorByPaneId(def.pane, def.name) != null
         if (!s.visible) { if (exists) chart.removeIndicator(def.pane, def.name) }

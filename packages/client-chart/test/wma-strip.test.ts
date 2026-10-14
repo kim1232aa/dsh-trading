@@ -68,6 +68,7 @@ describe('sanitizeSettings', () => {
       OB_BB: { params: [], visible: false },
       MTF_SR: { params: [5], visible: false },
       OI_POSTURE: { params: [], visible: true },
+      LSR_RATIO: { params: [], visible: true },
       ENTRY_SIGNAL: { params: [60, 4], visible: false },
     })
     expect(sanitizeSettings('x')).toEqual(sanitizeSettings(null))
@@ -79,6 +80,7 @@ describe('sanitizeSettings', () => {
     expect(s['EVASIVE_ST']).toEqual({ params: [10, 3.0, 1.0, 0.5], visible: false })
     expect(s['NW_TREND']).toEqual({ params: [50, 8, 2.0, 1.8], visible: false })
     expect(s['OI_POSTURE']).toEqual({ params: [], visible: true })
+    expect(s['LSR_RATIO']).toEqual({ params: [], visible: true })
   })
 })
 
