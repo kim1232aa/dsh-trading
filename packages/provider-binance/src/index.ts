@@ -515,25 +515,23 @@ export function postureOf(pricePct: number, oiPct: number, long: boolean, factor
 }
 
 /**
- * Deduce retail vs whale positioning divergence:
- * - globalLongShortAccountRatio: 99% retail accounts. High ratio (>=2.0) = retail heavily long.
- * - topLongShortPositionRatio: Top 20% margin whales (real capital).
- * When retail is heavily long while whales are cautious/short, retail is caught as liquidity.
+ * Account ratio counts heads. Position ratio counts size of the top 20% by margin.
+ * Binance long/short ratio > 1 is net long. The same 1.15 / 0.87 cuts as positionReadings
+ * decide 偏多 / 偏空. A still-long whale ratio is not short, even if it is below 1.6.
  */
 export function crowdVsWhaleOf(globalRatio: number | null, topPosRatio: number | null): string | null {
   if (globalRatio === null || topPosRatio === null) return null
-  if (globalRatio >= 2.0 && topPosRatio < 1.6) {
-    return '散户极度接多(多73%+)，大户未跟偏空 (对手盘风险)'
+  if (!Number.isFinite(globalRatio) || !Number.isFinite(topPosRatio) || globalRatio < 0 || topPosRatio < 0) return null
+  const whaleShort = topPosRatio <= 0.87
+  const whaleLong = topPosRatio >= 1.15
+  const retailShort = globalRatio <= 0.87
+  if (globalRatio >= 2 && whaleShort) {
+    const longPct = Math.round((globalRatio / (1 + globalRatio)) * 100)
+    return `散户账户多头${longPct}%，大户持仓偏空`
   }
-  if (globalRatio <= 0.8 && topPosRatio > 1.4) {
-    return '散户恐慌割肉做空，大户逆势吸筹做多'
-  }
-  if (globalRatio >= 1.5 && topPosRatio >= 1.8) {
-    return '大户散户共识做多'
-  }
-  if (globalRatio <= 0.8 && topPosRatio <= 1.0) {
-    return '大户散户共识做空'
-  }
+  if (retailShort && whaleLong) return '散户账户偏空，大户持仓偏多'
+  if (globalRatio >= 1.5 && topPosRatio >= 1.8) return '大户散户共识做多'
+  if (retailShort && whaleShort) return '大户散户共识做空'
   return null
 }
 

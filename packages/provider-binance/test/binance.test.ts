@@ -51,10 +51,13 @@ describe('Binance Provider Helpers', () => {
   })
 
   it('derives crowd vs whale sentiment correctly', () => {
-    expect(crowdVsWhaleOf(2.0, 1.2)).toBe('散户极度接多(多73%+)，大户未跟偏空 (对手盘风险)')
-    expect(crowdVsWhaleOf(0.7, 1.6)).toBe('散户恐慌割肉做空，大户逆势吸筹做多')
+    expect(crowdVsWhaleOf(2.0, 1.2)).toBeNull()
+    expect(crowdVsWhaleOf(2.85, 1.55)).toBeNull()
+    expect(crowdVsWhaleOf(2.85, 0.8)).toBe('散户账户多头74%，大户持仓偏空')
+    expect(crowdVsWhaleOf(0.7, 1.6)).toBe('散户账户偏空，大户持仓偏多')
     expect(crowdVsWhaleOf(1.6, 1.9)).toBe('大户散户共识做多')
-    expect(crowdVsWhaleOf(0.7, 0.9)).toBe('大户散户共识做空')
+    expect(crowdVsWhaleOf(0.7, 0.8)).toBe('大户散户共识做空')
+    expect(crowdVsWhaleOf(0.7, 0.9)).toBeNull()
     expect(crowdVsWhaleOf(1.0, 1.0)).toBeNull()
   })
 
