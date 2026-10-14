@@ -7,7 +7,8 @@
 import { revPoint, REVPOINT_HTF, starGlyphs, linePriceAt } from '../../../../tool-market/src/revpoint.js'
 import type { RevPointResult, RpLine, RpTf } from '../../../../tool-market/src/revpoint.js'
 import { formatPrice } from '../precision.js'
-import { statusTableRect, clampLabelBox, layoutEdgeTags, clipExtendX, PRICE_AXIS_GAP } from './revpoint-layout.js'
+import { statusTableRect, clampLabelBox, layoutEdgeTags, clipExtendX, tableMode } from './revpoint-layout.js'
+export { TABLE_W as REVPOINT_TABLE_W }
 
 type K = { open: number; high: number; low: number; close: number; volume?: number; timestamp: number }
 type Row = { rp?: RevPointResult }
@@ -97,8 +98,11 @@ export const revPointIndicator = {
     const paneW = bounding.width
     const paneH = bounding.height
     const cd = rp.candidate
-    const tableRows = cd ? 6 + rp.htf.length : 0
-    const table = cd ? statusTableRect(paneW, TABLE_W, tableRows * ROW_H + 4) : null
+    const fullH = (6 + rp.htf.length) * ROW_H + 4
+    const mode = cd ? tableMode(paneH, fullH) : 'hidden'
+    const table = mode === 'full' ? statusTableRect(paneW, TABLE_W, fullH)
+      : mode === 'compact' ? statusTableRect(paneW, TABLE_W, 2 * ROW_H + 4) : null
+    const shortPane = mode !== 'full'
 
     ctx.save()
     // Clip all drawing to the pane so extend.right rays stop at the right edge.
@@ -143,21 +147,25 @@ export const revPointIndicator = {
           ctx.lineWidth = h.tf === '4H' ? 3 : h.tf === '15m' ? 1 : 2
           ctx.beginPath()
           ctx.moveTo(X(idxOfT(lv.active.t1)), Y(lv.active.px1))
-          ctx.lineTo(lineRight, Y(lv.active.px2))
+          const ly = Y(lv.active.px2)
+          const underTable = table !== null && ly >= table.y && ly <= table.y + table.h
+          ctx.lineTo(underTable ? table!.x : lineRight, ly)
           ctx.stroke()
         }
       }
     }
 
     // Right-edge HTF R/S tags — laid out to avoid the status table and each other
-    const edgeIns: { y: number; w: number; h: number; text: string; color: string }[] = []
+    const edgeIns: { y: number; w: number; h: number; text: string; color: string; priority: number }[] = []
     for (const h of rp.htf) {
       if (!h.on) continue
       for (const [lv, isRes] of [[h.r, true], [h.s, false]] as const) {
         if (!Number.isFinite(lv.px)) continue
         const text = `${h.tf}${isRes ? ' R ' : ' S '}${formatPrice(lv.px)}`
         const w = ctx.measureText(text).width + 10
-        edgeIns.push({ y: Y(lv.px), w, h: 16, text, color: isRes ? h.color.r : h.color.s })
+        const pri = ({ '4H': 5, '2H': 4, '1H': 3, '30m': 2, '15m': 1 } as const)[h.tf]
+        if (shortPane && pri < 3) continue
+        edgeIns.push({ y: Y(lv.px), w, h: 16, text, color: isRes ? h.color.r : h.color.s, priority: pri })
       }
     }
     if (rp.swingTag) {
@@ -168,11 +176,13 @@ export const revPointIndicator = {
         h: 16,
         text,
         color: rp.swingTag.down ? '#e24b4a' : '#1aa38a',
+        priority: 0,
       })
     }
     const edgePos = layoutEdgeTags(edgeIns, paneW, paneH, table)
     edgeIns.forEach((t, i) => {
-      const p = edgePos[i]!
+      const p = edgePos[i]
+      if (!p) return  // no room: lower-priority tag dropped
       ctx.fillStyle = t.color
       ctx.fillRect(p.x, p.y, t.w, t.h)
       ctx.fillStyle = '#fff'
@@ -203,11 +213,22 @@ export const revPointIndicator = {
       drawLabel(ctx, X(c.idx), Y(c.y), c.text, 'rgba(128,0,128,0.9)', '#fff', c.up ? 'up' : 'down', paneW, paneH)
     }
     if (cd) {
+      // drawn before the opaque table, so the table always wins on overlap
       drawLabel(ctx, X(cd.idx), Y(cd.price), cd.text, 'rgba(255,165,0,0.85)', '#000', cd.isTop ? 'down' : 'up', paneW, paneH)
     }
 
     // Status table — pinned top-right, semi-transparent, clear of the price axis
-    if (cd && table) {
+    if (cd && table && mode === 'compact') {
+      ctx.fillStyle = 'rgba(20,20,20,0.96)'
+      ctx.fillRect(table.x, table.y, TABLE_W, table.h)
+      ctx.textBaseline = 'top'; ctx.textAlign = 'left'
+      ctx.fillStyle = cd.isTop ? '#ffa500' : '#7ee787'
+      ctx.fillText(`RevPoint ${cd.isTop ? '候选顶' : '候选底'} ${formatPrice(cd.price)} ${starGlyphs(cd.stars)}`, table.x + 4, table.y + 3)
+      ctx.fillStyle = '#fff'
+      const oi = Number.isFinite(rp.oiChg1h) ? ` OI1h ${rp.oiChg1h > 0 ? '+' : ''}${Number(rp.oiChg1h.toFixed(2))}%` : ''
+      ctx.fillText(`${cd.need > 0 ? `还差 ${Number(cd.need.toFixed(2))}%` : '确认边缘'}${oi}`, table.x + 4, table.y + 3 + ROW_H)
+    }
+    if (cd && table && mode === 'full') {
       const tf = (on: boolean, v: number) => (!on ? '关' : Number.isFinite(v) ? formatPrice(v) : '—')
       const need = cd.need
       const rows: [string, string, string?][] = [
@@ -220,7 +241,7 @@ export const revPointIndicator = {
         ...rp.htf.map(h => [h.tf, tf(h.on, h.r.px), tf(h.on, h.s.px)] as [string, string, string]),
       ]
       const { x: x0, y: y0 } = table
-      ctx.fillStyle = 'rgba(20,20,20,0.82)'
+      ctx.fillStyle = 'rgba(20,20,20,0.96)'  // near-opaque: HTF lines must not show through
       ctx.fillRect(x0, y0, TABLE_W, table.h)
       ctx.strokeStyle = 'rgba(255,255,255,0.12)'
       ctx.lineWidth = 1

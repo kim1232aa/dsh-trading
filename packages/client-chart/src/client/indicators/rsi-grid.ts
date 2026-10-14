@@ -141,7 +141,7 @@ export const rsiGridMarksIndicator = {
   figures: [],
   calc: (list: K[], ind: { calcParams: number[] }) => rsiGridRows(list, ind.calcParams),
   createTooltipDataSource: () => ({ name: '', calcParamsText: '', values: [], icons: [] }),
-  draw: ({ ctx, indicator, xAxis, yAxis, visibleRange, kLineDataList }: DrawArgs) => {
+  draw: ({ ctx, indicator, xAxis, yAxis, visibleRange, kLineDataList, bounding }: DrawArgs) => {
     const res = indicator.result ?? []
     ctx.save()
     ctx.font = FONT
@@ -170,6 +170,22 @@ export const rsiGridMarksIndicator = {
         ctx.fillStyle = '#fff'
         ctx.fillText(txt, x, y)
       }
+    }
+    // Open position whose entry bar may be scrolled out of view: Pine keeps holding
+    // (no exit while openprofit < 0, pyramiding = 1 ignores new entries), so show
+    // the cost line — otherwise a 累计差值 spike with no marker looks like a bug.
+    const last = res.at(-1)
+    if (last?.inPos && last.posEntry !== undefined) {
+      const y = yAxis.convertToPixel(last.posEntry)
+      const c = kLineDataList.at(-1)?.close ?? last.posEntry
+      const pnl = 100 * (c - last.posEntry) / last.posEntry
+      ctx.strokeStyle = HIGH_C
+      ctx.setLineDash([6, 4])
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(bounding.width, y); ctx.stroke()
+      ctx.setLineDash([])
+      ctx.textAlign = 'left'
+      ctx.fillStyle = HIGH_C
+      ctx.fillText(`RSI网格持多 @${formatPrice(last.posEntry)} ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%（浮亏不平、不加仓）`, 6, y - 8)
     }
     ctx.restore()
     return false

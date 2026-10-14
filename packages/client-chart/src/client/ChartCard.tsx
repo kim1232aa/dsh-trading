@@ -30,7 +30,8 @@ import { orderBlockBreaker, orderBlockIndicator } from './indicators/order-block
 import { mtfSRZones, mtfSRIndicator } from './indicators/mtf-sr.js'
 import { entrySignalIndicator } from './indicators/entry-signal.js'
 import { rsiGridIndicator, rsiGridCumIndicator, rsiGridMarksIndicator } from './indicators/rsi-grid.js'
-import { revPointIndicator } from './indicators/revpoint.js'
+import { revPointIndicator, REVPOINT_TABLE_W } from './indicators/revpoint.js'
+import { PRICE_AXIS_GAP } from './indicators/revpoint-layout.js'
 import { detectPricePrecision, formatPrice } from './precision.js'
 import { createAnnotationOverlays } from './annotation-overlays.js'
 
@@ -845,6 +846,15 @@ function useDark(): boolean {
   return dark
 }
 
+/**
+ * When the crosshair is on the left half, klinecharts parks the fixed OHLC box
+ * at the top-right — exactly where RevPoint's status table is pinned. Push the
+ * right-parked box left of the table (statusTableRect geometry).
+ */
+export function ohlcTooltipAvoidTable(revPointOn: boolean): Record<string, unknown> {
+  return { candle: { tooltip: { rect: { offsetRight: revPointOn ? REVPOINT_TABLE_W + PRICE_AXIS_GAP + 8 : 4 } } } }
+}
+
 function klineStyles(p: Palette, coordType: CoordType = 'normal'): Record<string, unknown> {
   const tick = { color: p.faint, family: FONT_FAMILY }
   return {
@@ -1111,6 +1121,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     chartRef.current = chart
     const data = latest.current
     chart.setStyles(klineStyles(palette, axisSettings.coordType))
+    chart.setStyles(ohlcTooltipAvoidTable(settingsRef.current['REVPOINT']?.visible ?? false))
     chart.setPaneOptions({
       id: 'candle_pane',
       gap: axisSettings.autoScale.candle ? { top: 0.08, bottom: 0.05 } : { top: 0.2, bottom: 0.1 },
@@ -1235,6 +1246,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   useEffect(() => {
     const chart = chartRef.current
     if (chart === null) return
+    chart.setStyles(ohlcTooltipAvoidTable(settings['REVPOINT']?.visible ?? false))
     for (const def of EDITABLE) {
       const s = settings[def.name]!
       const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivatives?.history : undefined

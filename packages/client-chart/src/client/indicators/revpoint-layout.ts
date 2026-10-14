@@ -30,23 +30,22 @@ export function clampLabelBox(
   paneW: number,
   paneH: number,
 ): { x: number; y: number } | null {
-  // Entirely outside → hide.
-  if (bx + w <= 0 || bx >= paneW || by + h <= 0 || by >= paneH) return null
-  // More than half hangs off the left (typical for a mark scrolled out of view) → hide.
-  if (bx + w * 0.5 < 0) return null
+  // Any horizontal overflow means the anchor bar is (partly) scrolled out: hide
+  // rather than show a fragment like "52.00 顺1H". Allow 2px of slack.
+  if (bx < -2 || bx + w > paneW + 2) return null
+  if (by + h <= 0 || by >= paneH) return null
   const x = Math.min(Math.max(0, bx), Math.max(0, paneW - w))
   const y = Math.min(Math.max(0, by), Math.max(0, paneH - h))
   return { x, y }
 }
 
-export type EdgeTagIn = { y: number; w: number; h: number }
+export type EdgeTagIn = { y: number; w: number; h: number; priority?: number }
 export type EdgeTagOut = { x: number; y: number }
 
 /**
- * Lay out right-edge HTF R/S tags so they:
- * - sit left of the price axis,
- * - sit left of the status table (no overlap, prefixes stay visible),
- * - do not stack on top of each other (nudge down on collision).
+ * Lay out right-edge HTF R/S tags so they sit left of the price axis and the
+ * status table, never overlap each other, and — when the pane is too short —
+ * drop lowest-priority tags first (returned as null) instead of piling up.
  */
 export function layoutEdgeTags(
   tags: readonly EdgeTagIn[],
@@ -55,34 +54,38 @@ export function layoutEdgeTags(
   table: Rect | null,
   priceAxisGap = PRICE_AXIS_GAP,
   gap = 2,
-): EdgeTagOut[] {
-  const rightLimit = table !== null
-    ? Math.min(paneW - priceAxisGap, table.x - 4)
-    : paneW - priceAxisGap
-  const order = tags.map((t, i) => ({ ...t, i })).sort((a, b) => a.y - b.y)
-  const placed: EdgeTagOut[] = new Array(tags.length)
-  let lastBottom = -Infinity
+): (EdgeTagOut | null)[] {
+  const rightLimit = paneW - priceAxisGap
+  const placed: (EdgeTagOut | null)[] = new Array(tags.length).fill(null)
+  const boxes: Rect[] = table ? [table] : []
+  const hit = (a: Rect, b: Rect) => !(a.x + a.w + gap <= b.x || b.x + b.w + gap <= a.x || a.y + a.h + gap <= b.y || b.y + b.h + gap <= a.y)
+  const order = tags.map((t, i) => ({ ...t, i })).sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.y - b.y)
   for (const t of order) {
-    let y = t.y - t.h / 2
-    if (y < lastBottom + gap) y = lastBottom + gap
-    if (y + t.h > paneH) y = Math.max(0, paneH - t.h)
-    let x = rightLimit - t.w
-    if (table !== null) {
-      const hitX = !(x + t.w <= table.x || x >= table.x + table.w)
-      const hitY = !(y + t.h <= table.y || y >= table.y + table.h)
-      if (hitX && hitY) {
-        x = table.x - 4 - t.w
-        if (x < 0) {
-          x = Math.max(0, rightLimit - t.w)
-          y = Math.max(y, table.y + table.h + gap)
-        }
+    const x = Math.max(0, rightLimit - t.w)
+    const y0 = t.y - t.h / 2
+    let done = false
+    // Search outward from the level's own y for the nearest free slot (≤ 4 tag heights away).
+    for (let k = 0; k <= 8 && !done; k++) {
+      const dy = (k % 2 === 1 ? 1 : -1) * Math.ceil(k / 2) * (t.h + gap)
+      const y = y0 + dy
+      if (y < 0 || y + t.h > paneH) continue
+      // Prefer the column at the right edge; if the table is there, shift left of it.
+      for (const cx of table ? [x, table.x - 4 - t.w] : [x]) {
+        if (cx < 0) continue
+        const r = { x: cx, y, w: t.w, h: t.h }
+        if (boxes.some(b => hit(r, b))) continue
+        boxes.push(r); placed[t.i] = { x: cx, y }; done = true; break
       }
     }
-    if (x < 0) x = 0
-    placed[t.i] = { x, y }
-    lastBottom = y + t.h
   }
   return placed
+}
+
+/** Status table form for a pane height: full table, a compact 2-row card, or nothing. */
+export function tableMode(paneH: number, fullH: number): 'full' | 'compact' | 'hidden' {
+  if (paneH >= fullH + 120) return 'full'
+  if (paneH >= 110) return 'compact'
+  return 'hidden'
 }
 
 /** Clip an extended ray's end x to the pane's right edge (Pine extend.right, but stop at the canvas). */
