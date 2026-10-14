@@ -22,14 +22,16 @@ describe('Ecosystem Full-Lifecycle Integration', () => {
 
     try {
       // 1. Data Layer: Tencent L2 Quote & Fundamentals parsing
-      const rawTencentQuote = 'v_sh600519="1~贵州茅台~600519~1580.00~1575.00~1582.00~12345~100~200~1579.00~50~1578.00~30~1577.00~20~1576.00~10~1575.00~5~1581.00~40~1582.00~60~1583.00~80~1584.00~90~1585.00~100~~20261002150000~5.00~0.32~1585.00~1570.00~1580.00/12345/195000000~12345~19500~0.15~25.80~1585.00~1570.00~0.95~19800.50~19800.50~8.20~";'
+      // Real qt.gtimg.cn layout: 38换手 39市盈率 40空 41高 42低 43振幅 44流通市值亿 45总市值亿 46市净率
+      const rawTencentQuote = 'v_sh600519="1~贵州茅台~600519~1580.00~1575.00~1582.00~12345~100~200~1579.00~50~1578.00~30~1577.00~20~1576.00~10~1575.00~5~1581.00~40~1582.00~60~1583.00~80~1584.00~90~1585.00~100~~20261002150000~5.00~0.32~1585.00~1570.00~1580.00/12345/195000000~12345~19500~0.15~25.80~~1585.00~1570.00~0.95~19800.50~21000.00~8.20~";'
       const quote = parseTencentQuote(rawTencentQuote, '600519')
       expect(quote).not.toBeNull()
       expect(quote!.orderbook.bids).toHaveLength(5)
       expect(quote!.orderbook.asks).toHaveLength(5)
       expect(quote!.fundamentals?.peTtm).toBe(25.80)
       expect(quote!.fundamentals?.pb).toBe(8.20)
-      expect(quote!.fundamentals?.marketCap).toBe(19800.50 * 1e8)
+      expect(quote!.fundamentals?.circulatingMarketCap).toBe(19800.50 * 1e8)
+      expect(quote!.fundamentals?.marketCap).toBe(21000.00 * 1e8)
 
       // 2. Screener: Screen universe based on technical structure
       const screenerBars: any[] = []

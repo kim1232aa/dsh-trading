@@ -57,11 +57,16 @@ Producers: `market_snapshot`, `get_ohlcv`, `annotate_chart`
 `RegimeSnapshot` fields: `bars, lastTime, close, changePct, rsi14{value,state},
 stochastic{k,d,state}, adx14{value,plusDi,minusDi,state},
 macd{line,signal,histogram,state}, mfi14{value,state}, atr14{value,pctOfClose},
-movingAverages{sma20,sma50,sma200,ema20,closeVs}, bollinger20{upper,middle,lower,state}`.
+movingAverages{sma20,sma50,sma200,ema20,closeVs}, bollinger20{upper,middle,lower,state}`,
+plus the additive extensions `wma{wma60,wma100,wma200,closeVs}`,
+`supertrend{value,direction,state}`, `signal`, `structure`, `rsiGrid`,
+`rsiGridShort?`, `rsiDiff`, and optional `derivatives`, `moneyFlow`,
+`fundamentals` when the resolved provider supplies them.
 Series columns: `rsi14, stoch_k, stoch_d, adx, plus_di, minus_di, macd,
 macd_signal, macd_hist, mfi14, bb_upper, bb_middle, bb_lower`. Values are
 rounded once, producer-side, so any consumer shows exactly what the model read.
-Renaming any of these is a breaking change.
+Renaming any of the original frozen names is a breaking change; the additive
+extensions above stay additive-only within version 1.
 
 ## 3. Annotation envelope (open)
 

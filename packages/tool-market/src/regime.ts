@@ -93,6 +93,16 @@ export type RegimeMoneyFlow = {
   summary?: string
 }
 
+export type RegimeFundamentals = {
+  symbol: string
+  time?: string
+  peTtm?: number | null
+  pb?: number | null
+  marketCap?: number | null
+  circulatingMarketCap?: number | null
+  turnoverRatio?: number | null
+}
+
 /**
  * The per-timeframe regime snapshot the tool returns and renders. A type
  * alias rather than an interface so it stays structurally assignable to the
@@ -139,6 +149,7 @@ export type RegimeSnapshot = {
   rsiGridShort?: RsiGridReport
   rsiDiff: RsiDiffReport
   moneyFlow?: RegimeMoneyFlow | null
+  fundamentals?: RegimeFundamentals | null
 }
 
 /** Compute the full dashboard for one candle series (ascending, as providers serve it). */
@@ -146,6 +157,7 @@ export function regimeSnapshot(
   candles: readonly Candle[],
   derivatives?: RegimeDerivatives | null,
   moneyFlow?: RegimeMoneyFlow | null,
+  fundamentals?: RegimeFundamentals | null,
 ): RegimeSnapshot {
   if (candles.length === 0) throw new Error('regimeSnapshot requires at least one candle')
   const closes = candles.map(c => c.close)
@@ -252,6 +264,7 @@ export function regimeSnapshot(
     },
     derivatives: derivatives ?? null,
     moneyFlow: moneyFlow ?? null,
+    fundamentals: fundamentals ?? null,
     signal: signalReport(candles),
     structure: priceStructure(candles),
     rsiGrid: rsiGridReport(candles),
@@ -281,6 +294,12 @@ export function renderSnapshot(timeframe: string, s: RegimeSnapshot): string {
   }
   if (s.moneyFlow?.summary) {
     lines.push(`  资金流向: ${s.moneyFlow.summary}`)
+  }
+  if (s.fundamentals) {
+    const f = s.fundamentals
+    const yi = (v: number | null | undefined): string =>
+      v == null ? '–' : v >= 1e8 ? `${(v / 1e8).toFixed(2)}亿` : String(v)
+    lines.push(`  基本面: PE(TTM) ${fmt(f.peTtm ?? null)} | PB ${fmt(f.pb ?? null)} | 总市值 ${yi(f.marketCap)} | 流通市值 ${yi(f.circulatingMarketCap)}${f.turnoverRatio != null ? ` | 换手 ${f.turnoverRatio}%` : ''}`)
   }
   return lines.join('\n')
 }

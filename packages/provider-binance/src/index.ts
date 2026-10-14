@@ -115,6 +115,24 @@ function levenshtein(a: string, b: string): number {
   return prev[b.length]!
 }
 
+/**
+ * True for symbols this provider should claim under resolveProvider.
+ * Must NOT claim A-share codes: normalizeSymbol("600519") would become
+ * "600519USDT", so we refuse 6-digit / SH|SZ|BJ forms up front.
+ */
+export function isBinanceSymbol(raw: string): boolean {
+  const original = raw.trim().toUpperCase()
+  // Futu-style prefixes (checked before stripping dots).
+  if (/^(HK|US|SH|SZ|CC)\./.test(original)) return false
+  const s = original.replace(/[/_\-\s]/g, '')
+  if (!s) return false
+  if (/^\d{6}$/.test(s)) return false
+  if (/^(SH|SZ|BJ)\d{6}$/.test(s) || /^\d{6}(SH|SZ|BJ)$/.test(s)) return false
+  // Only claim symbols that already carry a known quote. Bare "ETH" / "DEMO-EQ"
+  // must not steal routing from csv or other providers (DEMO-EQ → DEMOEQ).
+  return COMMON_QUOTES.some(q => s.length > q.length && s.endsWith(q))
+}
+
 class BinanceProvider implements MarketDataProvider {
   readonly id: string
   readonly description: string
@@ -127,6 +145,10 @@ class BinanceProvider implements MarketDataProvider {
   ) {
     this.id = id
     this.description = `Binance public klines (${symbols.length} symbols)`
+  }
+
+  matchesSymbol(symbol: string): boolean {
+    return isBinanceSymbol(symbol)
   }
 
   async listSymbols(): Promise<InstrumentInfo[]> {
@@ -240,7 +262,7 @@ class BinanceProvider implements MarketDataProvider {
   private async binanceDerivatives(symbol: string): Promise<Derivatives> {
     const isDefault = !this.futuresURL || this.futuresURL === 'https://fapi.binance.com'
     const candidates = isDefault
-      ? ['https://www.usnbweb.red', 'https://www.marketwebb.link', 'https://fapi.binance.com']
+      ? ['https://www.usnbweb.red', 'https://www.binance.com', 'https://fapi.binance.com']
       : [this.futuresURL]
     let firstErr: unknown = null
     for (const host of candidates) {

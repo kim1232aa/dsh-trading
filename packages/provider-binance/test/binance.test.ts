@@ -9,6 +9,7 @@ import {
   positionReadings,
   quadrantOf,
   sampleAtOrBefore,
+  isBinanceSymbol,
 } from '../src/index.js'
 
 describe('Binance Provider Helpers', () => {
@@ -124,5 +125,18 @@ describe('Binance Provider Helpers', () => {
     expect(positionReadings({ fundingRate: 0.00005 }).map(r => r.label)).toEqual(['费率中性'])
     expect(basisPct(2502, 2500)).toBeCloseTo(0.08, 2)
     expect(basisPct(2500, 0)).toBeNull()
+  })
+})
+
+describe('isBinanceSymbol', () => {
+  it('claims quote-suffixed crypto and refuses A-shares / Futu / bare bases', () => {
+    expect(isBinanceSymbol('BTCUSDT')).toBe(true)
+    expect(isBinanceSymbol('eth/usdt')).toBe(true)
+    expect(isBinanceSymbol('ETH')).toBe(false) // bare base: pass provider or type ETHUSDT
+    expect(isBinanceSymbol('DEMO-EQ')).toBe(false)
+    expect(isBinanceSymbol('600519')).toBe(false)
+    expect(isBinanceSymbol('sh600519')).toBe(false)
+    expect(isBinanceSymbol('HK.00700')).toBe(false)
+    expect(isBinanceSymbol('CC.BTCUSDT')).toBe(false)
   })
 })

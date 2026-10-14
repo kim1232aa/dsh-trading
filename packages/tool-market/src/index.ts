@@ -328,10 +328,21 @@ export function apply(ctx: Context, config: Config): void {
       const timeframes = (args.timeframes ?? ['1d']) as Timeframe[]
       const derivatives = provider.getDerivatives ? await provider.getDerivatives(args.symbol).catch(() => null) : null
       const moneyFlow = provider.getMoneyFlow ? await provider.getMoneyFlow(args.symbol).catch(() => null) : null
+      const rawFundamentals = provider.getFundamentals ? await provider.getFundamentals(args.symbol).catch(() => null) : null
+      // Strip `undefined` optional fields so the snapshot stays JsonValue-assignable.
+      const fundamentals = rawFundamentals === null ? null : {
+        symbol: rawFundamentals.symbol,
+        ...(rawFundamentals.time !== undefined ? { time: rawFundamentals.time } : {}),
+        peTtm: rawFundamentals.peTtm ?? null,
+        pb: rawFundamentals.pb ?? null,
+        marketCap: rawFundamentals.marketCap ?? null,
+        circulatingMarketCap: rawFundamentals.circulatingMarketCap ?? null,
+        turnoverRatio: rawFundamentals.turnoverRatio ?? null,
+      }
       const results = await Promise.all(timeframes.map(async (timeframe) => {
         const candles = await provider.getOhlcv({ symbol: args.symbol, timeframe, limit: args.bars ?? 300 })
         if (candles.length === 0) throw new Error(`no candles for ${args.symbol} @ ${timeframe}`)
-        const snapshot = regimeSnapshot(candles, derivatives, moneyFlow)
+        const snapshot = regimeSnapshot(candles, derivatives, moneyFlow, fundamentals)
         return {
           timeframe,
           rendered: renderSnapshot(timeframe, snapshot),

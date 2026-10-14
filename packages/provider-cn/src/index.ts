@@ -173,10 +173,13 @@ export function parseTencentQuote(raw: string, symbol: string): {
   const midPrice = bestBid && bestAsk ? (bestBid + bestAsk) / 2 : (Number(parts[3]) || undefined)
   const spread = bestBid && bestAsk ? Number((bestAsk - bestBid).toFixed(4)) : undefined
 
+  // qt.gtimg.cn field map (verified 2026-10 against live quotes):
+  // 38 turnover%, 39 PE(TTM), 43 amplitude%, 44 circ mkt-cap (亿元),
+  // 45 total mkt-cap (亿元), 46 PB. Older drafts swapped 43/44/45/46.
   const peTtm = Number(parts[39]) || undefined
-  const pb = Number(parts[45]) || undefined
-  const circulatingMarketCap = (Number(parts[43]) || 0) * 1e8 || undefined
-  const marketCap = (Number(parts[44]) || 0) * 1e8 || undefined
+  const pb = Number(parts[46]) || undefined
+  const circulatingMarketCap = (Number(parts[44]) || 0) * 1e8 || undefined
+  const marketCap = (Number(parts[45]) || 0) * 1e8 || undefined
   const turnoverRatio = Number(parts[38]) || undefined
 
   return {
@@ -230,8 +233,16 @@ export class CnMarketProvider implements MarketDataProvider {
     this.description = 'A股行情与资金流 (东财主源 + 新浪容灾 + 腾讯极速盘口)'
   }
 
-  private fetchT(input: string | URL): Promise<Response> {
-    return fetch(input, { signal: AbortSignal.timeout(this.timeoutMs) })
+  private async fetchT(input: string | URL, attempts = 2): Promise<Response> {
+    let lastErr: unknown
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await fetch(input, { signal: AbortSignal.timeout(this.timeoutMs) })
+      } catch (e) {
+        lastErr = e
+      }
+    }
+    throw lastErr
   }
 
   matchesSymbol(symbol: string): boolean {
