@@ -179,46 +179,66 @@ export interface DerivativeBar {
 
 /** A perpetual's positioning snapshot. A field is null when the venue did not serve it. */
 export interface Derivatives {
-  /** Venue the numbers came from, e.g. `Binance`, `Gate`. OI and ratios are per-venue. */
+  /** Venue the numbers came from, e.g. `Binance`, `OKX`, `Gate`. OI and ratios are per-venue — never mix units across venues silently. */
   source: string
-  /** Open interest, in base units (e.g. ETH). */
+  /** Open interest in **base coin** units (e.g. BTC). Use for Δ% so price alone cannot fake "平仓". */
   openInterest: number | null
-  /** Open interest × mark price, in quote units (e.g. USDT). */
+  /** Open interest notional in **USDT** (base × mark). Prefer this for absolute display. */
   openInterestValue: number | null
-  /** Last settled funding rate as a fraction (0.0001 = 0.01%). */
+  /** Unit tag for openInterest: always `base`. openInterestValue is always USDT notional. */
+  oiUnit?: 'base'
+  /** Last settled funding rate as a fraction (0.0001 = 0.01% per funding interval). */
   fundingRate: number | null
+  /**
+   * Annualized funding % assuming 8h interval: rate × 100 × 3 × 365.
+   * Neutral reference on most venues ≈ +0.01%/8h ≈ +10.95%/yr — not a bullish call.
+   */
+  fundingRateAnnualizedPct?: number | null
+  /** Human note for the funding print, e.g. `中性(≈0.01%/8h)`. */
+  fundingLabel?: string | null
   /** Next funding settlement, ISO-8601 UTC. */
   nextFundingTime: string | null
-  /** Global long/short ACCOUNT ratio (accounts, not size). */
+  /**
+   * Global long/short **account-count** ratio (Binance: globalLongShortAccountRatio).
+   * >1 = more long accounts than short accounts — not size.
+   */
   longShortRatio: number | null
-  /** Top 20% margin traders by position size long/short ratio. */
+  /** Explicit alias / display name for longShortRatio kind. */
+  longShortRatioKind?: 'global_accounts' | 'top_accounts' | 'top_positions' | 'unknown'
+  /** Top traders by **position size** long/short (Binance: topLongShortPositionRatio). */
   topPositionRatio?: number | null
-  /** Top 20% margin traders by account count long/short ratio. */
+  /** Top traders by **account count** long/short (Binance: topLongShortAccountRatio). */
   topAccountRatio?: number | null
-  /** Taker buy volume / taker sell volume over the latest 5m window. */
+  /** Taker buy volume / taker sell volume over the latest window. */
   takerBuySellRatio: number | null
+  /** Cumulative taker buy−sell over ~1h (base units). CVD proxy, not a signal. */
+  cvd1h?: number | null
+  /** Brief CVD-vs-price note when both are available. */
+  cvdNote?: string | null
+  /** (mark − index) / index × 100. Positive = perp premium (升水). */
+  basisPct?: number | null
   /** Snapshot time, ISO-8601 UTC. */
   time: string
-  /** 1-hour percentage change in open interest value. */
+  /** % change of base-unit OI over 1h / 4h / 24h. */
   oiChangePct1h?: number | null
-  /** 1-hour percentage change in mark price. */
+  oiChangePct4h?: number | null
+  oiChangePct24h?: number | null
+  /** % change of implied mark (OI-value/OI) over 1h / 4h / 24h. */
   priceChangePct1h?: number | null
-  /** Smart money posture label: e.g. "主力做多 (多头增仓)", "主力开溜 (多头平仓)", "主力做空 (空头增仓)", "空头爆仓 (空头止损)". */
+  priceChangePct4h?: number | null
+  priceChangePct24h?: number | null
+  /** Price × OI posture in base units, e.g. 价涨增仓(新多推动). */
   posture?: string | null
-  /** The four price × OI labels the chart must show. Null inside the dead zone. */
   quadrant?: string | null
-  /** One-line explanation of `quadrant`, shown next to the badge. */
   quadrantNote?: string | null
-  /** Retail crowd vs whale smart money divergence assessment. */
   crowdVsWhale?: string | null
-  /** Descriptive chips for the series Binance actually returned. Not a direction call. */
   readings?: PositionReading[]
-  /** Historical derivative bars aligned with recent candles. */
   history?: DerivativeBar[]
-  /** Sum of long liquidations (USD notional) over ~1h, when the venue serves it. */
+  /** Long liquidations notional (USDT) over ~1h. */
   liquidationLongUsd1h?: number | null
-  /** Sum of short liquidations (USD notional) over ~1h. */
+  /** Short liquidations notional (USDT) over ~1h. */
   liquidationShortUsd1h?: number | null
-  /** One-line liquidation summary for the model/UI. */
   liquidationSummary?: string | null
+  /** Where liquidation numbers came from when it differs from `source` (e.g. Binance book + OKX liq). */
+  liquidationSource?: string | null
 }

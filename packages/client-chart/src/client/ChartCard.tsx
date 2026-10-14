@@ -619,9 +619,9 @@ function ensureRegistered(): void {
       if (tkText) {
         values.push({ title: '主动买卖比: ', value: { text: tkText, color: Number(tkText) >= 1.0 ? '#22c55e' : '#ef4444' } })
       }
-      values.push({ title: '散户比: ', value: { text: lsrText, color: '#c9d1d9' } })
+      values.push({ title: '账户人数比: ', value: { text: lsrText, color: '#c9d1d9' } })
       if (topPos) {
-        values.push({ title: '大户比: ', value: { text: topPos, color: '#ffa726' } })
+        values.push({ title: '大户持仓比: ', value: { text: topPos, color: '#ffa726' } })
       }
       const p = indicator.calcParams?.[0] ?? 14
       return {

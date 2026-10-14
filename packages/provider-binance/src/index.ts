@@ -144,7 +144,7 @@ export function isBinanceSymbol(raw: string): boolean {
   return COMMON_QUOTES.some(q => s.length > q.length && s.endsWith(q))
 }
 
-class BinanceProvider implements MarketDataProvider {
+export class BinanceProvider implements MarketDataProvider {
   readonly id: string
   readonly description: string
 
@@ -286,12 +286,13 @@ class BinanceProvider implements MarketDataProvider {
           if (!res.ok) throw new Error(`Binance futures ${res.status}: ${await res.text().catch(() => '')}`)
           return res.json()
         }
-        // 120×5m covers the session the chart is showing. The 1h read must not use hist[0].
+        // 300×5m ≈ 25h so Δ1h/4h/24h are real anchors, not hist[0] masquerading as 1h.
+        const oiStat = { period: '5m', limit: '300' }
         const stat = { period: '5m', limit: '120' }
         const [premium, oi, oiHist, ls, topPos, topAcc, taker] = await Promise.allSettled([
           get('/fapi/v1/premiumIndex'),
           get('/fapi/v1/openInterest'),
-          get('/futures/data/openInterestHist', stat),
+          get('/futures/data/openInterestHist', oiStat),
           get('/futures/data/globalLongShortAccountRatio', stat),
           get('/futures/data/topLongShortPositionRatio', stat),
           get('/futures/data/topLongShortAccountRatio', stat),
@@ -308,37 +309,51 @@ class BinanceProvider implements MarketDataProvider {
         const mark = num(p.markPrice)
         const openInterestValue = openInterest !== null && mark !== null ? openInterest * mark : null
 
-        // Base-unit OI (ETH), not USD value: value moves with price, which would read a pure price drop as "平仓".
+        // Base-unit OI for Δ%: USDT notional moves with price and would fake "平仓".
         const hist = (oiHist.status === 'fulfilled' && Array.isArray(oiHist.value) ? oiHist.value : []) as Record<string, unknown>[]
         const nowMs = Number.isFinite(p.time) ? p.time : Date.now()
-        // hist[0] is the oldest 5m sample (up to 10h here), not one hour ago.
-        const hourAgo = sampleAtOrBefore(hist, nowMs, 60 * 60 * 1000)
-        const pastOi = num(hourAgo?.['sumOpenInterest'])
-        const pastVal = num(hourAgo?.['sumOpenInterestValue'])
-        const pastPrice = pastOi !== null && pastVal !== null && pastOi > 0 ? pastVal / pastOi : null
-        const oiChangePct1h = openInterest !== null && pastOi !== null && pastOi > 0
-          ? Number((((openInterest - pastOi) / pastOi) * 100).toFixed(2)) : null
-        const priceChangePct1h = mark !== null && pastPrice !== null
-          ? Number((((mark - pastPrice) / pastPrice) * 100).toFixed(2)) : null
+        const horizon = (lookbackMs: number): { oiPct: number | null; pxPct: number | null } => {
+          const past = sampleAtOrBefore(hist, nowMs, lookbackMs)
+          const pastOi = num(past?.['sumOpenInterest'])
+          const pastVal = num(past?.['sumOpenInterestValue'])
+          const pastPrice = pastOi !== null && pastVal !== null && pastOi > 0 ? pastVal / pastOi : null
+          return {
+            oiPct: pctChange(openInterest, pastOi),
+            pxPct: pctChange(mark, pastPrice),
+          }
+        }
+        const h1 = horizon(60 * 60 * 1000)
+        const h4 = horizon(4 * 60 * 60 * 1000)
+        const h24 = horizon(24 * 60 * 60 * 1000)
+        const oiChangePct1h = h1.oiPct
+        const oiChangePct4h = h4.oiPct
+        const oiChangePct24h = h24.oiPct
+        const priceChangePct1h = h1.pxPct
+        const priceChangePct4h = h4.pxPct
+        const priceChangePct24h = h24.pxPct
 
         const lsRatio = num(lastArr(ls)?.['longShortRatio'])
         const tpRatio = num(lastArr(topPos)?.['longShortRatio'])
         const taRatio = num(lastArr(topAcc)?.['longShortRatio'])
         const crowdVsWhale = crowdVsWhaleOf(lsRatio, tpRatio)
         const latestTakerRatio = num(lastArr(taker)?.['buySellRatio']) ?? num(first(taker)?.['buySellRatio'])
+        const takerRows = (taker.status === 'fulfilled' && Array.isArray(taker.value) ? taker.value : []) as Record<string, unknown>[]
+        const cvd1h = cvdFromTakerRows(takerRows, nowMs)
+        const cvdNote = cvdNoteOf(cvd1h, priceChangePct1h)
         const basis = basisPct(mark, num(p.indexPrice))
+        const fundingRate = num(p.lastFundingRate)
         const readings = positionReadings({
           longShortRatio: lsRatio,
           topPositionRatio: tpRatio,
           topAccountRatio: taRatio,
           takerBuySellRatio: latestTakerRatio,
-          fundingRate: num(p.lastFundingRate),
+          fundingRate,
           basisPct: basis,
         })
         const posture = oiChangePct1h !== null && priceChangePct1h !== null
           ? postureOf(priceChangePct1h, oiChangePct1h, true, {
             takerRatio: latestTakerRatio,
-            fundingRate: num(p.lastFundingRate),
+            fundingRate,
             crowdVsWhale,
           }) : null
         const quadrant = quadrantFields(priceChangePct1h, oiChangePct1h, true)
@@ -393,27 +408,55 @@ class BinanceProvider implements MarketDataProvider {
           }
         })
 
+        // Binance public REST has no free forceOrders; label OKX 1h liq as cross-venue reference when available.
+        let liquidationLongUsd1h: number | null = null
+        let liquidationShortUsd1h: number | null = null
+        let liquidationSummary: string | null = null
+        let liquidationSource: string | null = null
+        try {
+          const liq = await okxLiquidations1h(symbol)
+          liquidationLongUsd1h = liq.longUsd
+          liquidationShortUsd1h = liq.shortUsd
+          liquidationSummary = `${liq.summary}（参考OKX）`
+          liquidationSource = 'OKX'
+        } catch { /* best-effort */ }
+
         return {
           source: 'Binance',
           openInterest,
           openInterestValue,
-          fundingRate: num(p.lastFundingRate),
+          oiUnit: 'base',
+          fundingRate,
+          fundingRateAnnualizedPct: fundingAnnualizedPct(fundingRate),
+          fundingLabel: fundingRate !== null ? fundingLabelOf(fundingRate) : null,
           nextFundingTime: Number.isFinite(p.nextFundingTime) && p.nextFundingTime > 0
             ? new Date(p.nextFundingTime).toISOString()
             : null,
           longShortRatio: lsRatio,
+          longShortRatioKind: 'global_accounts',
           topPositionRatio: tpRatio,
           topAccountRatio: taRatio,
           takerBuySellRatio: latestTakerRatio,
+          cvd1h,
+          cvdNote,
+          basisPct: basis,
           time: new Date(Number.isFinite(p.time) ? p.time : Date.now()).toISOString(),
           oiChangePct1h,
+          oiChangePct4h,
+          oiChangePct24h,
           priceChangePct1h,
+          priceChangePct4h,
+          priceChangePct24h,
           posture,
           quadrant: quadrant.quadrant,
           quadrantNote: quadrant.quadrantNote,
           crowdVsWhale,
           readings,
           history,
+          liquidationLongUsd1h,
+          liquidationShortUsd1h,
+          liquidationSummary,
+          liquidationSource,
         }
       } catch (err) {
         firstErr ??= err
@@ -525,7 +568,7 @@ export function postureOf(pricePct: number, oiPct: number, long: boolean, factor
   if (pricePct > 0) {
     head = oiUp ? '价涨增仓' : '价涨减仓'
     if (oiUp) {
-      tail = tk && tk >= 1.12 ? '多头主动吃单做多' : tk && tk <= 0.88 ? '多头被动推高 (量能背离)' : '多头增仓'
+      tail = tk && tk >= 1.12 ? '多头主动吃单做多' : tk && tk <= 0.88 ? '多头被动推高 (量能背离)' : '新仓推动'
     } else {
       tail = factors && pricePct > 2.0 ? '空头爆仓轧空止损' : '空头回补'
     }
@@ -573,6 +616,67 @@ export interface PositionReading {
   label: string
   note: string
   tone: 'neutral' | 'warn'
+}
+
+
+/** % change a→b relative to b. Null when either side missing or b≤0. */
+export function pctChange(now: number | null, past: number | null): number | null {
+  if (now === null || past === null || !(past > 0) || !Number.isFinite(now) || !Number.isFinite(past)) return null
+  return Number((((now - past) / past) * 100).toFixed(2))
+}
+
+/**
+ * Annualize an 8h funding rate to percent: rate × 100 × 3 × 365.
+ * Most USDT perps settle every 8h; venues with other intervals need a different multiplier.
+ */
+export function fundingAnnualizedPct(rate: number | null | undefined): number | null {
+  if (rate === null || rate === undefined || !Number.isFinite(rate)) return null
+  return Number((rate * 100 * 3 * 365).toFixed(2))
+}
+
+/**
+ * Honest funding chip. Venue-default +0.01%/8h (0.0001) is **中性**, not 偏多.
+ * Bands: ≥0.03% 多头拥挤 · >0.015% 偏多 · ≤−0.02% 空头拥挤 · <−0.005% 偏空 · else 中性.
+ */
+export function fundingLabelOf(rate: number): string {
+  if (rate >= 0.0003) return '多头拥挤'
+  if (rate > 0.00015) return '费率偏多'
+  if (rate <= -0.0002) return '空头拥挤'
+  if (rate < -0.00005) return '费率偏空'
+  return '费率中性(≈0.01%/8h)'
+}
+
+/** Cumulative taker buy−sell over rows whose timestamp is within lookback of nowMs. */
+export function cvdFromTakerRows(
+  rows: readonly Record<string, unknown>[],
+  nowMs: number,
+  lookbackMs = 60 * 60 * 1000,
+): number | null {
+  const cutoff = nowMs - lookbackMs
+  let sum = 0
+  let n = 0
+  for (const row of rows) {
+    const ts = num(row['timestamp'] ?? row['ts'])
+    if (ts === null || ts < cutoff) continue
+    const buy = num(row['buyVol'])
+    const sell = num(row['sellVol'])
+    if (buy === null || sell === null) continue
+    sum += buy - sell
+    n += 1
+  }
+  return n === 0 ? null : Number(sum.toFixed(4))
+}
+
+/** Brief CVD vs price note — descriptive only, not a signal. */
+export function cvdNoteOf(cvd: number | null, priceChangePct: number | null): string | null {
+  if (cvd === null || priceChangePct === null) return null
+  if (Math.abs(cvd) < 1e-9) return 'CVD~0'
+  const buyHeavy = cvd > 0
+  if (buyHeavy && priceChangePct < -0.1) return 'CVD↑价↓(主动买积压背离)'
+  if (!buyHeavy && priceChangePct > 0.1) return 'CVD↓价↑(主动卖积压背离)'
+  if (buyHeavy && priceChangePct > 0.1) return 'CVD与价同向偏多'
+  if (!buyHeavy && priceChangePct < -0.1) return 'CVD与价同向偏空'
+  return buyHeavy ? 'CVD偏买' : 'CVD偏卖'
 }
 
 /** (mark − index) / index, in percent. Null when either price is missing. */
@@ -647,12 +751,13 @@ export function positionReadings(input: {
   }
   const fr = input.fundingRate
   if (fr !== null && fr !== undefined && Number.isFinite(fr)) {
-    const label = fr >= 0.0003 ? '多头拥挤' : fr >= 0.0001 ? '费率偏多' : fr <= -0.0002 ? '空头拥挤' : fr <= -0.00005 ? '费率偏空' : '费率中性'
+    const label = fundingLabelOf(fr)
+    const apr = fundingAnnualizedPct(fr)
     out.push({
       id: 'funding',
       label,
-      note: `资金费率 ${(fr * 100).toFixed(4)}%。正费率是多头付给空头，不是方向。`,
-      tone: label.endsWith('拥挤') ? 'warn' : 'neutral',
+      note: `资金费率 ${(fr * 100).toFixed(4)}%/8h，年化约 ${apr !== null ? apr.toFixed(1) + '%' : '–'}。中性参考≈0.01%/8h（≈10.95%/年），正费率=多头付给空头，不是看多。`,
+      tone: label.includes('拥挤') ? 'warn' : 'neutral',
     })
   }
   const basis = input.basisPct
@@ -762,6 +867,8 @@ async function gateDerivatives(rawSymbol: string): Promise<Derivatives> {
 
   let oiChangePct1h: number | null = null
   let priceChangePct1h: number | null = null
+  let oiChangePct4h: number | null = null
+  let priceChangePct4h: number | null = null
   // Contracts, not USD: USD OI moves with price and would read a pure price drop as 平仓.
   const pastContracts = num(past1h['open_interest'])
   if (contracts !== null && pastContracts !== null && pastContracts > 0) {
@@ -769,6 +876,16 @@ async function gateDerivatives(rawSymbol: string): Promise<Derivatives> {
   }
   if (currentPrice !== null && pastPrice !== null && pastPrice > 0) {
     priceChangePct1h = Number((((currentPrice - pastPrice) / pastPrice) * 100).toFixed(2))
+  }
+  // 48×5m = 4h; series is 120 bars ≈ 10h so 24h is unavailable here.
+  const past4h = stats.length > 48 ? (stats[stats.length - 49] ?? {}) : {}
+  const past4c = num(past4h['open_interest'])
+  const past4p = num(past4h['mark_price'])
+  if (contracts !== null && past4c !== null && past4c > 0) {
+    oiChangePct4h = Number((((contracts - past4c) / past4c) * 100).toFixed(2))
+  }
+  if (currentPrice !== null && past4p !== null && past4p > 0) {
+    priceChangePct4h = Number((((currentPrice - past4p) / past4p) * 100).toFixed(2))
   }
 
   const posture = oiChangePct1h !== null && priceChangePct1h !== null
@@ -812,17 +929,24 @@ async function gateDerivatives(rawSymbol: string): Promise<Derivatives> {
     }
   })
 
+  const gateFunding = num(c['funding_rate'])
   return {
     source: 'Gate',
     openInterest: contracts !== null && multiplier !== null ? contracts * multiplier : null,
     openInterestValue: currentOIUsd,
-    fundingRate: num(c['funding_rate']),
+    oiUnit: 'base',
+    fundingRate: gateFunding,
+    fundingRateAnnualizedPct: fundingAnnualizedPct(gateFunding),
+    fundingLabel: gateFunding !== null ? fundingLabelOf(gateFunding) : null,
     nextFundingTime: next !== null && next > 0 ? new Date(next * 1000).toISOString() : null,
     longShortRatio: num(s['lsr_account']),
+    longShortRatioKind: 'global_accounts',
     takerBuySellRatio: num(s['lsr_taker']),
     time: new Date(time !== null ? time * 1000 : Date.now()).toISOString(),
     oiChangePct1h,
+    oiChangePct4h,
     priceChangePct1h,
+    priceChangePct4h,
     posture,
     quadrant: quadrant.quadrant,
     quadrantNote: quadrant.quadrantNote,
@@ -857,7 +981,10 @@ async function okxGet(path: string, params?: Record<string, string>): Promise<un
 }
 
 
-/** Recent OKX SWAP liquidations (~1h window). Notional ≈ sz * bkPx (contracts×price for linear). */
+/**
+ * Recent OKX SWAP liquidations (~1h). Linear USDT notional = |sz| × ctVal × bkPx
+ * (sz is contracts; ctVal is coin per contract, e.g. 0.01 BTC for BTC-USDT-SWAP).
+ */
 export async function okxLiquidations1h(rawSymbol: string): Promise<{
   longUsd: number
   shortUsd: number
@@ -867,11 +994,16 @@ export async function okxLiquidations1h(rawSymbol: string): Promise<{
   const base = symbol.replace(/(USDT|USDC)$/, '')
   const quote = symbol.endsWith('USDC') ? 'USDC' : 'USDT'
   const uly = `${base}-${quote}`
-  const data = await okxGet('/api/v5/public/liquidation-orders', {
-    instType: 'SWAP',
-    uly,
-    state: 'filled',
-  }) as Array<{ details?: Array<Record<string, unknown>> }> | null
+  const instId = `${base}-${quote}-SWAP`
+  const [data, inst] = await Promise.all([
+    okxGet('/api/v5/public/liquidation-orders', {
+      instType: 'SWAP',
+      uly,
+      state: 'filled',
+    }) as Promise<Array<{ details?: Array<Record<string, unknown>> }> | null>,
+    okxGet('/api/v5/public/instruments', { instType: 'SWAP', instId }).catch(() => null) as Promise<Array<Record<string, unknown>> | null>,
+  ])
+  const ctVal = num(inst?.[0]?.['ctVal']) ?? 1
   const cutoff = Date.now() - 60 * 60 * 1000
   let longUsd = 0
   let shortUsd = 0
@@ -881,7 +1013,7 @@ export async function okxLiquidations1h(rawSymbol: string): Promise<{
     if (ts < cutoff) continue
     const px = num(d['bkPx']) ?? 0
     const sz = num(d['sz']) ?? 0
-    const notional = Math.abs(px * sz)
+    const notional = Math.abs(sz * ctVal * px)
     // posSide long liquidated → longs flushed; short → shorts flushed
     const side = String(d['posSide'] ?? '')
     if (side === 'long') longUsd += notional
@@ -905,13 +1037,17 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
   const quote = symbol.endsWith('USDC') ? 'USDC' : 'USDT'
   const instId = `${base}-${quote}-SWAP`
 
-  // Each leg degrades to null alone; no OI at all means OKX is unusable, so getDerivatives falls through to Gate.
-  const [fundingData, oiData, oihData, topData, takerData] = await Promise.all([
+  // Each leg degrades alone; no OI → getDerivatives falls through to Gate.
+  // 5m hist covers ~8h (1h/4h); 15m hist covers ~25h for Δ24h.
+  const [fundingData, oiData, oihData, oih15Data, topData, takerData, markData, indexData] = await Promise.all([
     okxGet('/api/v5/public/funding-rate', { instId }).catch(() => null),
     okxGet('/api/v5/public/open-interest', { instType: 'SWAP', instId }).catch(() => null),
     okxGet('/api/v5/rubik/stat/contracts/open-interest-history', { instId, period: '5m' }).catch(() => null),
+    okxGet('/api/v5/rubik/stat/contracts/open-interest-history', { instId, period: '15m' }).catch(() => null),
     okxGet('/api/v5/rubik/stat/contracts/long-short-position-ratio-contract-top-trader', { instId, period: '5m' }).catch(() => null),
     okxGet('/api/v5/rubik/stat/taker-volume-contract', { instId, period: '5m', unit: '1' }).catch(() => null),
+    okxGet('/api/v5/public/mark-price', { instType: 'SWAP', instId }).catch(() => null),
+    okxGet('/api/v5/market/index-tickers', { instId: `${base}-${quote}` }).catch(() => null),
   ])
   if (!Array.isArray(oiData) || oiData.length === 0) throw new Error(`OKX open interest unavailable for ${instId}`)
 
@@ -919,45 +1055,132 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
   const o = (oiData as Array<Record<string, unknown>>)[0]!
   // Newest first: [ts, oi(contracts), oiCcy(base units), oiUsd]
   const oih = (oihData as Array<[string, string, string, string]> | null) ?? []
+  const oih15 = (oih15Data as Array<[string, string, string, string]> | null) ?? []
   const top = (topData as Array<[string, string]> | null) ?? []
   // Newest first: [ts, sellVol, buyVol]
   const taker = (takerData as Array<[string, string, string]> | null) ?? []
+  const markRow = (markData as Array<Record<string, unknown>> | null)?.[0] ?? {}
+  const indexRow = (indexData as Array<Record<string, unknown>> | null)?.[0] ?? {}
 
   const oi = num(o['oiCcy']) ?? num(o['oi'])
   const oiUsd = num(o['oiUsd'])
   const fundingRate = num(f['fundingRate'])
   const nextFundingTime = f['nextFundingTime'] ? new Date(Number(f['nextFundingTime'])).toISOString() : null
   const time = o['ts'] ? new Date(Number(o['ts'])).toISOString() : new Date().toISOString()
+  const nowMs = num(o['ts']) ?? Date.now()
 
-  // Base-unit OI and its implied price (oiUsd / oiCcy), so posture is the same price x OI quadrant Binance/Gate use.
-  const pt = (row: [string, string, string, string] | undefined): { oi: number | null; px: number | null } => {
+  // Base-unit OI + implied mark (oiUsd/oiCcy) for the same price×OI quadrant as Binance/Gate.
+  const pt = (row: [string, string, string, string] | undefined): { oi: number | null; px: number | null; ts: number | null } => {
     const ccy = num(row?.[2])
     const usd = num(row?.[3])
-    return { oi: ccy, px: ccy !== null && usd !== null && ccy > 0 ? usd / ccy : null }
+    return {
+      oi: ccy,
+      px: ccy !== null && usd !== null && ccy > 0 ? usd / ccy : null,
+      ts: num(row?.[0]),
+    }
   }
-  const chg = (a: number | null, b: number | null): number | null => (a !== null && b !== null && b > 0 ? ((a - b) / b) * 100 : null)
-  const round2 = (v: number | null): number | null => (v === null ? null : Number(v.toFixed(2)))
-  const now = pt(oih[0])
-  const ago = oih.length > 12 ? pt(oih[12]) : { oi: null, px: null }
-  const oiChangePct1h = round2(chg(now.oi, ago.oi))
-  const priceChangePct1h = round2(chg(now.px, ago.px))
+  const sampleOkx = (
+    rows: Array<[string, string, string, string]>,
+    lookbackMs: number,
+    slackMs: number,
+  ): { oi: number | null; px: number | null } => {
+    const target = nowMs - lookbackMs
+    let best: [string, string, string, string] | undefined
+    let bestTs = -Infinity
+    for (const row of rows) {
+      const ts = num(row[0])
+      const ccy = num(row[2])
+      if (ts === null || ts > target || ccy === null || !(ccy > 0)) continue
+      if (ts > bestTs) { best = row; bestTs = ts }
+    }
+    if (!best || target - bestTs > slackMs) return { oi: null, px: null }
+    return pt(best)
+  }
+  // Rubik sometimes pads the newest 5m bucket with zeros while it is still open — skip those.
+  const usable = (row: [string, string, string, string] | undefined): boolean => {
+    const ccy = num(row?.[2])
+    return ccy !== null && ccy > 0
+  }
+  const firstUsable = (rows: Array<[string, string, string, string]>): number => {
+    const i = rows.findIndex(usable)
+    return i < 0 ? 0 : i
+  }
+  const head = firstUsable(oih)
+  const now = pt(oih[head])
+  // Prefer live open-interest endpoint; hist head can be a zero pad.
+  const liveOi = (oi !== null && oi > 0) ? oi : (now.oi !== null && now.oi > 0 ? now.oi : null)
+  const livePx = (oi !== null && oiUsd !== null && oi > 0)
+    ? oiUsd / oi
+    : (now.px ?? null)
+  // 5m rubik hist is newest-first: from first usable bar, +12 ≈ 1h, +48 ≈ 4h.
+  const byIndex = (rows: Array<[string, string, string, string]>, barsBack: number) => {
+    const start = firstUsable(rows)
+    const idx = start + barsBack
+    return rows.length > idx && usable(rows[idx])
+      ? pt(rows[idx])
+      : { oi: null as number | null, px: null as number | null, ts: null as number | null }
+  }
+  const i1 = byIndex(oih, 12)
+  const i4 = byIndex(oih, 48)
+  const i24 = byIndex(oih15, 96)
+  const a1 = i1.oi !== null ? i1 : sampleOkx(oih, 60 * 60 * 1000, 15 * 60 * 1000)
+  const a4 = i4.oi !== null ? i4 : sampleOkx(oih, 4 * 60 * 60 * 1000, 20 * 60 * 1000)
+  // 5m only reaches ~8h; 15m×96 ≈ 24h.
+  const a24 = i24.oi !== null
+    ? i24
+    : sampleOkx(oih15.length > 0 ? oih15 : oih, 24 * 60 * 60 * 1000, 45 * 60 * 1000)
+  const oiChangePct1h = pctChange(liveOi, a1.oi)
+  const oiChangePct4h = pctChange(liveOi, a4.oi)
+  const oiChangePct24h = pctChange(liveOi, a24.oi)
+  const priceChangePct1h = pctChange(livePx, a1.px)
+  const priceChangePct4h = pctChange(livePx, a4.px)
+  const priceChangePct24h = pctChange(livePx, a24.px)
 
   const topPositionRatio = num(top[0]?.[1])
   const sell = num(taker[0]?.[1])
   const buy = num(taker[0]?.[2])
-  const takerBuySellRatio = buy !== null && sell !== null && sell > 0 ? Number((buy / sell).toFixed(4)) : null
-  // No all-accounts (retail) ratio fetched from OKX, so no retail-vs-whale read.
+  const takerBuySellRatio = buy !== null && sell !== null && sell > 0
+    ? Number((buy / sell).toFixed(4))
+    : buy !== null && sell === 0 && buy > 0 ? 99 : null
+  // CVD over ~1h from 5m taker bars (newest first).
+  let cvd1h: number | null = null
+  {
+    const cutoff = nowMs - 60 * 60 * 1000
+    let sum = 0
+    let n = 0
+    for (const row of taker) {
+      const ts = num(row[0])
+      if (ts === null || ts < cutoff) continue
+      const s = num(row[1])
+      const b = num(row[2])
+      if (b === null || s === null) continue
+      sum += b - s
+      n += 1
+    }
+    cvd1h = n === 0 ? null : Number(sum.toFixed(4))
+  }
+  const cvdNote = cvdNoteOf(cvd1h, priceChangePct1h)
+  const markPx = num(markRow['markPx'])
+  const idxPx = num(indexRow['idxPx']) ?? num(markRow['idxPx'])
+  const basis = basisPct(markPx, idxPx)
+  // OKX rubik top-trader is position-size ratio; no global account ratio on this endpoint.
   const crowdVsWhale = null
+  const readings = positionReadings({
+    topPositionRatio,
+    takerBuySellRatio,
+    fundingRate,
+    basisPct: basis,
+  })
 
   const posture = oiChangePct1h !== null && priceChangePct1h !== null
-    ? postureOf(priceChangePct1h, oiChangePct1h, true) : null
+    ? postureOf(priceChangePct1h, oiChangePct1h, true, { takerRatio: takerBuySellRatio, fundingRate }) : null
   const quadrant = quadrantFields(priceChangePct1h, oiChangePct1h, true)
 
   const history: DerivativeBar[] = [...oih].reverse().map((row, i, asc) => {
     const cur = pt(row)
     const prev = i > 0 ? pt(asc[i - 1]) : null
-    const dOi = prev ? chg(cur.oi, prev.oi) : null
-    const dPx = prev ? chg(cur.px, prev.px) : null
+    const dOi = prev ? pctChange(cur.oi, prev.oi) : null
+    const dPx = prev ? pctChange(cur.px, prev.px) : null
     return {
       time: new Date(num(row[0]) ?? Date.now()).toISOString(),
       openInterest: cur.oi,
@@ -989,15 +1212,27 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
     source: 'OKX',
     openInterest: oi,
     openInterestValue: oiUsd,
+    oiUnit: 'base',
     fundingRate,
+    fundingRateAnnualizedPct: fundingAnnualizedPct(fundingRate),
+    fundingLabel: fundingRate !== null ? fundingLabelOf(fundingRate) : null,
     nextFundingTime,
     longShortRatio: null,
+    longShortRatioKind: 'top_positions',
     topPositionRatio,
     takerBuySellRatio,
+    cvd1h,
+    cvdNote,
+    basisPct: basis,
     crowdVsWhale,
+    readings,
     time,
     oiChangePct1h,
+    oiChangePct4h,
+    oiChangePct24h,
     priceChangePct1h,
+    priceChangePct4h,
+    priceChangePct24h,
     posture,
     quadrant: quadrant.quadrant,
     quadrantNote: quadrant.quadrantNote,
@@ -1005,6 +1240,7 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
     liquidationLongUsd1h,
     liquidationShortUsd1h,
     liquidationSummary,
+    liquidationSource: 'OKX',
   }
 }
 

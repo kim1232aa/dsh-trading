@@ -67,21 +67,34 @@ export type RegimeDerivatives = {
   source: string
   openInterest: number | null
   openInterestValue: number | null
+  oiUnit?: 'base'
   fundingRate: number | null
+  fundingRateAnnualizedPct?: number | null
+  fundingLabel?: string | null
   nextFundingTime: string | null
+  /** Global account-count long/short (>1 = more long accounts). */
   longShortRatio: number | null
+  longShortRatioKind?: 'global_accounts' | 'top_accounts' | 'top_positions' | 'unknown'
   topPositionRatio?: number | null
   topAccountRatio?: number | null
   takerBuySellRatio: number | null
+  cvd1h?: number | null
+  cvdNote?: string | null
+  basisPct?: number | null
   time: string
-  /** 1h change of OI in base units (contracts, not USD, so price moves don't masquerade as positioning). */
+  /** % Δ of base-unit OI (not USDT notional). */
   oiChangePct1h?: number | null
+  oiChangePct4h?: number | null
+  oiChangePct24h?: number | null
   priceChangePct1h?: number | null
+  priceChangePct4h?: number | null
+  priceChangePct24h?: number | null
   posture?: string | null
   crowdVsWhale?: string | null
   liquidationLongUsd1h?: number | null
   liquidationShortUsd1h?: number | null
   liquidationSummary?: string | null
+  liquidationSource?: string | null
 }
 
 export type RegimeMoneyFlow = {
@@ -293,7 +306,28 @@ export function renderSnapshot(timeframe: string, s: RegimeSnapshot): string {
   lines.push(renderRsiDiff(s.rsiDiff))
   if (s.derivatives) {
     const d = s.derivatives
-    lines.push(`  Derivatives (${d.source}): OI ${fmt(d.openInterest)} ($${fmt(d.openInterestValue)}) | Funding ${d.fundingRate !== null ? (d.fundingRate * 100).toFixed(4) + '%' : '–'} | 散户比 ${fmt(d.longShortRatio)}${d.topPositionRatio != null ? ` | 大户持仓比 ${fmt(d.topPositionRatio)}` : ''} | Taker ${fmt(d.takerBuySellRatio)}${d.oiChangePct1h != null ? ` | 1h: OI ${pct(d.oiChangePct1h)} 价 ${d.priceChangePct1h != null ? pct(d.priceChangePct1h) : '–'}${d.posture ? ` → ${d.posture}` : ''}` : ''}${d.crowdVsWhale ? ` | 博弈: ${d.crowdVsWhale}` : ''}${d.liquidationSummary ? ` | ${d.liquidationSummary}` : ''}`)
+    const oiUsdt = d.openInterestValue !== null ? `USDT名义 ${fmt(d.openInterestValue)}` : 'USDT名义 –'
+    const oiBase = d.openInterest !== null ? `底仓 ${fmt(d.openInterest)}` : '底仓 –'
+    const fr = d.fundingRate !== null ? `${(d.fundingRate * 100).toFixed(4)}%/8h` : '–'
+    const apr = d.fundingRateAnnualizedPct != null ? `年化${d.fundingRateAnnualizedPct}%` : ''
+    const frLabel = d.fundingLabel ? ` ${d.fundingLabel}` : ''
+    const lsKind = d.longShortRatioKind === 'top_positions' ? '大户持仓比'
+      : d.longShortRatioKind === 'top_accounts' ? '大户账户比'
+      : '账户人数比'
+    const ls = d.longShortRatio !== null ? `${lsKind} ${fmt(d.longShortRatio)}(>1净多)` : `${lsKind} –`
+    const topPos = d.topPositionRatio != null ? ` | 大户持仓比 ${fmt(d.topPositionRatio)}` : ''
+    const topAcc = d.topAccountRatio != null ? ` | 大户账户比 ${fmt(d.topAccountRatio)}` : ''
+    const oiHoriz = [
+      d.oiChangePct1h != null ? `1h OI ${pct(d.oiChangePct1h)} 价 ${d.priceChangePct1h != null ? pct(d.priceChangePct1h) : '–'}` : null,
+      d.oiChangePct4h != null ? `4h OI ${pct(d.oiChangePct4h)}` : null,
+      d.oiChangePct24h != null ? `24h OI ${pct(d.oiChangePct24h)}` : null,
+    ].filter(Boolean).join(' · ')
+    const posture = d.posture ? ` → ${d.posture}` : ''
+    const cvd = d.cvd1h != null ? ` | CVD1h ${fmt(d.cvd1h)}${d.cvdNote ? `(${d.cvdNote})` : ''}` : ''
+    const basis = d.basisPct != null ? ` | 基差 ${d.basisPct}%` : ''
+    const liq = d.liquidationSummary ? ` | ${d.liquidationSummary}` : ''
+    const crowd = d.crowdVsWhale ? ` | 博弈: ${d.crowdVsWhale}` : ''
+    lines.push(`  Derivatives (${d.source}): ${oiUsdt} (${oiBase}) | Funding ${fr}${apr ? ` ${apr}` : ''}${frLabel} | ${ls}${topPos}${topAcc} | Taker ${fmt(d.takerBuySellRatio)}${oiHoriz ? ` | ${oiHoriz}${posture}` : ''}${cvd}${basis}${crowd}${liq}`)
   }
   if (s.moneyFlow?.summary) {
     lines.push(`  资金流向: ${s.moneyFlow.summary}`)

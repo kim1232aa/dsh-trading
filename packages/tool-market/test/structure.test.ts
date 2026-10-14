@@ -109,7 +109,7 @@ describe("postureOf", () => {
     expect(postureOf(-0.5, -1.0, true)).toBe("价跌减仓 (多头平仓为主)")
     expect(postureOf(-0.5, 1.0, true)).toBe("价跌增仓 (空头增仓为主)")
     expect(postureOf(0.1, -0.1, false)).toBe("空头回补")
-    expect(postureOf(0.1, 0.1, false)).toBe("多头增仓")
+    expect(postureOf(0.1, 0.1, false)).toBe("新仓推动")
   })
   it("treats moves inside the dead zone as no signal", () => {
     // the reported case: BTC OI −1.47%, price −0.30% → real 多头平仓; but ETH OI +0.07%, price −0.20% → flat
@@ -135,6 +135,8 @@ describe("okxDerivatives", () => {
       "funding-rate": [{ fundingRate: "0.0001", nextFundingTime: "1790985600000" }],
       "top-trader": [["1790971800000", "0.92"]],
       "taker-volume-contract": [["1790971500000", "200", "100"]],
+      "mark-price": [{ markPx: "2970" }],
+      "index-tickers": [{ idxPx: "2968" }],
     }
     vi.stubGlobal("fetch", async (url: URL) => {
       const key = Object.keys(bodies).find(k => String(url).includes(k))
@@ -144,7 +146,11 @@ describe("okxDerivatives", () => {
     expect(d.takerBuySellRatio).toBe(0.5)
     expect(d.oiChangePct1h).toBe(2)
     expect(d.priceChangePct1h).toBe(-1)
-    expect(d.posture).toBe("价跌增仓 (空头增仓为主)")
+    expect(d.posture).toBe("价跌增仓 (空头主动砸盘做空为主)")
     expect(d.topPositionRatio).toBe(0.92)
+    expect(d.fundingLabel).toBe("费率中性(≈0.01%/8h)")
+    expect(d.fundingRateAnnualizedPct).toBeCloseTo(10.95, 2)
+    expect(d.basisPct).toBeCloseTo(0.0674, 2)
+    expect(d.longShortRatioKind).toBe("top_positions")
   })
 })

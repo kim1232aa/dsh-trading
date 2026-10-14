@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   closestSymbol,
   crowdVsWhaleOf,
@@ -12,6 +12,12 @@ import {
   isBinanceSymbol,
   okxLiquidations1h,
   okxDerivatives,
+  fundingAnnualizedPct,
+  fundingLabelOf,
+  cvdFromTakerRows,
+  cvdNoteOf,
+  pctChange,
+  BinanceProvider,
 } from '../src/index.js'
 
 describe('Binance Provider Helpers', () => {
@@ -35,11 +41,11 @@ describe('Binance Provider Helpers', () => {
   })
 
   it('derives posture correctly from price and OI deltas', () => {
-    expect(postureOf(1.5, 2.0, false)).toBe('多头增仓')
+    expect(postureOf(1.5, 2.0, false)).toBe('新仓推动')
     expect(postureOf(-1.5, 2.0, false)).toBe('空头增仓')
     expect(postureOf(1.5, -2.0, false)).toBe('空头回补')
     expect(postureOf(-1.5, -2.0, false)).toBe('多头平仓')
-    expect(postureOf(1.5, 2.0, true)).toBe('价涨增仓 (多头增仓为主)')
+    expect(postureOf(1.5, 2.0, true)).toBe('价涨增仓 (新仓推动为主)')
     expect(postureOf(0.01, 0.01, false)).toBe('持仓持平')
 
     // Multi-factor taker volume & funding rate evaluation
@@ -49,7 +55,7 @@ describe('Binance Provider Helpers', () => {
     expect(postureOf(-1.5, 2.0, false, { takerRatio: 1.25 })).toBe('大户接盘吸筹 (散户追空)')
     expect(postureOf(-2.5, -2.5, false, { takerRatio: 0.6 })).toBe('多头恐慌清算踩踏')
     expect(postureOf(2.5, -2.5, false, { takerRatio: 1.4 })).toBe('空头爆仓轧空止损')
-    expect(postureOf(1.5, 2.0, true, { fundingRate: 0.0004 })).toBe('价涨增仓 (多头增仓为主) [多头费率极度拥挤]')
+    expect(postureOf(1.5, 2.0, true, { fundingRate: 0.0004 })).toBe('价涨增仓 (新仓推动为主) [多头费率极度拥挤]')
     expect(postureOf(-1.5, 2.0, true, { fundingRate: -0.0003 })).toBe('价跌增仓 (空头增仓为主) [空头负费率过度拥挤]')
   })
 
@@ -124,7 +130,9 @@ describe('Binance Provider Helpers', () => {
     expect(rows.find(r => r.id === 'accounts')?.note).toContain('不是仓位')
     expect(rows.find(r => r.id === 'funding')?.tone).toBe('warn')
     expect(positionReadings({}).map(r => r.id)).toEqual([])
-    expect(positionReadings({ fundingRate: 0.00005 }).map(r => r.label)).toEqual(['费率中性'])
+    expect(positionReadings({ fundingRate: 0.00005 }).map(r => r.label)).toEqual(['费率中性(≈0.01%/8h)'])
+    expect(positionReadings({ fundingRate: 0.0001 }).map(r => r.label)).toEqual(['费率中性(≈0.01%/8h)'])
+    expect(positionReadings({ fundingRate: 0.0002 }).map(r => r.label)).toEqual(['费率偏多'])
     expect(basisPct(2502, 2500)).toBeCloseTo(0.08, 2)
     expect(basisPct(2500, 0)).toBeNull()
   })
@@ -144,14 +152,99 @@ describe('isBinanceSymbol', () => {
 })
 
 describe('OKX derivatives live smoke', () => {
-  it('returns OI/funding and optional liquidations for BTC', async () => {
+  it('returns USDT OI, multi-horizon Δ, funding APR, CVD, liquidations for BTC', async () => {
     const d = await okxDerivatives('BTCUSDT')
     expect(d.source).toBe('OKX')
     expect(d.openInterest).toBeGreaterThan(0)
+    expect(d.openInterestValue).toBeGreaterThan(0)
     expect(d.fundingRate).not.toBeNull()
-    // liquidations best-effort
+    expect(d.fundingRateAnnualizedPct).not.toBeNull()
+    expect(d.fundingLabel).toContain('费率')
+    expect(d.longShortRatioKind).toBe('top_positions')
+    expect(d.oiChangePct1h === null || Number.isFinite(d.oiChangePct1h)).toBe(true)
+    expect(d.oiChangePct24h === null || Number.isFinite(d.oiChangePct24h)).toBe(true)
     if (d.liquidationSummary) {
       expect(d.liquidationSummary).toContain('爆仓')
+      expect(d.liquidationSource).toBe('OKX')
     }
-  }, 30_000)
+  }, 45_000)
+})
+
+describe('funding / CVD / pct helpers', () => {
+  it('annualizes 8h funding and treats 0.01%/8h as neutral, not bullish', () => {
+    expect(fundingAnnualizedPct(0.0001)).toBeCloseTo(10.95, 2)
+    expect(fundingAnnualizedPct(null)).toBeNull()
+    expect(fundingLabelOf(0.0001)).toBe('费率中性(≈0.01%/8h)')
+    expect(fundingLabelOf(0)).toBe('费率中性(≈0.01%/8h)')
+    expect(fundingLabelOf(0.0002)).toBe('费率偏多')
+    expect(fundingLabelOf(0.0004)).toBe('多头拥挤')
+    expect(fundingLabelOf(-0.0001)).toBe('费率偏空')
+    expect(fundingLabelOf(-0.0003)).toBe('空头拥挤')
+  })
+
+  it('sums taker buy−sell as CVD and describes price divergence', () => {
+    const now = 1_000_000
+    const rows = [
+      { timestamp: now - 10 * 60_000, buyVol: '10', sellVol: '4' },
+      { timestamp: now - 20 * 60_000, buyVol: '5', sellVol: '8' },
+      { timestamp: now - 90 * 60_000, buyVol: '100', sellVol: '0' }, // outside 1h
+    ]
+    expect(cvdFromTakerRows(rows, now)).toBeCloseTo(3, 4) // (10-4)+(5-8)
+    expect(cvdNoteOf(3, -0.5)).toContain('背离')
+    expect(cvdNoteOf(-3, 0.5)).toContain('背离')
+    expect(pctChange(110, 100)).toBe(10)
+    expect(pctChange(null, 100)).toBeNull()
+  })
+})
+
+describe('Binance derivatives live smoke', () => {
+  it('returns USDT OI, Δ1h/4h/24h, funding APR, labeled L/S, CVD, basis', async () => {
+    const provider = new BinanceProvider('binance', ['BTCUSDT'], 'https://data-api.binance.vision', 'https://fapi.binance.com')
+    const d = await provider.getDerivatives('BTCUSDT')
+    expect(['Binance', 'OKX', 'Gate']).toContain(d.source)
+    expect(d.openInterestValue).toBeGreaterThan(0)
+    expect(d.oiUnit).toBe('base')
+    expect(d.fundingRate).not.toBeNull()
+    expect(d.fundingRateAnnualizedPct).not.toBeNull()
+    expect(d.fundingLabel).toBeTruthy()
+    if (d.source === 'Binance') {
+      expect(d.longShortRatioKind).toBe('global_accounts')
+      expect(d.longShortRatio).toBeGreaterThan(0)
+      expect(d.oiChangePct24h).not.toBeNull()
+      expect(d.basisPct).not.toBeNull()
+    }
+    // Δ1h should resolve when hist is long enough
+    expect(d.oiChangePct1h === null || Number.isFinite(d.oiChangePct1h)).toBe(true)
+  }, 45_000)
+})
+
+describe('OKX liquidations unit (ctVal)', () => {
+  it('multiplies sz × ctVal × bkPx for USDT notional', async () => {
+    vi.stubGlobal('fetch', async (url: URL | Request | string) => {
+      const u = String(url)
+      if (u.includes('instruments')) {
+        return new Response(JSON.stringify({ code: '0', data: [{ ctVal: '0.01' }] }), { status: 200 })
+      }
+      if (u.includes('liquidation-orders')) {
+        const now = Date.now()
+        return new Response(JSON.stringify({
+          code: '0',
+          data: [{ details: [
+            { ts: String(now - 60_000), bkPx: '100000', sz: '10', posSide: 'long' },
+            { ts: String(now - 60_000), bkPx: '100000', sz: '5', posSide: 'short' },
+          ] }],
+        }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ code: '404' }), { status: 404 })
+    })
+    try {
+      const liq = await okxLiquidations1h('BTCUSDT')
+      // 10 * 0.01 * 100000 = 10000; 5 * 0.01 * 100000 = 5000
+      expect(liq.longUsd).toBe(10000)
+      expect(liq.shortUsd).toBe(5000)
+      expect(liq.summary).toContain('爆仓')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
 })

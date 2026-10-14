@@ -353,13 +353,23 @@ describe("renderSnapshot", () => {
       openInterest: 1000,
       openInterestValue: 2000000,
       fundingRate: 0.0001,
+      fundingRateAnnualizedPct: 10.95,
+      fundingLabel: "费率中性(≈0.01%/8h)",
       nextFundingTime: "2024-01-02T00:00:00.000Z",
       longShortRatio: 1.5,
+      longShortRatioKind: "global_accounts",
       takerBuySellRatio: 1.2,
       time: "2024-01-01T00:00:00.000Z",
+      oiChangePct1h: 1.2,
+      oiChangePct4h: 2.5,
+      oiChangePct24h: -0.8,
+      priceChangePct1h: 0.5,
+      posture: "价涨增仓 (新仓推动为主)",
     })
     const text = renderSnapshot("1d", snapshot)
-    expect(text).toContain("Derivatives (Binance): OI 1000 ($2000000) | Funding 0.0100% | 散户比 1.5 | Taker 1.2")
+    expect(text).toContain("Derivatives (Binance): USDT名义 2000000 (底仓 1000) | Funding 0.0100%/8h")
+    expect(text).toContain("账户人数比 1.5(>1净多)")
+    expect(text).toContain("Taker 1.2")
     expect(text.split("\n")).toHaveLength(10)
   })
 })

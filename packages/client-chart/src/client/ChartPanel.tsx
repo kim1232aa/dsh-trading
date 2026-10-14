@@ -364,23 +364,34 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
           K线 {new Date(historyBar.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </span>
       ) : null}
-      <span>持仓量<span style={VALUE}>{show(target?.openInterest, n => compact.format(n))}</span></span>
-      <span>持仓价值<span style={VALUE}>{show(target?.openInterestValue, n => `$${compact.format(n)}`)}</span></span>
-      <span>
+      <span title="未平仓合约名义（USDT）= 底仓×标记价。跨所请并列比较，勿混口径。">OI名义<span style={VALUE}>{show(target?.openInterestValue, n => `${compact.format(n)} USDT`)}</span></span>
+      <span title="未平仓底仓（币数量），Δ% 用此计算以免价格单独伪装成平仓。">底仓<span style={VALUE}>{show(target?.openInterest, n => compact.format(n))}</span></span>
+      <span title="当前资金费率（每8h）。中性参考≈+0.01%/8h≈年化10.95%，不是看多。">
         资金费率<span style={VALUE}>{show(target?.fundingRate, formatFunding)}</span>
+        {data?.fundingRateAnnualizedPct != null ? <span style={{ marginLeft: 3, opacity: 0.85 }}>年化{data.fundingRateAnnualizedPct}%</span> : null}
+        {data?.fundingLabel ? <span style={{ marginLeft: 3, opacity: 0.85 }}>{data.fundingLabel}</span> : null}
         {countdown !== '' ? <span style={{ marginLeft: 4 }}>{countdown}</span> : null}
       </span>
-      <span title="全市场多空账户数比。不是仓位，人数多的一侧人均更小。">人数比<span style={VALUE}>{show(target?.longShortRatio, n => n.toFixed(2))}</span></span>
+      <span title="全市场多空账户数比（Binance globalLongShortAccountRatio）。>1=净多账户，不是仓位。">账户人数比<span style={VALUE}>{show(target?.longShortRatio, n => n.toFixed(2))}</span></span>
       {target?.topPositionRatio !== null && target?.topPositionRatio !== undefined ? (
-        <span title="保证金余额前 20% 的持仓量多空比。这是仓位，不是账户数。">大户持仓比<span style={VALUE}>{show(target.topPositionRatio, n => n.toFixed(2))}</span></span>
+        <span title="大户持仓量多空比（Binance topLongShortPositionRatio / OKX top-trader）。>1=净多仓位。">大户持仓比<span style={VALUE}>{show(target.topPositionRatio, n => n.toFixed(2))}</span></span>
       ) : null}
       {target?.topAccountRatio !== null && target?.topAccountRatio !== undefined ? (
-        <span title="保证金余额前 20% 的账户数比。和持仓比背离时，更大的仓在另一侧。">大户账户比<span style={VALUE}>{show(target.topAccountRatio, n => n.toFixed(2))}</span></span>
+        <span title="大户账户数比（Binance topLongShortAccountRatio）。和持仓比背离时，更大的仓在另一侧。">大户账户比<span style={VALUE}>{show(target.topAccountRatio, n => n.toFixed(2))}</span></span>
       ) : null}
-      <span title="最近 5 分钟主动买入量 / 主动卖出量">主动买卖比<span style={VALUE}>{show(target?.takerBuySellRatio, n => n.toFixed(2))}</span></span>
+      <span title="最近窗口主动买入量 / 主动卖出量（taker）">主动买卖比<span style={VALUE}>{show(target?.takerBuySellRatio, n => n.toFixed(2))}</span></span>
+      {data?.cvd1h != null ? (
+        <span title={`近1h累计主动买卖差（CVD代理）。${data.cvdNote ?? ''} 仅作背离描述，非独立信号。`}>CVD1h<span style={VALUE}>{compact.format(data.cvd1h)}</span>{data.cvdNote ? <span style={{ marginLeft: 3, opacity: 0.85 }}>{data.cvdNote}</span> : null}</span>
+      ) : null}
+      {data?.basisPct != null ? (
+        <span title="标记价相对指数溢价。(mark−index)/index。正=永续升水。">基差<span style={VALUE}>{`${data.basisPct >= 0 ? '+' : ''}${data.basisPct.toFixed(3)}%`}</span></span>
+      ) : null}
+      {data?.liquidationSummary ? (
+        <span title={data.liquidationSource && data.liquidationSource !== data.source ? `爆仓来源 ${data.liquidationSource}（与主书源不同，仅参考）` : '近1h多/空爆仓名义 USDT'}>{data.liquidationSummary}</span>
+      ) : null}
       {target?.quadrant || target?.posture ? (
         <span
-          title={`近1小时: 价格 ${target.priceChangePct1h !== null && target.priceChangePct1h !== undefined ? (target.priceChangePct1h > 0 ? '+' : '') + target.priceChangePct1h.toFixed(2) + '%' : '—'}，持仓 ${target.oiChangePct1h !== null && target.oiChangePct1h !== undefined ? (target.oiChangePct1h > 0 ? '+' : '') + target.oiChangePct1h.toFixed(2) + '%' : '—'}。${target.quadrantNote ?? target.posture ?? ''}。悬停时右侧「当根」才是这一根相对上一根`}
+          title={`价×OI姿态(底仓Δ)。1h: 价 ${target.priceChangePct1h != null ? (target.priceChangePct1h > 0 ? '+' : '') + target.priceChangePct1h.toFixed(2) + '%' : '—'} OI ${target.oiChangePct1h != null ? (target.oiChangePct1h > 0 ? '+' : '') + target.oiChangePct1h.toFixed(2) + '%' : '—'}；4h OI ${data?.oiChangePct4h != null ? (data.oiChangePct4h > 0 ? '+' : '') + data.oiChangePct4h.toFixed(2) + '%' : '—'}；24h OI ${data?.oiChangePct24h != null ? (data.oiChangePct24h > 0 ? '+' : '') + data.oiChangePct24h.toFixed(2) + '%' : '—'}。升价+升OI=新仓推动；升价+降OI=空头回补/平仓。${target.quadrantNote ?? target.posture ?? ''}`}
           style={{
             fontWeight: 600,
             padding: '0 4px',
@@ -395,7 +406,7 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
           ) : null}
           {target.oiChangePct1h !== null && target.oiChangePct1h !== undefined ? (
             <span style={{ fontSize: 10, marginLeft: 3, opacity: 0.85 }}>
-              (仓{target.oiChangePct1h > 0 ? '+' : ''}{target.oiChangePct1h.toFixed(1)}%{target.priceChangePct1h !== null && target.priceChangePct1h !== undefined ? ` 价${target.priceChangePct1h > 0 ? '+' : ''}${target.priceChangePct1h.toFixed(1)}%` : ''})
+              (1h仓{target.oiChangePct1h > 0 ? '+' : ''}{target.oiChangePct1h.toFixed(1)}%{target.priceChangePct1h !== null && target.priceChangePct1h !== undefined ? ` 价${target.priceChangePct1h > 0 ? '+' : ''}${target.priceChangePct1h.toFixed(1)}%` : ''}{data?.oiChangePct4h != null ? ` ·4h仓${data.oiChangePct4h > 0 ? '+' : ''}${data.oiChangePct4h.toFixed(1)}%` : ''}{data?.oiChangePct24h != null ? ` ·24h仓${data.oiChangePct24h > 0 ? '+' : ''}${data.oiChangePct24h.toFixed(1)}%` : ''})
             </span>
           ) : null}
         </span>

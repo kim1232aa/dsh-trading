@@ -116,21 +116,36 @@ export interface PanelDerivatives {
   source: string
   openInterest: number | null
   openInterestValue: number | null
+  oiUnit?: 'base'
   fundingRate: number | null
+  fundingRateAnnualizedPct?: number | null
+  fundingLabel?: string | null
   nextFundingTime: string | null
   longShortRatio: number | null
+  longShortRatioKind?: 'global_accounts' | 'top_accounts' | 'top_positions' | 'unknown'
   topPositionRatio?: number | null
   topAccountRatio?: number | null
   takerBuySellRatio: number | null
+  cvd1h?: number | null
+  cvdNote?: string | null
+  basisPct?: number | null
   time: string
   oiChangePct1h?: number | null
+  oiChangePct4h?: number | null
+  oiChangePct24h?: number | null
   priceChangePct1h?: number | null
+  priceChangePct4h?: number | null
+  priceChangePct24h?: number | null
   posture?: string | null
   quadrant?: string | null
   quadrantNote?: string | null
   crowdVsWhale?: string | null
   readings?: PanelPositionReading[]
   history?: PanelDerivativeBar[]
+  liquidationLongUsd1h?: number | null
+  liquidationShortUsd1h?: number | null
+  liquidationSummary?: string | null
+  liquidationSource?: string | null
 }
 
 /** One bar, as the seam defines it. */
