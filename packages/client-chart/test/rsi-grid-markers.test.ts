@@ -18,7 +18,7 @@ function draw(list: K[], from: number, to: number) {
   const result = rsiGridMarksIndicator.calc(list, { calcParams: P })
   const ctx = mockCtx()
   rsiGridMarksIndicator.draw({ ctx, indicator: { calcParams: P, result }, xAxis: { convertToPixel: i => i * 10 }, yAxis: { convertToPixel: v => v / 100 },
-    visibleRange: { from, to }, bounding: { width: 2000 }, kLineDataList: list })
+    visibleRange: { from, to }, bounding: { width: 20000 }, kLineDataList: list })
   return { ctx, result }
 }
 
@@ -31,7 +31,7 @@ describe("RSI网格 candle markers (P0 recheck, live BTCUSDT 15m fixture)", () =
     for (const i of fills) {
       expect(result[i - 1]!.signal).toBe("entry")            // signal on the previous closed bar
       expect(result[i]!.entry).toBe(live[i]!.open)            // filled at this bar's open
-      expect(ctx.texts.some(t => t.t.startsWith("RSI多头") && t.x === i * 10)).toBe(true)
+      expect(ctx.texts.some(t => t.t.startsWith("RSI多头") && Math.abs(t.x - i * 10) <= 60)).toBe(true)
     }
     expect(ctx.texts.some(t => t.t === "RSI多头 84391.49")).toBe(true)
   })

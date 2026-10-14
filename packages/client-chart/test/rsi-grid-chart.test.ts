@@ -4,8 +4,8 @@ import { revPointIndicator } from "../src/client/indicators/revpoint.js"
 
 describe("RSI 网格 chart split (Pine layout)", () => {
   it("RSI pane is fixed 0–100 and carries only RSI; cum has its own pane", () => {
-    expect(rsiGridIndicator.minValue).toBe(0)
-    expect(rsiGridIndicator.maxValue).toBe(100)
+    expect(rsiGridIndicator.minValue).toBeLessThan(0)
+    expect(rsiGridIndicator.maxValue).toBeGreaterThan(100)
     expect(rsiGridIndicator.figures.map(f => f.key)).toEqual(["rsi"])
     expect(rsiGridCumIndicator.figures.map(f => f.key)).toEqual(["cum"])
   })

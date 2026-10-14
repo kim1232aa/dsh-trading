@@ -31,7 +31,7 @@ import { mtfSRZones, mtfSRIndicator } from './indicators/mtf-sr.js'
 import { entrySignalIndicator } from './indicators/entry-signal.js'
 import { rsiGridIndicator, rsiGridCumIndicator, rsiGridMarksIndicator } from './indicators/rsi-grid.js'
 import { revPointIndicator, REVPOINT_TABLE_W } from './indicators/revpoint.js'
-import { PRICE_AXIS_GAP } from './indicators/revpoint-layout.js'
+import { ohlcOffsetRightForTopLeft } from './indicators/revpoint-layout.js'
 import { detectPricePrecision, formatPrice } from './precision.js'
 import { createAnnotationOverlays } from './annotation-overlays.js'
 
@@ -851,8 +851,9 @@ function useDark(): boolean {
  * at the top-right — exactly where RevPoint's status table is pinned. Push the
  * right-parked box left of the table (statusTableRect geometry).
  */
-export function ohlcTooltipAvoidTable(revPointOn: boolean): Record<string, unknown> {
-  return { candle: { tooltip: { rect: { offsetRight: revPointOn ? REVPOINT_TABLE_W + PRICE_AXIS_GAP + 8 : 4 } } } }
+export function ohlcTooltipAvoidTable(revPointOn: boolean, paneW = 0): Record<string, unknown> {
+  // Table + edge pills own the top-right: park the OHLC box top-left on both halves.
+  return { candle: { tooltip: { rect: { offsetRight: revPointOn && paneW > 0 ? ohlcOffsetRightForTopLeft(paneW) : 4 } } } }
 }
 
 function klineStyles(p: Palette, coordType: CoordType = 'normal'): Record<string, unknown> {
@@ -1090,6 +1091,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   // already unmounted. One id per mount.
   const chartDomId = useRef(`dsh-kline-${++chartDomSeq}`)
   const chartRef = useRef<Chart | null>(null)
+  const ohlcParkCleanup = useRef<(() => void) | null>(null)
   const latest = useRef(data)
   latest.current = data
   const settingsRef = useRef(settings)
@@ -1121,7 +1123,11 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     chartRef.current = chart
     const data = latest.current
     chart.setStyles(klineStyles(palette, axisSettings.coordType))
-    chart.setStyles(ohlcTooltipAvoidTable(settingsRef.current['REVPOINT']?.visible ?? false))
+    const applyOhlcPark = () => chart.setStyles(ohlcTooltipAvoidTable(settingsRef.current['REVPOINT']?.visible ?? false, chart.getSize('candle_pane', 'main' as never)?.width ?? 0))
+    applyOhlcPark()
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(applyOhlcPark) : null
+    ro?.observe(container)
+    ohlcParkCleanup.current = () => ro?.disconnect()
     chart.setPaneOptions({
       id: 'candle_pane',
       gap: axisSettings.autoScale.candle ? { top: 0.08, bottom: 0.05 } : { top: 0.2, bottom: 0.1 },
@@ -1234,6 +1240,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     return () => {
       observer.disconnect()
       chartRef.current = null
+      ohlcParkCleanup.current?.()
       dispose(container)
     }
     // Deliberately NOT keyed on `data`: see `seriesKey`. Annotation and
@@ -1246,7 +1253,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   useEffect(() => {
     const chart = chartRef.current
     if (chart === null) return
-    chart.setStyles(ohlcTooltipAvoidTable(settings['REVPOINT']?.visible ?? false))
+    chart.setStyles(ohlcTooltipAvoidTable(settings['REVPOINT']?.visible ?? false, chart.getSize('candle_pane', 'main' as never)?.width ?? 0))
     for (const def of EDITABLE) {
       const s = settings[def.name]!
       const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivatives?.history : undefined

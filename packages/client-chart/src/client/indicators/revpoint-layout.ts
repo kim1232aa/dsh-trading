@@ -78,6 +78,10 @@ export function layoutEdgeTags(
       }
     }
   }
+  // Hard guarantee: nothing may intersect the table, at any zoom.
+  if (table) placed.forEach((p, i) => {
+    if (p && rectsOverlap({ x: p.x, y: p.y, w: tags[i]!.w, h: tags[i]!.h }, table)) placed[i] = null
+  })
   return placed
 }
 
@@ -92,4 +96,18 @@ export function tableMode(paneH: number, fullH: number): 'full' | 'compact' | 'h
 export function clipExtendX(x1: number, x2: number, paneW: number): number {
   if (x2 >= x1) return Math.min(x2, paneW)
   return Math.max(x2, 0)
+}
+
+export function rectsOverlap(a: Rect, b: Rect): boolean {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+}
+
+/**
+ * klinecharts parks the fixed OHLC box top-right when the crosshair is on the left
+ * half — over the RevPoint table and the right-edge pills. Return the rect
+ * offsetRight that pushes that right-parked box all the way to the top-left
+ * instead, so it never covers either.
+ */
+export function ohlcOffsetRightForTopLeft(paneW: number, boxW = 210, margin = 8): number {
+  return Math.max(4, paneW - boxW - margin)
 }

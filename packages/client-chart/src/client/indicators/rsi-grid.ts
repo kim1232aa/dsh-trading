@@ -8,6 +8,7 @@
 import { rsiGrid, RSI_GRID_DEFAULTS } from '../../../../tool-market/src/rsi-grid.js'
 import type { RsiGridBar } from '../../../../tool-market/src/rsi-grid.js'
 import { formatPrice } from '../precision.js'
+import { statusTableRect } from './revpoint-layout.js'
 
 type K = { open: number; high: number; low: number; close: number; timestamp?: number }
 type Row = RsiGridBar & { inPos: boolean; posEntry?: number }
@@ -16,6 +17,12 @@ const RSI_C = '#539bf5'
 const CUM_C = '#ffa726'
 const LOW_C = '#f47067'
 const HIGH_C = '#3ddc97'
+export const RSI_AXIS_MIN = -8
+export const RSI_AXIS_MAX = 108
+/** Keep a centered label of width w inside [0, paneW]. */
+export function clampLabelX(x: number, w: number, paneW: number): number {
+  return Math.min(Math.max(x, w / 2 + 2), Math.max(w / 2 + 2, paneW - w / 2 - 2))
+}
 const FONT = '11px system-ui, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif'
 
 export function rsiGridRows(list: readonly K[], p: readonly number[]): Row[] {
@@ -34,8 +41,9 @@ export const rsiGridIndicator = {
   shortName: 'RSI策略网格现货',
   precision: 2,
   // Pine plots RSI against 0–100; cum lives in its own pane (RSI_GRID_CUM) so it can't squash RSI.
-  minValue: 0,
-  maxValue: 100,
+  // Padded past 0–100 so 0 isn't pinned to the pane boundary and the 30/60 hlines stay labelled.
+  minValue: RSI_AXIS_MIN,
+  maxValue: RSI_AXIS_MAX,
   calcParams: [...RSI_GRID_DEFAULTS],
   figures: [
     { key: 'rsi', title: 'RSI: ', type: 'line', styles: () => ({ color: RSI_C }) },
@@ -166,9 +174,10 @@ export const rsiGridMarksIndicator = {
         ctx.fill()
         const txt = `${isEntry ? 'RSI多头' : '平仓'} ${formatPrice(px)}`
         const w = ctx.measureText(txt).width + 8
-        ctx.beginPath(); ctx.roundRect?.(x - w / 2, y - 8, w, 16, 3); if (!ctx.roundRect) ctx.rect(x - w / 2, y - 8, w, 16); ctx.fill()
+        const lx = clampLabelX(x, w, bounding.width)
+        ctx.beginPath(); ctx.rect(lx - w / 2, y - 8, w, 16); ctx.fill()
         ctx.fillStyle = '#fff'
-        ctx.fillText(txt, x, y)
+        ctx.fillText(txt, lx, y)
       }
     }
     // Open position whose entry bar may be scrolled out of view: Pine keeps holding
@@ -183,11 +192,23 @@ export const rsiGridMarksIndicator = {
       ctx.setLineDash([6, 4])
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(bounding.width, y); ctx.stroke()
       ctx.setLineDash([])
+      const txt = `RSI网格持多 @${formatPrice(last.posEntry)} ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%（浮亏不平、不加仓）`
+      const x = costLabelX(ctx.measureText(txt).width, y, bounding.width)
       ctx.textAlign = 'left'
       ctx.fillStyle = HIGH_C
-      ctx.fillText(`RSI网格持多 @${formatPrice(last.posEntry)} ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%（浮亏不平、不加仓）`, 6, y - 8)
+      ctx.fillText(txt, x, y - 8)
     }
     ctx.restore()
     return false
   },
+}
+
+/**
+ * Cost-line label anchored right, just before the price axis — clear of the
+ * top-left OHLC box. If the line runs through the RevPoint table band, sit left of the table.
+ */
+export function costLabelX(textW: number, y: number, paneW: number, tableW = 216, tableH = 180): number {
+  const t = statusTableRect(paneW, tableW, tableH)
+  const right = y >= t.y - 10 && y <= t.y + t.h + 10 ? t.x - 8 : paneW - 8
+  return Math.max(4, right - textW)
 }
