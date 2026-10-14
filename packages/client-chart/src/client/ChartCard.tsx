@@ -21,7 +21,7 @@ import { publishLatestChart } from './latest.js'
 import { annotationDigest, contentText, readChartPayload } from './payload.js'
 import type { ChartAnnotation, ChartPayload, ChartScenario, ChartTimeframeData } from './payload.js'
 import type { PanelDerivativeBar, PanelDerivatives } from './market-client.js'
-import { postureColor } from './market-client.js'
+import { contractOpenInterest, postureColor } from './market-client.js'
 import { regimeSnapshot } from '../../../tool-market/src/regime.js'
 import { regimeSeries } from '../../../tool-market/src/chart-payload.js'
 import { evasiveSuperTrend, evasiveSuperTrendIndicator } from './indicators/evasive-st.js'
@@ -244,7 +244,7 @@ export const EDITABLE: {
   { name: 'OB_BB', title: '订单块/破坏块(RWB)', defaults: [], defaultVisible: false, params: [] },
   { name: 'MTF_SR', title: '多周期支撑阻力(Syndicate)', defaults: [5], defaultVisible: false, params: [period('Pivot周期')] },
   { name: 'OI_POSTURE', title: '持仓动向', pane: 'pane_oi_posture', defaults: [], params: [] },
-  { name: 'ENTRY_SIGNAL', title: '多空进场信号(未验证)', defaults: [60, 4], defaultVisible: false, params: [period('ST周期'), { label: 'ST倍数', min: 0.1, max: 20, step: 0.1 }] },
+  { name: 'ENTRY_SIGNAL', title: '多空观察信号(未验证)', defaults: [60, 4], defaultVisible: false, params: [period('ST周期'), { label: 'ST倍数', min: 0.1, max: 20, step: 0.1 }] },
 ]
 
 export type IndicatorSettings = Record<string, { params: number[]; visible: boolean }>
@@ -502,8 +502,8 @@ function ensureRegistered(): void {
       const histParsed = history.map((h, idx) => {
         const sec = Math.floor(Date.parse(h.time) / 1000)
         const prev = idx > 0 ? history[idx - 1] : undefined
-        const curVal = h.openInterestValue ?? h.openInterest ?? null
-        const prevVal = prev?.openInterestValue ?? prev?.openInterest ?? null
+        const curVal = contractOpenInterest(h)
+        const prevVal = prev ? contractOpenInterest(prev) : null
         const delta = curVal !== null && prevVal !== null ? curVal - prevVal : 0
         return {
           bar: h,
@@ -528,11 +528,11 @@ function ensureRegistered(): void {
             matched = item
           }
         }
-        if (!matched || matched.bar.openInterestValue == null) {
+        const oi = matched ? contractOpenInterest(matched.bar) : null
+        if (!matched || oi === null) {
           oiValues.push(undefined)
           return {}
         }
-        const oi = matched.bar.openInterestValue
         oiValues.push(oi)
         let sum = 0
         let count = 0
@@ -592,17 +592,22 @@ function ensureRegistered(): void {
         }
       }
 
-      const pColor = postureColor(target.posture).color
-      const oiText = target.openInterestValue ? `$${compact.format(target.openInterestValue)}` : '—'
+      const postureText = target.quadrant
+        ? `${target.quadrant}${target.quadrantNote ? `（${target.quadrantNote}）` : ''}`
+        : target.posture
+      const pColor = postureColor(postureText).color
+      const oiContracts = contractOpenInterest(target)
+      const oiText = oiContracts !== null ? compact.format(oiContracts) : '—'
       const lsrText = target.longShortRatio ? target.longShortRatio.toFixed(2) : '—'
       const topPos = target.topPositionRatio ? target.topPositionRatio.toFixed(2) : null
       const tkText = target.takerBuySellRatio ? target.takerBuySellRatio.toFixed(2) : null
       const deltaText = deltaVal !== undefined && Number.isFinite(deltaVal)
-        ? `${deltaVal >= 0 ? '+' : ''}$${compact.format(deltaVal)}`
+        ? `${deltaVal >= 0 ? '+' : ''}${compact.format(deltaVal)}`
         : null
 
       const values: { title: string; value: { text: string; color: string } }[] = [
         { title: 'OI: ', value: { text: oiText, color: '#27C6DA' } },
+        { title: '价值: ', value: { text: target.openInterestValue ? `$${compact.format(target.openInterestValue)}` : '—', color: '#8b949e' } },
       ]
       if (row?.oiMa !== undefined && Number.isFinite(row.oiMa)) {
         values.push({ title: 'OI均线: ', value: { text: `$${compact.format(row.oiMa)}`, color: '#f59e0b' } })
@@ -610,7 +615,7 @@ function ensureRegistered(): void {
       if (deltaText) {
         values.push({ title: 'ΔOI: ', value: { text: deltaText, color: deltaVal! >= 0 ? '#22c55e' : '#ef4444' } })
       }
-      values.push({ title: '动向: ', value: { text: target.posture ?? '—', color: pColor } })
+      values.push({ title: '动向: ', value: { text: postureText ?? '—', color: pColor } })
       if (tkText) {
         values.push({ title: '主动买卖比: ', value: { text: tkText, color: Number(tkText) >= 1.0 ? '#22c55e' : '#ef4444' } })
       }

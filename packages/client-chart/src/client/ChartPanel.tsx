@@ -332,8 +332,11 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
     longShortRatio: historyBar.longShortRatio ?? data?.longShortRatio,
     takerBuySellRatio: historyBar.takerBuySellRatio ?? data?.takerBuySellRatio,
     time: historyBar.time,
-    posture: historyBar.posture ?? data?.posture,
+    posture: data?.posture,
+    quadrant: data?.quadrant,
+    quadrantNote: data?.quadrantNote,
     topPositionRatio: historyBar.topPositionRatio ?? data?.topPositionRatio,
+    topAccountRatio: historyBar.topAccountRatio ?? data?.topAccountRatio,
     crowdVsWhale: historyBar.crowdVsWhale ?? data?.crowdVsWhale,
     oiChangePct1h: data?.oiChangePct1h,
     priceChangePct1h: data?.priceChangePct1h,
@@ -343,6 +346,12 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
   const show = (v: number | null | undefined, f: (n: number) => string): string =>
     v === null || v === undefined ? '—' : f(v)
   const countdown = target?.nextFundingTime ? formatCountdown(target.nextFundingTime, Date.now()) : ''
+  const shownReadings = historyBar
+    ? [
+        ...(historyBar.readings ?? []),
+        ...(data?.readings ?? []).filter(r => r.id === 'funding' || r.id === 'basis'),
+      ]
+    : (data?.readings ?? [])
 
   return (
     <div
@@ -361,30 +370,66 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
         资金费率<span style={VALUE}>{show(target?.fundingRate, formatFunding)}</span>
         {countdown !== '' ? <span style={{ marginLeft: 4 }}>{countdown}</span> : null}
       </span>
-      <span title="全市场多空账户数比（散户多空意愿）">散户比<span style={VALUE}>{show(target?.longShortRatio, n => n.toFixed(2))}</span></span>
+      <span title="全市场多空账户数比。不是仓位，人数多的一侧人均更小。">人数比<span style={VALUE}>{show(target?.longShortRatio, n => n.toFixed(2))}</span></span>
       {target?.topPositionRatio !== null && target?.topPositionRatio !== undefined ? (
-        <span title="排名前20%大户的持仓量多空比（大户真实多空持仓）">大户持仓比<span style={VALUE}>{show(target.topPositionRatio, n => n.toFixed(2))}</span></span>
+        <span title="保证金余额前 20% 的持仓量多空比。这是仓位，不是账户数。">大户持仓比<span style={VALUE}>{show(target.topPositionRatio, n => n.toFixed(2))}</span></span>
+      ) : null}
+      {target?.topAccountRatio !== null && target?.topAccountRatio !== undefined ? (
+        <span title="保证金余额前 20% 的账户数比。和持仓比背离时，更大的仓在另一侧。">大户账户比<span style={VALUE}>{show(target.topAccountRatio, n => n.toFixed(2))}</span></span>
       ) : null}
       <span title="最近 5 分钟主动买入量 / 主动卖出量">主动买卖比<span style={VALUE}>{show(target?.takerBuySellRatio, n => n.toFixed(2))}</span></span>
-      {target?.posture ? (
+      {target?.quadrant || target?.posture ? (
         <span
-          title={historyBar ? `该时刻持仓动向: ${target.posture}` : `近1小时: 价格 ${target.priceChangePct1h !== null && target.priceChangePct1h !== undefined ? (target.priceChangePct1h > 0 ? '+' : '') + target.priceChangePct1h.toFixed(2) + '%' : '—'}，持仓 ${target.oiChangePct1h !== null && target.oiChangePct1h !== undefined ? (target.oiChangePct1h > 0 ? '+' : '') + target.oiChangePct1h.toFixed(2) + '%' : '—'}`}
+          title={`近1小时: 价格 ${target.priceChangePct1h !== null && target.priceChangePct1h !== undefined ? (target.priceChangePct1h > 0 ? '+' : '') + target.priceChangePct1h.toFixed(2) + '%' : '—'}，持仓 ${target.oiChangePct1h !== null && target.oiChangePct1h !== undefined ? (target.oiChangePct1h > 0 ? '+' : '') + target.oiChangePct1h.toFixed(2) + '%' : '—'}。${target.quadrantNote ?? target.posture ?? ''}。悬停时右侧「当根」才是这一根相对上一根`}
           style={{
             fontWeight: 600,
             padding: '0 4px',
             borderRadius: 3,
-            background: postureColor(target.posture).bg,
-            color: postureColor(target.posture).color,
+            background: postureColor(target.quadrant ?? target.posture).bg,
+            color: postureColor(target.quadrant ?? target.posture).color,
           }}
         >
-          {target.posture}
-          {!historyBar && target.oiChangePct1h !== null && target.oiChangePct1h !== undefined ? (
+          {target.quadrant ?? target.posture}
+          {target.quadrantNote ? (
+            <span style={{ fontSize: 10, marginLeft: 3, opacity: 0.9 }}>{target.quadrantNote}</span>
+          ) : null}
+          {target.oiChangePct1h !== null && target.oiChangePct1h !== undefined ? (
             <span style={{ fontSize: 10, marginLeft: 3, opacity: 0.85 }}>
               (仓{target.oiChangePct1h > 0 ? '+' : ''}{target.oiChangePct1h.toFixed(1)}%{target.priceChangePct1h !== null && target.priceChangePct1h !== undefined ? ` 价${target.priceChangePct1h > 0 ? '+' : ''}${target.priceChangePct1h.toFixed(1)}%` : ''})
             </span>
           ) : null}
         </span>
       ) : null}
+      {historyBar?.quadrant || historyBar?.posture ? (
+        <span
+          title={historyBar.quadrantNote ? `这一根：${historyBar.quadrant}（${historyBar.quadrantNote}）` : '这一根相对上一根的价与持仓，不是近1小时'}
+          style={{
+            fontWeight: 600,
+            padding: '0 4px',
+            borderRadius: 3,
+            background: postureColor(historyBar.quadrant ?? historyBar.posture).bg,
+            color: postureColor(historyBar.quadrant ?? historyBar.posture).color,
+          }}
+        >
+          当根 {historyBar.quadrant ?? historyBar.posture}
+        </span>
+      ) : null}
+      {shownReadings.map(r => (
+        <span
+          key={r.id}
+          title={(historyBar && (r.id === 'funding' || r.id === 'basis') ? '当前，不是这一根。' : '') + r.note}
+          style={{
+            fontSize: 10.5,
+            padding: '1px 5px',
+            borderRadius: 3,
+            fontWeight: 500,
+            background: r.tone === 'warn' ? 'rgba(255,167,38,0.15)' : 'rgba(128,128,128,0.12)',
+            color: r.tone === 'warn' ? '#ffa726' : 'inherit',
+          }}
+        >
+          {r.label}
+        </span>
+      ))}
       {target?.crowdVsWhale ? (
         <span
           title="散户多空人数比与大户持仓资金比背离诊断"

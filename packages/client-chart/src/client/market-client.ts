@@ -89,6 +89,13 @@ export interface PanelMoneyFlow {
   summary?: string
 }
 
+export interface PanelPositionReading {
+  id: string
+  label: string
+  note: string
+  tone: 'neutral' | 'warn'
+}
+
 export interface PanelDerivativeBar {
   time: string
   openInterest: number | null
@@ -98,7 +105,10 @@ export interface PanelDerivativeBar {
   topAccountRatio?: number | null
   takerBuySellRatio: number | null
   posture?: string | null
+  quadrant?: string | null
+  quadrantNote?: string | null
   crowdVsWhale?: string | null
+  readings?: PanelPositionReading[]
 }
 
 /** Mirrors `Derivatives` from @dsh-trading/market-data; duplicated to keep host modules out of the browser bundle. */
@@ -116,7 +126,10 @@ export interface PanelDerivatives {
   oiChangePct1h?: number | null
   priceChangePct1h?: number | null
   posture?: string | null
+  quadrant?: string | null
+  quadrantNote?: string | null
   crowdVsWhale?: string | null
+  readings?: PanelPositionReading[]
   history?: PanelDerivativeBar[]
 }
 
@@ -563,6 +576,16 @@ export function recallMarks(): ChartMarks | null {
  * Green = net long buying; Red = net short selling;
  * Orange = position reduction (long liquidation or short covering) or neutral.
  */
+/**
+ * Contract OI for the posture line. USD value moves with price, so a spike can
+ * print a rising line while contracts fall — the opposite of 价涨减仓.
+ * Missing contracts stay missing; do not substitute openInterestValue.
+ */
+export function contractOpenInterest(bar: { openInterest?: number | null }): number | null {
+  const n = bar.openInterest
+  return n === null || n === undefined || !Number.isFinite(n) ? null : n
+}
+
 export function postureColor(posture: string | null | undefined): { color: string; bg: string } {
   if (!posture || posture === '—' || posture.includes('持平') || posture.includes('观望')) {
     return { color: '#8b949e', bg: 'rgba(139,148,158,0.12)' }
@@ -573,10 +596,10 @@ export function postureColor(posture: string | null | undefined): { color: strin
   if (posture.includes('吸筹') || posture.includes('接盘')) {
     return { color: '#27C6DA', bg: 'rgba(39,198,218,0.18)' }
   }
-  if (posture.includes('多头增仓') || posture.includes('价涨增仓') || posture.includes('做多')) {
+  if (posture.includes('强多头') || posture.includes('多头增仓') || posture.includes('价涨增仓') || posture.includes('做多')) {
     return { color: '#3ddc97', bg: 'rgba(61,220,151,0.15)' }
   }
-  if (posture.includes('空头增仓') || posture.includes('价跌增仓') || posture.includes('做空')) {
+  if (posture.includes('强空头') || posture.includes('空头增仓') || posture.includes('价跌增仓') || posture.includes('做空')) {
     return { color: '#f47067', bg: 'rgba(244,112,103,0.15)' }
   }
   return { color: '#ffa726', bg: 'rgba(255,167,38,0.15)' }

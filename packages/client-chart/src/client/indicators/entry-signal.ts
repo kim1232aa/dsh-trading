@@ -5,27 +5,59 @@
  * the chart draws exactly the signals market_snapshot reports to the model.
  * ponytail: cross-package relative import of a pure file; publish a subpath export if a third package needs it.
  */
-import { entrySignals, signalStatus } from '../../../../tool-market/src/signal.js'
-import type { EntrySignal } from '../../../../tool-market/src/signal.js'
-import { formatPrice } from '../precision.js'
+import { advanceSignal, confirmedBarCount, entrySignals, signalStatus } from '../../../../tool-market/src/signal.js'
+import type { EntrySignal, SignalOptions, SignalStatus } from '../../../../tool-market/src/signal.js'
+import { detectPricePrecision, formatPrice } from '../precision.js'
 
 type K = { timestamp: number; open: number; high: number; low: number; close: number; volume?: number }
-type Row = { signal?: EntrySignal; status?: string }
+type Row = { signal?: EntrySignal; status?: SignalStatus; tracked?: EntrySignal; asOfStatus?: SignalStatus; confirmed?: boolean; precision?: number }
 
 const LONG = '#22c55e'
 const SHORT = '#ef4444'
-const STATUS_ZH: Record<string, string> = { open: '持有中', target1: '已到T1', target2: '已到T2', stopped: '已止损' }
+const STATUS_ZH: Record<SignalStatus, string> = { open: '信号跟踪中', target1: '触及T1·继续跟踪', target2: '触及T2·结束', stopped: '触及止损·结束' }
 
-export function signalRows(list: readonly K[], period: number, factor: number): Row[] {
+function signalPrecision(s: EntrySignal, base: number): number {
+  const gap = Math.min(Math.abs(s.entry - s.stop), Math.abs(s.target1 - s.entry), Math.abs(s.target2 - s.target1))
+  return gap > 0 && Number.isFinite(gap) ? Math.max(base, Math.ceil(-Math.log10(gap)) + 1) : base
+}
+
+function formatSignalPrice(value: number, precision: number): string {
+  // Number's round-trip representation remains nonzero and distinct beyond fixed decimal display.
+  return precision > 20 ? String(value) : formatPrice(value, precision)
+}
+
+export function signalRows(list: readonly K[], period: number, factor: number, options: SignalOptions = {}): Row[] {
   const bars = list.map(k => ({ time: String(k.timestamp), open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume ?? 0 }))
-  const rows: Row[] = list.map(() => ({}))
-  for (const s of entrySignals(bars, period, factor)) rows[s.index] = { signal: s, status: signalStatus(bars, s) }
+  const precision = detectPricePrecision([...list])
+  const rows: Row[] = list.map(() => ({ confirmed: false, precision }))
+  const n = confirmedBarCount(list.length, options)
+  for (const s of entrySignals(bars, period, factor, options)) {
+    rows[s.index]!.signal = s
+    rows[s.index]!.status = signalStatus(bars, s, options)
+  }
+  let tracked: EntrySignal | undefined
+  let status: SignalStatus = 'open'
+  for (let i = 0; i < list.length; i++) {
+    const row = rows[i]!
+    row.confirmed = i < n
+    if (row.signal !== undefined) {
+      tracked = row.signal
+      status = 'open'
+    } else if (tracked !== undefined && i < n) {
+      status = advanceSignal(tracked, status, list[i]!)
+    }
+    if (tracked !== undefined) {
+      row.tracked = tracked
+      row.asOfStatus = status
+      row.precision = signalPrecision(tracked, precision)
+    }
+  }
   return rows
 }
 
 export const entrySignalIndicator = {
   name: 'ENTRY_SIGNAL',
-  shortName: '进场信号',
+  shortName: '信号观察',
   series: 'price' as const,
   precision: 2,
   calcParams: [60, 4],
@@ -36,21 +68,26 @@ export const entrySignalIndicator = {
     crosshair: { dataIndex?: number }
   }) => {
     const res = indicator.result ?? []
-    const i = crosshair.dataIndex ?? res.length - 1
-    // Nearest signal at or before the hovered bar.
-    let s: EntrySignal | undefined
-    let status: string | undefined
-    for (let j = Math.min(i, res.length - 1); j >= 0; j--) if (res[j]?.signal) { s = res[j]!.signal; status = res[j]!.status; break }
+    const i = Math.max(0, Math.min(crosshair.dataIndex ?? res.length - 1, res.length - 1))
+    const row = res[i]
+    const s = row?.tracked
+    const status = row?.asOfStatus
+    const precision = row?.precision ?? 2
     const c = s?.side === 'long' ? LONG : SHORT
     return {
       calcParamsText: `(${indicator.calcParams.join(', ')})`,
-      values: s === undefined ? [] : [
-        { title: '', value: { text: `${s.side === 'long' ? '做多' : '做空'}·${s.kind === 'flip' ? '翻转' : '回踩'}`, color: c } },
-        { title: '入: ', value: { text: formatPrice(s.entry), color: c } },
-        { title: '损: ', value: { text: formatPrice(s.stop), color: '#a475e0' } },
-        { title: 'T1: ', value: { text: formatPrice(s.target1), color: '#539bf5' } },
-        { title: 'T2: ', value: { text: formatPrice(s.target2), color: '#539bf5' } },
-        { title: '', value: { text: STATUS_ZH[status ?? 'open'] ?? '', color: '#ffa726' } },
+      values: [
+        ...s === undefined ? [] : [
+          { title: '', value: { text: `${s.side === 'long' ? '多头观察' : '空头观察'}·已确认·${s.kind === 'flip' ? '翻转' : '回踩'}`, color: c } },
+          { title: '参考: ', value: { text: formatSignalPrice(s.entry, precision), color: c } },
+          { title: '损: ', value: { text: formatSignalPrice(s.stop, precision), color: '#a475e0' } },
+          { title: 'T1: ', value: { text: formatSignalPrice(s.target1, precision), color: '#539bf5' } },
+          { title: 'T2: ', value: { text: formatSignalPrice(s.target2, precision), color: '#539bf5' } },
+          { title: '当时: ', value: { text: STATUS_ZH[status ?? 'open'], color: '#ffa726' } },
+        ],
+        ...row?.confirmed === false
+          ? [{ title: '当前K线: ', value: { text: '等待收盘，不确认新信号', color: '#ffa726' } }]
+          : [],
       ],
       icons: [],
     }
@@ -65,6 +102,7 @@ export const entrySignalIndicator = {
     bounding: { width: number }
   }) => {
     const res = indicator.result ?? []
+    const basePrecision = detectPricePrecision(kLineDataList)
     ctx.save()
     ctx.font = '11px sans-serif'
     ctx.textBaseline = 'middle'
@@ -84,7 +122,8 @@ export const entrySignalIndicator = {
       ctx.lineTo(x + 6, tip + d * 10)
       ctx.closePath()
       ctx.fill()
-      const label = `${long ? '多' : '空'} ${s.entry}`
+      const precision = signalPrecision(s, basePrecision)
+      const label = `${long ? '多' : '空'}·确认 ${formatSignalPrice(s.entry, precision)}`
       const w = ctx.measureText(label).width + 8
       const y = tip + d * 20
       ctx.fillRect(x - w / 2, y - 8, w, 16)
@@ -98,12 +137,13 @@ export const entrySignalIndicator = {
     const s = last >= 0 ? res[last]!.signal! : undefined
     const status = last >= 0 ? res[last]!.status : undefined
     if (s !== undefined && (status === 'open' || status === 'target1')) {
+      const precision = signalPrecision(s, basePrecision)
       const x0 = Math.max(0, xAxis.convertToPixel(last))
       const lines: [number, string, string][] = [
-        [s.entry, s.side === 'long' ? LONG : SHORT, `${s.side === 'long' ? '多' : '空'}入 ${s.entry}`],
-        [s.stop, '#a475e0', `止损 ${s.stop}`],
-        [s.target1, '#539bf5', `T1 ${s.target1}`],
-        [s.target2, '#539bf5', `T2 ${s.target2}`],
+        [s.entry, s.side === 'long' ? LONG : SHORT, `${s.side === 'long' ? '多' : '空'}参考 ${formatSignalPrice(s.entry, precision)}`],
+        [s.stop, '#a475e0', `止损 ${formatSignalPrice(s.stop, precision)}`],
+        [s.target1, '#539bf5', `T1 ${formatSignalPrice(s.target1, precision)}`],
+        [s.target2, '#539bf5', `T2 ${formatSignalPrice(s.target2, precision)}`],
       ]
       ctx.textAlign = 'right'
       for (const [price, color, text] of lines) {

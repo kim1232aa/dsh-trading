@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest"
-import { entrySignals, renderSignal, signalReport, signalStatus } from "../src/signal.js"
-import type { SignalBar } from "../src/signal.js"
+import { confirmedBarCount, entrySignals, reachedT1, renderSignal, signalReport, signalStatus } from "../src/signal.js"
+import type { EntrySignal, SignalBar } from "../src/signal.js"
+
+const CLOSED = { lastBarClosed: true }
 
 const bar = (i: number, close: number, spread = 1): SignalBar => ({
   time: new Date(Date.UTC(2024, 0, 1) + i * 300_000).toISOString(),
@@ -16,7 +18,7 @@ const series: SignalBar[] = [
 
 describe("entrySignals", () => {
   it("fires a long after a bullish flip, with stop below entry and targets at 1.5R / 3R", () => {
-    const longs = entrySignals(series, 10, 3).filter(s => s.side === "long")
+    const longs = entrySignals(series, 10, 3, CLOSED).filter(s => s.side === "long")
     expect(longs.length).toBeGreaterThan(0)
     const s = longs[0]!
     expect(s.index).toBeGreaterThan(120)
@@ -27,7 +29,7 @@ describe("entrySignals", () => {
   })
 
   it("never fires two signals on the same side within the cooldown", () => {
-    const sig = entrySignals(series, 10, 3)
+    const sig = entrySignals(series, 10, 3, CLOSED)
     for (let i = 1; i < sig.length; i++) {
       if (sig[i]!.side === sig[i - 1]!.side) expect(sig[i]!.index - sig[i - 1]!.index).toBeGreaterThanOrEqual(6)
     }
@@ -41,18 +43,18 @@ describe("entrySignals", () => {
 describe("signalStatus", () => {
   const s = { index: 0, time: "", side: "long" as const, kind: "flip" as const, entry: 100, stop: 95, target1: 107.5, target2: 115 }
   it("stop wins on a bar that touches both (conservative)", () => {
-    expect(signalStatus([bar(0, 100), { ...bar(1, 100), low: 94, high: 116 }], s)).toBe("stopped")
+    expect(signalStatus([bar(0, 100), { ...bar(1, 100), low: 94, high: 116 }], s, CLOSED)).toBe("stopped")
   })
   it("tracks T1 then T2", () => {
-    expect(signalStatus([bar(0, 100), { ...bar(1, 107, 1), high: 108 }], s)).toBe("target1")
-    expect(signalStatus([bar(0, 100), { ...bar(1, 107, 1), high: 108 }, { ...bar(2, 114), high: 115.5 }], s)).toBe("target2")
+    expect(signalStatus([bar(0, 100), { ...bar(1, 107, 1), high: 108 }], s, CLOSED)).toBe("target1")
+    expect(signalStatus([bar(0, 100), { ...bar(1, 107, 1), high: 108 }, { ...bar(2, 114), high: 115.5 }], s, CLOSED)).toBe("target2")
   })
 })
 
 describe("signalReport / renderSignal", () => {
   it("reports the latest signal in Chinese with its rules", () => {
-    const text = renderSignal(signalReport(series, 10, 3))
+    const text = renderSignal(signalReport(series, 10, 3, 48, CLOSED))
     expect(text).toContain("Signal [")
-    expect(text).toMatch(/做多|做空|近期无信号/)
+    expect(text).toMatch(/多头观察|空头观察|近期无信号/)
   })
 })

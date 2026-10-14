@@ -153,6 +153,14 @@ export type MoneyFlow = {
   summary?: string
 }
 
+/** One descriptive chip from a positioning series. Not a trade signal. */
+export interface PositionReading {
+  id: string
+  label: string
+  note: string
+  tone: 'neutral' | 'warn'
+}
+
 export interface DerivativeBar {
   time: string
   openInterest: number | null
@@ -162,6 +170,11 @@ export interface DerivativeBar {
   topPositionRatio?: number | null
   topAccountRatio?: number | null
   posture?: string | null
+  /** Ratio / taker readings for this bucket. Funding and basis are snapshot-only. */
+  readings?: PositionReading[]
+  /** Price × OI quadrant shown on the chart: 强多头 / 弱反弹 / 轧空 / 强空头 / 多头踩踏. */
+  quadrant?: string | null
+  quadrantNote?: string | null
 }
 
 /** A perpetual's positioning snapshot. A field is null when the venue did not serve it. */
@@ -192,8 +205,14 @@ export interface Derivatives {
   priceChangePct1h?: number | null
   /** Smart money posture label: e.g. "主力做多 (多头增仓)", "主力开溜 (多头平仓)", "主力做空 (空头增仓)", "空头爆仓 (空头止损)". */
   posture?: string | null
+  /** The four price × OI labels the chart must show. Null inside the dead zone. */
+  quadrant?: string | null
+  /** One-line explanation of `quadrant`, shown next to the badge. */
+  quadrantNote?: string | null
   /** Retail crowd vs whale smart money divergence assessment. */
   crowdVsWhale?: string | null
+  /** Descriptive chips for the series Binance actually returned. Not a direction call. */
+  readings?: PositionReading[]
   /** Historical derivative bars aligned with recent candles. */
   history?: DerivativeBar[]
 }

@@ -89,15 +89,18 @@ describe("reachedT1", () => {
   const s = { index: 0, time: "", side: "long" as const, kind: "flip" as const, entry: 100, stop: 95, target1: 107.5, target2: 115 }
   const bar = (high: number, low: number) => ({ time: "", open: 100, high, low, close: 100, volume: 1 })
   it("counts a trade that tagged T1 and later stopped as a T1 hit", () => {
-    expect(reachedT1([bar(100, 100), bar(108, 101), bar(101, 94)], s)).toBe(true)
+    expect(reachedT1([bar(100, 100), bar(108, 101), bar(101, 94)], s, { lastBarClosed: true })).toBe(true)
   })
   it("same bar hitting stop and T1 resolves to the stop", () => {
-    expect(reachedT1([bar(100, 100), bar(108, 94)], s)).toBe(false)
+    expect(reachedT1([bar(100, 100), bar(108, 94)], s, { lastBarClosed: true })).toBe(false)
   })
-  it("prints expectancy and a small-sample warning", () => {
-    const line = renderSignal({ latest: null, trend: null, blockers: [], record: { finished: 10, hitT1: 4 } })
-    expect(line).toContain("期望 0.00R/笔")
-    expect(line).toContain("样本<30不可信")
+  it("prints touch counts without claiming an unmodeled expectancy", () => {
+    const line = renderSignal({ latest: null, trend: null, blockers: [], record: { finished: 10, hitT1: 4, hitT2: 2, stopped: 8, active: 1 } })
+    expect(line).toContain("结束 10 条")
+    expect(line).toContain("触及T1 4 条")
+    expect(line).toContain("跟踪中 1 条")
+    expect(line).toContain("未计手续费/滑点")
+    expect(line).not.toContain("期望")
   })
 })
 
