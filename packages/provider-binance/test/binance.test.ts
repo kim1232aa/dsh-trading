@@ -53,7 +53,7 @@ describe('Binance Provider Helpers', () => {
     expect(postureOf(1.5, 2.0, false, { takerRatio: 1.35 })).toBe('多头主动吃单')
     expect(postureOf(1.5, 2.0, false, { takerRatio: 0.82 })).toBe('多头被动推高')
     expect(postureOf(-1.5, 2.0, false, { takerRatio: 0.75 })).toBe('空头主动砸盘')
-    expect(postureOf(-1.5, 2.0, false, { takerRatio: 1.25 })).toBe('大户接盘(人数追空)')
+    expect(postureOf(-1.5, 2.0, false, { takerRatio: 1.25 })).toBe('主动买接盘')
     expect(postureOf(-2.5, -2.5, false, { takerRatio: 0.6 })).toBe('多头踩踏')
     expect(postureOf(2.5, -2.5, false, { takerRatio: 1.4 })).toBe('空头爆仓轧空')
     expect(postureOf(1.5, 2.0, true, { fundingRate: 0.0004 })).toBe('价涨增仓 (新仓推动为主) [费率多头拥挤]')
@@ -338,5 +338,92 @@ describe('OKX derivatives history alignment (no live stamp)', () => {
     // sell=0 on newest → history must NOT get sentinel 99
     expect(newest.takerBuySellRatio).not.toBe(99)
     expect(newest.takerBuySellRatio).toBeNull()
+  })
+})
+
+describe('review round 2 regressions', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  const t0 = 1_790_000_000_000
+  const okxBodies = (): Record<string, unknown> => ({
+    'open-interest-history': Array.from({ length: 13 }, (_, i) => [String(t0 - i * 300_000), '10000', '100', '300000']),
+    'open-interest': [{ oi: '10000', oiCcy: '100', oiUsd: '300000', ts: String(t0) }],
+    // 4h interval: fundingTime → nextFundingTime
+    'funding-rate': [{ fundingRate: '0.0001', fundingTime: String(t0), nextFundingTime: String(t0 + 4 * 3600_000) }],
+    'long-short-position-ratio-contract-top-trader': Array.from({ length: 13 }, (_, i) => [String(t0 - i * 300_000), '0.95']),
+    'long-short-account-ratio-contract-top-trader': Array.from({ length: 13 }, (_, i) => [String(t0 - i * 300_000), String(1.1 + i * 0.01)]),
+    'long-short-account-ratio-contract': Array.from({ length: 13 }, (_, i) => [String(t0 - i * 300_000), '1.6']),
+    // [ts, sellVol, buyVol] in COIN (unit=0)
+    'taker-volume-contract': Array.from({ length: 13 }, (_, i) => [String(t0 - i * 300_000), '2', '3']),
+    'mark-price': [{ markPx: '3000' }],
+    'index-tickers': [{ idxPx: '3000' }],
+  })
+  const stubOkx = (seen: string[], bodies = okxBodies()) => vi.stubGlobal('fetch', async (url: URL | Request | string) => {
+    const u = String(url)
+    seen.push(u)
+    const key = Object.keys(bodies).sort((a, b) => b.length - a.length).find(k => u.includes(k))
+    return new Response(JSON.stringify(key ? { code: '0', data: bodies[key] } : { code: '404' }), { status: key ? 200 : 404 })
+  })
+
+  it('OKX: taker in coin (unit=0), per-instId account ratio, topAccountRatio, dynamic funding interval', async () => {
+    const seen: string[] = []
+    stubOkx(seen)
+    const d = await okxDerivatives('BTCUSDT')
+    const taker = seen.find(u => u.includes('taker-volume-contract'))!
+    expect(new URL(taker).searchParams.get('unit')).toBe('0')
+    const acc = seen.find(u => /long-short-account-ratio-contract\?/.test(u))!
+    expect(new URL(acc).searchParams.get('instId')).toBe('BTC-USDT-SWAP')
+    expect(seen.some(u => /long-short-account-ratio\?/.test(u))).toBe(false)
+    // 13 bars × (3−2) coin, ≤1h window → 13 bars inside cutoff (ts from t0 back 60m inclusive)
+    expect(d.cvd1h).toBe(13)
+    expect(d.takerBuySellRatio).toBe(1.5)
+    expect(d.openInterest).toBe(100) // oiCcy, not contracts
+    expect(d.topAccountRatio).toBeCloseTo(1.1, 4)
+    const topAcc = new Set((d.history ?? []).map(h => h.topAccountRatio))
+    expect(topAcc.size).toBeGreaterThan(1)
+    // 4h interval → ×6×365
+    expect(d.fundingRateAnnualizedPct).toBeCloseTo(0.0001 * 100 * 6 * 365, 2)
+  })
+
+  it('funding annualization reads the interval, default 8h', () => {
+    expect(fundingAnnualizedPct(0.0001)).toBeCloseTo(10.95, 2)
+    expect(fundingAnnualizedPct(0.0001, 4)).toBeCloseTo(21.9, 2)
+    expect(fundingAnnualizedPct(0.0001, 1)).toBeCloseTo(87.6, 2)
+  })
+
+  it('taker ≥1.12 on price-down OI-up reads 主动买接盘, not a whale/crowd inference', () => {
+    expect(postureOf(-1.5, 2.0, false, { takerRatio: 1.25 })).toBe('主动买接盘')
+  })
+
+  it('Binance: ratio stats use limit 500 and history posture ignores live funding', async () => {
+    const seen: string[] = []
+    const start = t0 - 299 * 300_000
+    const oiHist = Array.from({ length: 300 }, (_, i) => ({ timestamp: start + i * 300_000, sumOpenInterest: String(1000 + (i % 2 ? 30 : 0)), sumOpenInterestValue: String((1000 + (i % 2 ? 30 : 0)) * (3000 - (i % 2 ? 60 : 0))) }))
+    const ratio = Array.from({ length: 300 }, (_, i) => ({ timestamp: start + i * 300_000, longShortRatio: '1.5' }))
+    const taker = Array.from({ length: 300 }, (_, i) => ({ timestamp: start + i * 300_000, buySellRatio: '1', buyVol: '1', sellVol: '1' }))
+    vi.stubGlobal('fetch', async (url: URL | Request | string) => {
+      const u = String(url)
+      seen.push(u)
+      const body = u.includes('premiumIndex') ? { markPrice: '3000', indexPrice: '3000', lastFundingRate: '0.001', nextFundingTime: t0 + 3600_000, time: t0 }
+        : u.includes('/fapi/v1/openInterest') ? { openInterest: '1000', time: t0 }
+        : u.includes('openInterestHist') ? oiHist
+        : u.includes('takerlongshortRatio') ? taker
+        : u.includes('LongShort') ? ratio
+        : u.includes('liquidation') || u.includes('instruments') ? { code: '0', data: [] }
+        : null
+      return new Response(JSON.stringify(body), { status: body ? 200 : 404 })
+    })
+    const p = new BinanceProvider('binance', ['ETHUSDT'], 'https://data-api.binance.vision', 'https://example.test')
+    const d = await p.getDerivatives('ETHUSDT')
+    expect(d.source).toBe('Binance')
+    for (const ep of ['globalLongShortAccountRatio', 'topLongShortPositionRatio', 'topLongShortAccountRatio', 'takerlongshortRatio']) {
+      const u = seen.find(s => s.includes(ep))!
+      expect(new URL(u).searchParams.get('limit')).toBe('500')
+    }
+    const hist = d.history ?? []
+    // no early gap: every OI bar has a ratio
+    expect(hist.every(h => h.longShortRatio !== null)).toBe(true)
+    // live funding 0.1% must not leak into historical posture
+    expect(hist.some(h => (h.posture ?? '').includes('费率'))).toBe(false)
   })
 })

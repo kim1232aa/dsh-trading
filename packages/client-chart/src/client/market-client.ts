@@ -111,6 +111,38 @@ export interface PanelDerivativeBar {
   readings?: PanelPositionReading[]
 }
 
+/** What the strip shows while the crosshair sits on a historical bar. */
+export interface HistoricalDerivatives extends Omit<PanelDerivatives, 'history' | 'readings'> {
+  isHistorical: true
+}
+
+/**
+ * The strip's view of one historical bar. Every per-bar field comes from the
+ * bar alone — a missing value stays null ("—"), never the live snapshot,
+ * otherwise the flat line comes back. Funding / next funding are snapshot-only.
+ */
+export function derivativesAtBar(live: PanelDerivatives | undefined, bar: PanelDerivativeBar): HistoricalDerivatives {
+  return {
+    source: live?.source ?? '',
+    openInterest: bar.openInterest ?? null,
+    openInterestValue: bar.openInterestValue ?? null,
+    fundingRate: live?.fundingRate ?? null,
+    nextFundingTime: live?.nextFundingTime ?? null,
+    longShortRatio: bar.longShortRatio ?? null,
+    takerBuySellRatio: bar.takerBuySellRatio ?? null,
+    topPositionRatio: bar.topPositionRatio ?? null,
+    topAccountRatio: bar.topAccountRatio ?? null,
+    crowdVsWhale: bar.crowdVsWhale ?? null,
+    time: bar.time,
+    posture: bar.posture ?? null,
+    quadrant: bar.quadrant ?? null,
+    quadrantNote: bar.quadrantNote ?? null,
+    oiChangePct1h: null,
+    priceChangePct1h: null,
+    isHistorical: true,
+  }
+}
+
 /** Mirrors `Derivatives` from @dsh-trading/market-data; duplicated to keep host modules out of the browser bundle. */
 export interface PanelDerivatives {
   source: string

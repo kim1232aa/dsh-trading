@@ -374,3 +374,16 @@ describe("renderSnapshot", () => {
     expect(text.split("\n")).toHaveLength(10)
   })
 })
+
+describe("CVD is a coin quantity", () => {
+  it("renders CVD1h as signed coin qty, not USDT 万/亿", () => {
+    const snapshot = regimeSnapshot(RISING, {
+      source: "OKX", openInterest: 1000, openInterestValue: 2000000, fundingRate: 0.0001,
+      nextFundingTime: null, longShortRatio: 1.5, longShortRatioKind: "global_accounts",
+      takerBuySellRatio: 1.2, time: "2024-01-01T00:00:00.000Z", cvd1h: 24918.5,
+    })
+    const text = renderSnapshot("1d", snapshot)
+    expect(text).toContain("CVD1h +24918.5币")
+    expect(text).not.toMatch(/CVD1h [+-]?[\d.]+万/)
+  })
+})

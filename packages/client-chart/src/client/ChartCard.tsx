@@ -410,11 +410,27 @@ const FOLD = {
 let registered = false
 
 
-/** Match a derivative history bar to a candle open time (within 15 minutes). */
+/**
+ * Match a derivative history bar to a candle open time.
+ * - No interval (or ≤15m): nearest 5m snapshot within 15 minutes.
+ * - Larger candles (1h/4h/1d): the LAST snapshot inside [open, open+interval) —
+ *   a 1d candle otherwise almost never lines up with a 5m snapshot.
+ */
 export function matchDerivativeHistory(
   history: PanelDerivativeBar[],
   timestampMs: number,
+  intervalMs?: number,
 ): PanelDerivativeBar | undefined {
+  if (intervalMs !== undefined && intervalMs > 900_000) {
+    let best: PanelDerivativeBar | undefined
+    let bestT = -Infinity
+    for (const h of history) {
+      const t = Date.parse(h.time)
+      if (!Number.isFinite(t) || t < timestampMs || t >= timestampMs + intervalMs) continue
+      if (t > bestT) { bestT = t; best = h }
+    }
+    return best
+  }
   const kSec = Math.floor(timestampMs / 1000)
   let bestDiff = Infinity
   let matched: PanelDerivativeBar | undefined
@@ -428,6 +444,13 @@ export function matchDerivativeHistory(
     }
   }
   return matched
+}
+
+/** Candle spacing from the first two bars; undefined when it cannot be read. */
+export function inferIntervalMs(kLineDataList: { timestamp?: number }[]): number | undefined {
+  const a = kLineDataList[0]?.timestamp
+  const b = kLineDataList[1]?.timestamp
+  return a !== undefined && b !== undefined && b > a ? b - a : undefined
 }
 
 export type OiPostureRow = {
@@ -459,7 +482,7 @@ export function calcOiPostureRows(
       oiValues.push(undefined)
       return {}
     }
-    const bar = matchDerivativeHistory(history, ts)
+    const bar = matchDerivativeHistory(history, ts, inferIntervalMs(kLineDataList))
     if (!bar) {
       oiValues.push(undefined)
       return {}
@@ -506,7 +529,7 @@ export function calcLsrRatioRows(
   return kLineDataList.map(k => {
     const ts = k.timestamp
     if (ts === undefined) return {}
-    const bar = matchDerivativeHistory(history, ts)
+    const bar = matchDerivativeHistory(history, ts, inferIntervalMs(kLineDataList))
     if (!bar) return {}
     const lsr = bar.longShortRatio != null && Number.isFinite(bar.longShortRatio) ? bar.longShortRatio : undefined
     const topPos = bar.topPositionRatio != null && Number.isFinite(bar.topPositionRatio) ? bar.topPositionRatio : undefined
@@ -636,7 +659,7 @@ function ensureRegistered(): void {
       let target: PanelDerivativeBar | undefined = row?.bar
       let deltaVal: number | undefined = row?.deltaOi
       if (!target && ts !== undefined) {
-        target = matchDerivativeHistory(history, ts)
+        target = matchDerivativeHistory(history, ts, inferIntervalMs(kLineDataList))
       }
       // Strictly prevent time-travel leakage: only fallback to latest live snapshot on the newest candle
       if (!target && dataIndex >= kLineDataList.length - 1) {
@@ -746,7 +769,7 @@ function ensureRegistered(): void {
       const row = res[dataIndex] as LsrRatioRow | undefined
       const ts = crosshair.kLineData?.timestamp ?? kLineDataList[dataIndex]?.timestamp
       let target: PanelDerivativeBar | undefined = row?.bar
-      if (!target && ts !== undefined) target = matchDerivativeHistory(history, ts)
+      if (!target && ts !== undefined) target = matchDerivativeHistory(history, ts, inferIntervalMs(kLineDataList))
       if (!target && dataIndex >= kLineDataList.length - 1) target = history[history.length - 1]
       if (!target) {
         return {

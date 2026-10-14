@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { CSSProperties, FormEvent } from 'react'
 import type { ChartOwnerProps } from '@dsh-trading/client-frame/client'
 import { ChartBody, ChartErrorBoundary, matchDerivativeHistory } from './ChartCard.js'
+import { derivativesAtBar } from './market-client.js'
 import { getLatestChart, subscribeLatestChart } from './latest.js'
 import { decideFollow } from './follow.js'
 import { mergeMarks, mergeTail, postureColor, readMarks, recallMarks, rememberMarks, withCandles } from './market-client.js'
@@ -29,6 +30,11 @@ import type { FundamentalsPackage, Orderbook } from '@dsh-trading/market-data'
 
 /** Timeframes the panel offers; the provider may serve a subset and will say so. */
 const TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'] as const
+
+const TF_MS: Record<string, number> = {
+  '1m': 60_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
+  '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000, '1w': 604_800_000,
+}
 
 /** Bars pulled per live refresh: the forming bar, plus a little overlap for a just-closed one. */
 const TAIL_BARS = 3
@@ -278,13 +284,15 @@ export function formatCountdown(untilIso: string, now: number): string {
  * nothing for a provider without futures data (CSV, equities); a failed fetch
  * says so instead of showing stale numbers as current.
  */
-function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTime }: {
+function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTime, intervalMs }: {
   market: MarketClient
   symbol: string
   providerId: string
   live: boolean
   onData?: (data: PanelDerivatives | null) => void
   hoveredTime?: number | null
+  /** Candle interval; >15m picks the last snapshot inside the bar. */
+  intervalMs?: number | undefined
 }): JSX.Element | null {
   const [data, setData] = useState<PanelDerivatives | null | undefined>(undefined)
   const [failed, setFailed] = useState<string | null>(null)
@@ -321,8 +329,8 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
   // Crosshair hover: same 15m window as ChartCard.matchDerivativeHistory (not 5m chips).
   const historyBar = useMemo(() => {
     if (!hoveredTime || !data?.history || data.history.length === 0) return null
-    return matchDerivativeHistory(data.history, hoveredTime) ?? null
-  }, [hoveredTime, data])
+    return matchDerivativeHistory(data.history, hoveredTime, intervalMs) ?? null
+  }, [hoveredTime, data, intervalMs])
 
   if (providerId === 'cn' || data === null) return null
   if (failed !== null && data === undefined) {
@@ -330,25 +338,9 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
     return <div style={STRIP} title={failed}>合约数据获取失败（{failed.slice(0, 80)}），{DERIV_MS / 1000}s 后重试</div>
   }
 
-  const target = historyBar ? {
-    source: data?.source ?? '',
-    openInterest: historyBar.openInterest ?? data?.openInterest,
-    openInterestValue: historyBar.openInterestValue ?? data?.openInterestValue,
-    fundingRate: data?.fundingRate ?? null,
-    nextFundingTime: data?.nextFundingTime ?? null,
-    longShortRatio: historyBar.longShortRatio ?? data?.longShortRatio,
-    takerBuySellRatio: historyBar.takerBuySellRatio ?? data?.takerBuySellRatio,
-    time: historyBar.time,
-    posture: data?.posture,
-    quadrant: data?.quadrant,
-    quadrantNote: data?.quadrantNote,
-    topPositionRatio: historyBar.topPositionRatio ?? data?.topPositionRatio,
-    topAccountRatio: historyBar.topAccountRatio ?? data?.topAccountRatio,
-    crowdVsWhale: historyBar.crowdVsWhale ?? data?.crowdVsWhale,
-    oiChangePct1h: data?.oiChangePct1h,
-    priceChangePct1h: data?.priceChangePct1h,
-    isHistorical: true,
-  } : data
+  // Historical hover: per-bar values only; missing → '—', never the live value.
+  const target = historyBar ? derivativesAtBar(data, historyBar) : data
+  const hist = historyBar !== null
 
   const show = (v: number | null | undefined, f: (n: number) => string): string =>
     v === null || v === undefined ? '—' : f(v)
@@ -379,17 +371,17 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
         {data?.fundingLabel ? <span style={{ marginLeft: 3, opacity: 0.85 }}>{data.fundingLabel}</span> : null}
         {countdown !== '' ? <span style={{ marginLeft: 4 }}>{countdown}</span> : null}
       </span>
-      {target?.longShortRatio != null ? (
-        <span title="全市场账户数多空比。>1=净多账户，不是仓位。">账户人数比<span style={VALUE}>{target.longShortRatio.toFixed(2)}</span></span>
+      {hist || target?.longShortRatio != null ? (
+        <span title="全市场账户数多空比。>1=净多账户，不是仓位。">账户人数比<span style={VALUE}>{show(target?.longShortRatio, n => n.toFixed(2))}</span></span>
       ) : null}
-      {target?.topPositionRatio != null ? (
-        <span title="大户持仓量多空比。>1=净多仓。">大户持仓比<span style={VALUE}>{target.topPositionRatio.toFixed(2)}</span></span>
+      {hist || target?.topPositionRatio != null ? (
+        <span title="大户持仓量多空比。>1=净多仓。">大户持仓比<span style={VALUE}>{show(target?.topPositionRatio, n => n.toFixed(2))}</span></span>
       ) : null}
-      {target?.topAccountRatio != null ? (
-        <span title="大户账户数比；与持仓比背离时更大仓在另一侧。">大户账户比<span style={VALUE}>{target.topAccountRatio.toFixed(2)}</span></span>
+      {hist || target?.topAccountRatio != null ? (
+        <span title="大户账户数比；与持仓比背离时更大仓在另一侧。">大户账户比<span style={VALUE}>{show(target?.topAccountRatio, n => n.toFixed(2))}</span></span>
       ) : null}
-      {target?.takerBuySellRatio != null ? (
-        <span title="主动买/卖量比（成交口径）">主动买卖<span style={VALUE}>{target.takerBuySellRatio.toFixed(2)}</span></span>
+      {hist || target?.takerBuySellRatio != null ? (
+        <span title="主动买/卖量比（成交口径）">主动买卖<span style={VALUE}>{show(target?.takerBuySellRatio, n => n.toFixed(2))}</span></span>
       ) : null}
       {data?.cvd1h != null ? (
         <span title={`近1h主动买卖差（币数，非USDT）。${data.cvdNote ?? ''} 仅描述背离，非信号。`}>CVD1h<span style={VALUE}>{compact.format(data.cvd1h)}</span>{data.cvdNote ? <span style={{ marginLeft: 3, opacity: 0.85 }}>{data.cvdNote}</span> : null}</span>
@@ -402,6 +394,7 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
       ) : data && data.source && !data.liquidationSummary ? (
         <span style={{ opacity: 0.7 }} title="本所近1h爆仓暂无">爆仓 –</span>
       ) : null}
+      {hist && !target?.quadrant && !target?.posture ? <span title="该K线无姿态数据">姿态 —</span> : null}
       {target?.quadrant || target?.posture ? (
         <span
           title={`价×仓姿态(按币数Δ)。1h价 ${target.priceChangePct1h != null ? (target.priceChangePct1h > 0 ? '+' : '') + target.priceChangePct1h.toFixed(2) + '%' : '—'} 仓 ${target.oiChangePct1h != null ? (target.oiChangePct1h > 0 ? '+' : '') + target.oiChangePct1h.toFixed(2) + '%' : '—'}；4h仓 ${data?.oiChangePct4h != null ? (data.oiChangePct4h > 0 ? '+' : '') + data.oiChangePct4h.toFixed(2) + '%' : '—'}；24h仓 ${data?.oiChangePct24h != null ? (data.oiChangePct24h > 0 ? '+' : '') + data.oiChangePct24h.toFixed(2) + '%' : '—'}。涨+增仓=新仓推动；涨+减仓=空头回补。${target.quadrantNote ?? target.posture ?? ''}`}
@@ -1332,6 +1325,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
                 live={live}
                 onData={setPanelDerivatives}
                 hoveredTime={hoveredTime}
+                intervalMs={shownTimeframe ? TF_MS[shownTimeframe] : undefined}
               />
             ) : null}
             {payload.provider === 'cn' ? (

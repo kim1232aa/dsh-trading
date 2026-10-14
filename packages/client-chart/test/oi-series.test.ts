@@ -90,3 +90,39 @@ describe('OI_POSTURE / LSR_RATIO series', () => {
     expect(calcLsrRatioRows(candles, [])).toEqual([{}, {}, {}])
   })
 })
+
+import { derivativesAtBar } from '../src/client/market-client.js'
+
+describe('historical hover never falls back to live', () => {
+  const live = {
+    source: 'OKX', openInterest: 1, openInterestValue: 1, fundingRate: 0.0001, nextFundingTime: null,
+    longShortRatio: 1.9, topPositionRatio: 0.9, topAccountRatio: 1.3, takerBuySellRatio: 1.4,
+    time: '2026-10-15T01:00:00Z', posture: 'LIVE', quadrant: '强多头', quadrantNote: 'live note',
+    oiChangePct1h: 2, priceChangePct1h: 1,
+  }
+  it('missing history values stay null; posture/quadrant come from the bar', () => {
+    const t = derivativesAtBar(live, bar({ time: '2026-10-15T00:00:00Z', openInterest: 5, posture: '多头平仓' }))
+    expect(t.longShortRatio).toBeNull()
+    expect(t.topPositionRatio).toBeNull()
+    expect(t.topAccountRatio).toBeNull()
+    expect(t.takerBuySellRatio).toBeNull()
+    expect(t.openInterestValue).toBeNull()
+    expect(t.posture).toBe('多头平仓')
+    expect(t.quadrant).toBeNull()
+    expect(t.quadrantNote).toBeNull()
+    expect(t.oiChangePct1h).toBeNull()
+    expect(t.isHistorical).toBe(true)
+    expect(t.fundingRate).toBe(0.0001) // funding is snapshot-only, labelled live
+  })
+})
+
+describe('matchDerivativeHistory on large bars', () => {
+  const h0 = Date.parse('2026-10-15T00:00:00Z')
+  const hist = Array.from({ length: 12 }, (_, i) => bar({ time: new Date(h0 + i * 300_000).toISOString(), openInterest: i }))
+  it('picks the last snapshot inside the candle interval', () => {
+    expect(matchDerivativeHistory(hist, h0, 3600_000)?.openInterest).toBe(11)
+    expect(matchDerivativeHistory(hist, h0 - 86_400_000, 86_400_000)).toBeUndefined()
+    // default behaviour unchanged
+    expect(matchDerivativeHistory(hist, h0)?.openInterest).toBe(0)
+  })
+})

@@ -334,7 +334,7 @@ export function renderSnapshot(timeframe: string, s: RegimeSnapshot): string {
       d.oiChangePct24h != null ? `24h仓 ${formatPctCn(d.oiChangePct24h)}` : null,
     ].filter(Boolean).join(' · ')
     const posture = d.posture ? ` → ${d.posture}` : ''
-    const cvd = d.cvd1h != null ? ` | CVD1h ${formatUsdtCn(d.cvd1h, { signed: true })}${d.cvdNote ? `(${d.cvdNote})` : ''}` : ''
+    const cvd = d.cvd1h != null ? ` | CVD1h ${d.cvd1h > 0 ? '+' : ''}${Number(d.cvd1h.toFixed(2))}币${d.cvdNote ? `(${d.cvdNote})` : ''}` : ''
     const basis = d.basisPct != null ? ` | 基差 ${formatPctCn(d.basisPct, 3)}` : ''
     const liq = d.liquidationSummary ? ` | ${d.liquidationSummary}` : ''
     const crowd = d.crowdVsWhale ? ` | ${d.crowdVsWhale}` : ''
