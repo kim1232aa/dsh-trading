@@ -68,6 +68,7 @@ describe('sanitizeSettings', () => {
       OB_BB: { params: [], visible: false },
       MTF_SR: { params: [5], visible: false },
       OI_POSTURE: { params: [], visible: true },
+      RSI_GRID: { params: [7, 30, 60, 10], visible: true },
       REVPOINT: { params: [0.7, 2, 3, 0, 0, 1, 0, 1, 0], visible: true },
       LSR_RATIO: { params: [], visible: true },
       ENTRY_SIGNAL: { params: [60, 4], visible: false },

@@ -254,6 +254,7 @@ export const EDITABLE: {
   { name: 'NW_TREND', title: '核回归趋势(QuantAlgo)', defaults: [50, 8, 2.0, 1.8], defaultVisible: false, params: [period('回溯周期'), { label: '带宽', min: 1, max: 50, step: 1 }, { label: '倍数', min: 0.5, max: 10, step: 0.1 }, { label: '通道倍数', min: 0.5, max: 10, step: 0.1 }] },
   { name: 'OB_BB', title: '订单块/破坏块(RWB)', defaults: [], defaultVisible: false, params: [] },
   { name: 'MTF_SR', title: '多周期支撑阻力(Syndicate)', defaults: [5], defaultVisible: false, params: [period('Pivot周期')] },
+  { name: 'RSI_GRID', title: 'RSI策略网格现货', pane: 'pane_rsi_grid', defaults: [7, 30, 60, 10], params: [period('RSI周期'), period('低阈值'), period('高阈值'), period('累加阈值')] },
   { name: 'REVPOINT', title: '反转点标注 RevPoint', defaults: [0.7, 2.0, 3, 0, 0, 1, 0, 1, 0], params: [{ label: '细档确认阈值%', min: 0.1, max: 10, step: 0.1 }, { label: '粗档(大周期)阈值%', min: 0.5, max: 20, step: 0.1 }, { label: '多周期pivot左右bar数', min: 1, max: 10, step: 1 }, { label: '15m(0/1)', min: 0, max: 1, step: 1 }, { label: '30m(0/1)', min: 0, max: 1, step: 1 }, { label: '1H(0/1)', min: 0, max: 1, step: 1 }, { label: '2H(0/1)', min: 0, max: 1, step: 1 }, { label: '4H(0/1)', min: 0, max: 1, step: 1 }, { label: '细档最少★数', min: 0, max: 4, step: 1 }] },
   { name: 'OI_POSTURE', title: '合约OI', pane: 'pane_oi_posture', defaults: [], params: [] },
   { name: 'LSR_RATIO', title: '多空比', pane: 'pane_lsr', defaults: [], params: [] },
@@ -859,9 +860,27 @@ function klineStyles(p: Palette, coordType: CoordType = 'normal'): Record<string
         low: { color: p.faint },
         last: { upColor: p.up, downColor: p.down, noChangeColor: p.faint },
       },
-      tooltip: { text: { color: p.text, family: FONT_FAMILY }, icons: [FOLD] },
+      tooltip: {
+        showType: 'rect',
+        text: { color: p.text, family: FONT_FAMILY },
+        icons: [FOLD],
+        rect: {
+          position: 'fixed',
+          paddingLeft: 6, paddingRight: 6, paddingTop: 4, paddingBottom: 4,
+          offsetLeft: 4, offsetTop: 4, offsetRight: 4, offsetBottom: 4,
+          borderRadius: 4, borderSize: 1,
+          borderColor: p.line,
+          color: p.text === '#c9d1d9' ? 'rgba(22,27,34,0.92)' : 'rgba(255,255,255,0.92)',
+        },
+      },
     },
-    indicator: { tooltip: { text: { color: p.text, family: FONT_FAMILY }, showRule: 'none' } },
+    indicator: {
+      tooltip: {
+        showType: 'rect',
+        showRule: 'none',
+        text: { color: p.text, family: FONT_FAMILY },
+      },
+    },
     xAxis: { axisLine: { color: p.line }, tickText: tick, tickLine: { color: p.line } },
     yAxis: { axisLine: { color: p.line }, tickText: tick, tickLine: { color: p.line }, type: toYAxisType(coordType) },
     separator: { color: p.line },
@@ -1077,8 +1096,9 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     chartRef.current?.setStyles({ indicator: { tooltip: { showRule: fold ? TooltipShowRule.None : TooltipShowRule.Always } } })
   }
   const paneCount = active.filter(id => CHIP_DEFS.find(d => d.id === id)?.indicator?.overlay !== true).length
-    + (active.includes('rsi') ? 1 : 0)
     + EDITABLE.filter(d => d.pane !== undefined && settings[d.name]?.visible).length
+    // RSI_GRID also mounts the 累计差值 pane under it.
+    + (settings['RSI_GRID']?.visible ? 1 : 0)
 
   useEffect(() => {
     const container = el.current
@@ -1107,7 +1127,13 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivativesRef.current?.history : undefined
       if (def.pane !== undefined) {
         // Own pane: created only when shown, so a hidden one doesn't leave a blank strip.
-        if (s.visible) chart.createIndicator({ name: def.name, calcParams: s.params, extendData: ext }, false, { id: def.pane, height: PANE_HEIGHT })
+        if (s.visible) {
+          chart.createIndicator({ name: def.name, calcParams: s.params, extendData: ext }, false, { id: def.pane, height: PANE_HEIGHT })
+          if (def.name === 'RSI_GRID') {
+            chart.createIndicator({ name: 'RSI_GRID_CUM', calcParams: s.params }, false, { id: 'pane_rsi_cum', height: PANE_HEIGHT })
+            chart.createIndicator({ name: 'RSI_GRID_MARKS', calcParams: s.params }, true, { id: 'candle_pane' })
+          }
+        }
         continue
       }
       chart.createIndicator({ name: def.name, calcParams: s.params, visible: s.visible, extendData: ext }, true, { id: 'candle_pane' })
@@ -1130,12 +1156,9 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       const def = CHIP_DEFS.find(d => d.id === id)
       if (!def?.indicator) continue
       if (def.indicator.builtIn === true) {
+        // RSI_GRID is owned by EDITABLE (指标参数) so params stay in sync; skip here.
+        if (def.indicator.name === 'RSI_GRID') continue
         chart.createIndicator(def.indicator.name, false, { id: `pane_${def.id}`, height: PANE_HEIGHT })
-        if (def.indicator.name === 'RSI_GRID') {
-          // 累计差值 gets its own pane/axis; entry/exit markers go on the candles.
-          chart.createIndicator('RSI_GRID_CUM', false, { id: 'pane_rsi_cum', height: PANE_HEIGHT })
-          chart.createIndicator('RSI_GRID_MARKS', true, { id: 'candle_pane' })
-        }
         continue
       }
       if (!hasSeries(data, def.indicator.figures)) continue
@@ -1217,9 +1240,25 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivatives?.history : undefined
       if (def.pane !== undefined) {
         const exists = chart.getIndicatorByPaneId(def.pane, def.name) != null
-        if (!s.visible) { if (exists) chart.removeIndicator(def.pane, def.name) }
-        else if (!exists) chart.createIndicator({ name: def.name, calcParams: s.params, extendData: ext }, false, { id: def.pane, height: PANE_HEIGHT })
-        else chart.overrideIndicator({ name: def.name, calcParams: s.params, extendData: ext }, def.pane)
+        if (!s.visible) {
+          if (exists) chart.removeIndicator(def.pane, def.name)
+          if (def.name === 'RSI_GRID') {
+            chart.removeIndicator('pane_rsi_cum', 'RSI_GRID_CUM')
+            chart.removeIndicator('candle_pane', 'RSI_GRID_MARKS')
+          }
+        } else if (!exists) {
+          chart.createIndicator({ name: def.name, calcParams: s.params, extendData: ext }, false, { id: def.pane, height: PANE_HEIGHT })
+          if (def.name === 'RSI_GRID') {
+            chart.createIndicator({ name: 'RSI_GRID_CUM', calcParams: s.params }, false, { id: 'pane_rsi_cum', height: PANE_HEIGHT })
+            chart.createIndicator({ name: 'RSI_GRID_MARKS', calcParams: s.params }, true, { id: 'candle_pane' })
+          }
+        } else {
+          chart.overrideIndicator({ name: def.name, calcParams: s.params, extendData: ext }, def.pane)
+          if (def.name === 'RSI_GRID') {
+            chart.overrideIndicator({ name: 'RSI_GRID_CUM', calcParams: s.params }, 'pane_rsi_cum')
+            chart.overrideIndicator({ name: 'RSI_GRID_MARKS', calcParams: s.params }, 'candle_pane')
+          }
+        }
         continue
       }
       chart.overrideIndicator({ name: def.name, calcParams: s.params, visible: s.visible, extendData: ext }, 'candle_pane')
@@ -1788,7 +1827,7 @@ function getInitialActiveChips(): string[] {
       }
     }
   } catch {}
-  return ['vol', 'rsi']
+  return ['vol']
 }
 
 export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, fill = false, prose = true, derivatives, onCrosshairHover }: {
@@ -1834,7 +1873,12 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
   const first = tf.candles[0]!
   const changePct = get(tf.indicators, 'changePct')
   const palette = dark ? DARK : LIGHT
-  const toggle = (id: string): void =>
+  const toggle = (id: string): void => {
+    if (id === 'rsi') {
+      const cur = settings['RSI_GRID']!
+      setSettings({ ...settings, RSI_GRID: { ...cur, visible: !cur.visible } })
+      return
+    }
     setActiveChips(prev => {
       let next: string[]
       if (prev.includes(id)) {
@@ -1845,12 +1889,13 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
       try { localStorage.setItem(CHIPS_STORAGE_KEY, JSON.stringify(next)) } catch {}
       return next
     })
+  }
 
   const chipRow = tf.indicators === null ? [] : CHIP_DEFS.flatMap((def) => {
     const { text, state } = def.label(tf.indicators!)
     if (typeof state !== 'string' || state === '') return []
     const togglable = def.indicator !== undefined && (def.indicator.builtIn === true || hasSeries(tf, def.indicator.figures))
-    return [{ id: def.id, text: `${text} · ${zhState(state)}`, togglable, on: activeChips.includes(def.id) }]
+    return [{ id: def.id, text: `${text} · ${zhState(state)}`, togglable, on: def.id === 'rsi' ? (settings['RSI_GRID']?.visible ?? false) : activeChips.includes(def.id) }]
   })
 
   const rows = (tf.annotations ?? [])
