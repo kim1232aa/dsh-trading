@@ -18,11 +18,11 @@ export interface AuthorityConfig {
   publicKeyPem?: string | undefined
 }
 
-// A plain object, not a cordis Service: constructing a Service inside apply()
-// and assigning ctx.authority by hand is not a supported pattern, and
-// combined with the old `export default apply` made cordis instantiate the
-// plugin as a class before its inject list was honoured (boot error:
-// 'cannot get property "tools" without inject').
+// Namespace-plugin form (name/inject/Config/apply) with NO default export:
+// a default export makes the cordis Loader's unwrapExports discard `inject`
+// (docs/postmortem/0001-acp-default-export-drops-inject.md). No other plugin
+// consumes ctx.authority, so this is a plain helper, not a cordis Service;
+// if it ever becomes one, use class form per docs/user/develop/framework/service.md.
 export class AuthorityService {
   readonly engine: AuthorityEngine
 

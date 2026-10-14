@@ -20,10 +20,11 @@ export interface Config {
 }
 
 export const name = 'tasks-schedule'
-// cordis treats every key of an inject map as REQUIRED (a {required, optional}
-// object would make it wait for services literally named "required"/"optional"
-// forever). The trading bundle always provides marketData, so require it.
-export const inject = ['tools', 'marketData'] as const
+// Only `tools` is required. marketData is optional: per dsh docs
+// (docs/user/develop/framework/service.md "Required and optional dependencies";
+// postmortem 0001 root cause #2) an optional service is left out of `inject`
+// and read with ctx.get() at the use site.
+export const inject = ['tools'] as const
 
 export function apply(ctx: Context, config: Config = {}): void {
   const tasksFilePath = resolve(process.cwd(), config.tasksFilePath ?? './data/tasks.json')
@@ -201,7 +202,7 @@ export function apply(ctx: Context, config: Config = {}): void {
 
         const start = Date.now()
         const res = await executeTaskAction(task, {
-          marketData: ctx.marketData as MarketData | undefined,
+          marketData: ctx.get('marketData') as MarketData | undefined,
         })
         const durationMs = Date.now() - start
 
@@ -271,5 +272,3 @@ export function apply(ctx: Context, config: Config = {}): void {
     }),
   )
 }
-
-export default { name, inject, apply }

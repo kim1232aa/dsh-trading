@@ -7,10 +7,15 @@
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "exports": {
-    ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" },
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
     "./package.json": "./package.json"
   },
-  "files": ["lib"],
+  "files": [
+    "lib"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -26,5 +31,12 @@
     "@dsh-trading/market-data": "workspace:^",
     "@types/node": "^22.10.0",
     "typescript": "^5.7.2"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kim1232aa/dsh-trading.git",
+    "directory": "packages/provider-binance"
+  },
+  "homepage": "https://github.com/kim1232aa/dsh-trading#readme",
+  "bugs": "https://github.com/kim1232aa/dsh-trading/issues"
 }

@@ -67,3 +67,8 @@
       config:
         tasksFilePath: ./data/tasks.json
         logsFilePath: ./data/task-logs.json
+
+# Not inserted here on purpose: provider-cn and provider-binance call live
+# public endpoints, and like provider-futu they are opt-in. ctx.marketData
+# holds several providers, so add them BESIDE market-data-provider from your
+# own profile patch — see README "Design" for the rows.

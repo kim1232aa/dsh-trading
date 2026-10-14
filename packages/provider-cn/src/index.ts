@@ -19,6 +19,7 @@ export interface Config {
   eastmoneyBaseURL: string
   sinaBaseURL: string
   tencentBaseURL: string
+  timeoutMs: number
 }
 
 export const Config: z<Config> = z.object({
@@ -26,6 +27,7 @@ export const Config: z<Config> = z.object({
   eastmoneyBaseURL: z.string().default('https://push2his.eastmoney.com'),
   sinaBaseURL: z.string().default('https://quotes.sina.cn'),
   tencentBaseURL: z.string().default('https://qt.gtimg.cn'),
+  timeoutMs: z.number().min(1).default(8000).description('Per-request upstream timeout (ms).'),
 }) as unknown as z<Config>
 
 export const ALL_CN_TIMEFRAMES: Timeframe[] = ['1m', '5m', '15m', '30m', '1h', '1d', '1w']
@@ -222,9 +224,14 @@ export class CnMarketProvider implements MarketDataProvider {
     private readonly emBaseURL: string,
     private readonly sinaBaseURL: string,
     private readonly tencentBaseURL: string = 'https://qt.gtimg.cn',
+    private readonly timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS,
   ) {
     this.id = id
     this.description = 'A股行情与资金流 (东财主源 + 新浪容灾 + 腾讯极速盘口)'
+  }
+
+  private fetchT(input: string | URL): Promise<Response> {
+    return fetch(input, { signal: AbortSignal.timeout(this.timeoutMs) })
   }
 
   matchesSymbol(symbol: string): boolean {
@@ -263,7 +270,7 @@ export class CnMarketProvider implements MarketDataProvider {
     url.searchParams.set('fields2', 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61')
     url.searchParams.set('lmt', String(limit))
 
-    const res = await fetchT(url)
+    const res = await this.fetchT(url)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
     const data = await res.json() as { data?: { klines?: string[] } }
@@ -297,7 +304,7 @@ export class CnMarketProvider implements MarketDataProvider {
     url.searchParams.set('ma', 'no')
     url.searchParams.set('datalen', String(limit))
 
-    const res = await fetchT(url)
+    const res = await this.fetchT(url)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
     const text = await res.text()
@@ -338,7 +345,7 @@ export class CnMarketProvider implements MarketDataProvider {
     url.searchParams.set('fields2', 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65')
     url.searchParams.set('lmt', '5')
 
-    const res = await fetchT(url)
+    const res = await this.fetchT(url)
     if (!res.ok) throw new Error(`Eastmoney fflow HTTP ${res.status}`)
 
     const json = await res.json() as {
@@ -368,7 +375,7 @@ export class CnMarketProvider implements MarketDataProvider {
       const qUrl = new URL('https://push2.eastmoney.com/api/qt/stock/get')
       qUrl.searchParams.set('secid', sym.secid)
       qUrl.searchParams.set('fields', 'f48,f58')
-      const qRes = await fetchT(qUrl)
+      const qRes = await this.fetchT(qUrl)
       if (qRes.ok) {
         const qJson = await qRes.json() as { data?: { f48?: number } }
         const turnover = qJson?.data?.f48
@@ -399,7 +406,7 @@ export class CnMarketProvider implements MarketDataProvider {
 
   async getOrderbook(symbol: string): Promise<Orderbook> {
     const { sinaSymbol } = parseCnSymbol(symbol)
-    const res = await fetchT(`${this.tencentBaseURL}/q=${sinaSymbol}`)
+    const res = await this.fetchT(`${this.tencentBaseURL}/q=${sinaSymbol}`)
     if (!res.ok) throw new Error(`Tencent quote HTTP ${res.status} for ${symbol}`)
     const text = await res.text()
     const { orderbook } = parseTencentQuote(text, symbol)
@@ -408,7 +415,7 @@ export class CnMarketProvider implements MarketDataProvider {
 
   async getFundamentals(symbol: string): Promise<FundamentalsPackage> {
     const { sinaSymbol } = parseCnSymbol(symbol)
-    const res = await fetchT(`${this.tencentBaseURL}/q=${sinaSymbol}`)
+    const res = await this.fetchT(`${this.tencentBaseURL}/q=${sinaSymbol}`)
     if (!res.ok) throw new Error(`Tencent quote HTTP ${res.status} for ${symbol}`)
     const text = await res.text()
     const { fundamentals } = parseTencentQuote(text, symbol)
@@ -418,10 +425,8 @@ export class CnMarketProvider implements MarketDataProvider {
 
 
 /** Upstream quote endpoints occasionally hang; never let a tool call wait forever. */
-const FETCH_TIMEOUT_MS = 8_000
-function fetchT(input: string | URL): Promise<Response> {
-  return fetch(input, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
-}
+// Tunable per docs/user/develop/basic/config.md ("Do not hardcode tunable values"): Config.timeoutMs.
+const DEFAULT_FETCH_TIMEOUT_MS = 8_000
 
 /** Drop rows whose OHLC did not parse — a NaN bar poisons every indicator downstream. */
 export function finiteBars(bars: Candle[]): Candle[] {
@@ -429,5 +434,5 @@ export function finiteBars(bars: Candle[]): Candle[] {
 }
 
 export function apply(ctx: Context, config: Config): void {
-  ctx.effect(() => ctx.marketData.register(new CnMarketProvider(config.id, config.eastmoneyBaseURL, config.sinaBaseURL, config.tencentBaseURL)))
+  ctx.effect(() => ctx.marketData.register(new CnMarketProvider(config.id, config.eastmoneyBaseURL, config.sinaBaseURL, config.tencentBaseURL, config.timeoutMs)))
 }

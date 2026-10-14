@@ -47,11 +47,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/maddogfinance/dsh-trading.git",
+    "url": "git+https://github.com/kim1232aa/dsh-trading.git",
     "directory": "packages/client-frame"
   },
-  "homepage": "https://github.com/maddogfinance/dsh-trading#readme",
-  "bugs": "https://github.com/maddogfinance/dsh-trading/issues",
+  "homepage": "https://github.com/kim1232aa/dsh-trading#readme",
+  "bugs": "https://github.com/kim1232aa/dsh-trading/issues",
   "publishConfig": {
     "access": "public"
   },

@@ -15,7 +15,8 @@ describe('plugin module shape', () => {
       if (typeof mod.apply !== 'function') return // library-only package
       expect(Array.isArray(mod.inject ?? [])).toBe(true)
       for (const s of mod.inject ?? []) expect(['tools', 'marketData']).toContain(s)
-      if (typeof mod.default === 'function') expect(mod.default).not.toBe(mod.apply)
+      // docs/testing.md: namespace plugins must not carry a default export at all.
+      expect('default' in mod).toBe(false)
     })
   }
 })

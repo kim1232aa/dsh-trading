@@ -77,7 +77,7 @@ window.
 
 ## Design
 
-Eight packages, one direction of dependency:
+Fifteen packages, one direction of dependency:
 
 ```
 @dsh-trading/tool-market      model-facing tools (list_symbols, get_ohlcv,
@@ -112,6 +112,22 @@ Eight packages, one direction of dependency:
                               sidebar | chart | conversation | details,
                               70/30 by default with the sidebar railed — and
                               declares the `trading.chart` seat
+
+Research-desk plugins (bundled, each registers its own tools on ctx.tools):
+@dsh-trading/holdings         ledger: stage_trade / commit_trade / discard_trade,
+                              get_holdings, list_trades (records, never executes)
+@dsh-trading/watchlist        add_to_watchlist / remove_from_watchlist / get_watchlist
+@dsh-trading/knowledge        thesis store: record_thesis, query_theses,
+                              update_thesis_status
+@dsh-trading/authority        check_trade_authority: fail-closed Ed25519 grant check
+@dsh-trading/tasks-schedule   scheduled research tasks (create/list/remove/
+                              run_scheduled_task_now, get_scheduled_task_logs);
+                              reads ctx.marketData only when present
+
+More providers (opt-in, NOT bundled — they call live public endpoints):
+@dsh-trading/provider-cn      A-share bars, money flow, orderbook
+                              (Eastmoney, Sina fallback, Tencent quotes)
+@dsh-trading/provider-binance crypto bars and derivatives from Binance public APIs
 ```
 
 - **`market-data`** defines the seam and nothing else (its only peer is cordis). Every consumer talks to `ctx.marketData`; every data source hides behind `MarketDataProvider`.
@@ -143,7 +159,17 @@ Eight packages, one direction of dependency:
       - id: trading-frame
         name: '@dsh-trading/client-frame'
   ```
-- **`bundle/trading`** wires six rows into a dsh profile via `cordis.patch.yml`: `market-data`, `market-data-provider`, `tool-market`, `verdict`, `risk-guard`, `client-chart`. Users repoint or replace the `market-data-provider` row from their own profile patch — that row swap **is** the BYO mechanism. The shell frame and the Futu provider are deliberately *not* among those rows; see above for the lines that enable each.
+- **`bundle/trading`** wires eleven rows into a dsh profile via `cordis.patch.yml`: `market-data`, `market-data-provider`, `tool-market`, `verdict`, `risk-guard`, `client-chart`, `holdings`, `watchlist`, `knowledge`, `authority`, `tasks-schedule`. Users repoint or replace the `market-data-provider` row from their own profile patch — that row swap **is** the BYO mechanism. The shell frame and the live providers (`provider-futu`, `provider-cn`, `provider-binance`) are deliberately *not* among those rows. `ctx.marketData` holds several providers at once, so the CN and Binance providers are **added beside** the CSV row rather than swapped in — add them from your own profile patch:
+
+  ```yaml
+  - insert:
+      - id: provider-cn
+        name: '@dsh-trading/provider-cn'
+        config:
+          timeoutMs: 8000      # per-request upstream timeout
+      - id: provider-binance
+        name: '@dsh-trading/provider-binance'
+  ```
 
 ## Why this and not another finance plugin?
 
@@ -172,8 +198,8 @@ data/
 
 ## Try it with dsh
 
-One command — the published bundle pulls its six plugin rows from npm
-(`client-frame` and `provider-futu` are opt-in, see below):
+One command — the published bundle pulls its eleven plugin rows from npm
+(`client-frame`, `provider-futu`, `provider-cn` and `provider-binance` are opt-in, see below):
 
 ```sh
 dsh plugin --profile trading add @dsh-trading/bundle
@@ -192,11 +218,14 @@ node examples/generate-sample-data.mjs
 
 dsh plugin --profile trading add ./bundle/trading \
     ./packages/market-data ./packages/provider-csv ./packages/tool-market \
-    ./packages/verdict ./packages/risk-guard ./packages/client-chart
+    ./packages/verdict ./packages/risk-guard ./packages/client-chart \
+    ./packages/holdings ./packages/watchlist ./packages/knowledge \
+    ./packages/authority ./packages/tasks-schedule
 ```
 
-Add `./packages/client-frame` and `./packages/provider-futu` to that list if
-you intend to enable the chart-first shell or live Futu data.
+Add `./packages/client-frame`, `./packages/provider-futu`, `./packages/provider-cn`
+or `./packages/provider-binance` to that list if you intend to enable the
+chart-first shell or that live data source.
 
 </details>
 
@@ -270,6 +299,13 @@ instead of on the chart.
 
 ### Chart cards in `dsh web`
 
+**First, pick a workspace.** A fresh `dsh web` has no selected workspace, and
+the session composer stays disabled until you choose one (dsh's
+[user guide](https://github.com/deepseek-ai/deepseek-harness/blob/main/docs/user/guide/index.md)).
+Open the printed URL, click **Choose workspace**, add the directory you started
+`dsh` from (the one whose `./data` holds your candles), select it, then start a
+session.
+
 Under the `web` surface, `market_snapshot` and `get_ohlcv` results render as
 interactive candlestick cards (`@dsh-trading/client-chart`): K-line + volume +
 SMA20/50/200, timeframe tabs, and a chip strip that both shows the exact
@@ -295,6 +331,11 @@ pnpm typecheck
 pnpm build
 pnpm test
 ```
+
+`pnpm test` includes `test/loader-boot.e2e.test.ts`: a keyless smoke that boots a
+real `dsh web` under a throwaway `DSH_HOME` and loads the **built** plugins
+through dsh's Loader (run `pnpm build` first; it self-skips without `dsh` on
+PATH or without `lib/`). It is what catches a stray `export default`.
 
 ## Roadmap
 

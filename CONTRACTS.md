@@ -15,7 +15,15 @@ Paste this file into your agent and vibecode against it.
 mount with `ctx.effect(() => ctx.marketData.register(provider))`, and every
 tool upstream works against your data. `provider-csv` (~110 lines) is the
 reference implementation. Swapping the `market-data-provider` row in a profile
-`cordis.patch.yml` is the deployment mechanism.
+`cordis.patch.yml` is the deployment mechanism; providers with distinct `id`s
+(e.g. `provider-cn` = `cn`, `provider-binance` = `binance`) may also be
+inserted beside it, since the service holds several at once.
+
+Consumers that can work without market data (e.g. `tasks-schedule`) must not
+list `marketData` in `inject`; read it with `ctx.get('marketData')` at the use
+site (dsh `docs/user/develop/framework/service.md`). Plugin modules use the
+namespace form (`name` / `inject` / `Config` / `apply`) and carry **no default
+export** (dsh `docs/postmortem/0001-acp-default-export-drops-inject.md`).
 
 ## 2. Chart payload — `kind: 'chart'`, `version: 1`
 

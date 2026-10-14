@@ -35,5 +35,12 @@
     "@dsh-trading/market-data": "workspace:*",
     "@types/node": "^22.10.0",
     "typescript": "^5.7.2"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kim1232aa/dsh-trading.git",
+    "directory": "packages/holdings"
+  },
+  "homepage": "https://github.com/kim1232aa/dsh-trading#readme",
+  "bugs": "https://github.com/kim1232aa/dsh-trading/issues"
 }
