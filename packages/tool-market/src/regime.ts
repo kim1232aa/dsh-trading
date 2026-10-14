@@ -21,6 +21,8 @@ import { priceStructure, renderStructure } from './structure.js'
 import type { Structure } from './structure.js'
 import { renderRsiGrid, rsiGridReport, RSI_GRID_DEFAULTS, RSI_GRID_SHORT_DEFAULTS } from './rsi-grid.js'
 import type { RsiGridReport } from './rsi-grid.js'
+import { revPointReport, renderRevPoint } from './revpoint.js'
+import type { RevPointReport } from './revpoint.js'
 import { renderRsiDiff, rsiDiffReport } from './rsi-diff.js'
 import type { RsiDiffReport } from './rsi-diff.js'
 
@@ -163,10 +165,19 @@ export type RegimeSnapshot = {
   signal: SignalReport
   structure: Structure
   rsiGrid: RsiGridReport
+  /** Extension (not in the Pine source, which is long-only): opt-in via regimeSnapshot opts. */
   rsiGridShort?: RsiGridReport
+  revPoint: RevPointReport
   rsiDiff: RsiDiffReport
   moneyFlow?: RegimeMoneyFlow | null
   fundamentals?: RegimeFundamentals | null
+}
+
+/** Base-coin OI history from the provider (5m stats), for RevPoint's OI1h star. */
+function oiPoints(d: RegimeDerivatives | null | undefined): { t: number; oi: number }[] {
+  const h = (d as { history?: { time: string; openInterest: number | null }[] } | null | undefined)?.history
+  if (!Array.isArray(h)) return []
+  return h.flatMap(b => (typeof b.openInterest === 'number' ? [{ t: Date.parse(b.time), oi: b.openInterest }] : []))
 }
 
 /** Compute the full dashboard for one candle series (ascending, as providers serve it). */
@@ -175,6 +186,7 @@ export function regimeSnapshot(
   derivatives?: RegimeDerivatives | null,
   moneyFlow?: RegimeMoneyFlow | null,
   fundamentals?: RegimeFundamentals | null,
+  opts: { rsiGridShort?: boolean } = {},
 ): RegimeSnapshot {
   if (candles.length === 0) throw new Error('regimeSnapshot requires at least one candle')
   const closes = candles.map(c => c.close)
@@ -285,7 +297,8 @@ export function regimeSnapshot(
     signal: signalReport(candles),
     structure: priceStructure(candles),
     rsiGrid: rsiGridReport(candles),
-    rsiGridShort: rsiGridReport(candles, RSI_GRID_SHORT_DEFAULTS, 'short'),
+    ...(opts.rsiGridShort ? { rsiGridShort: rsiGridReport(candles, RSI_GRID_SHORT_DEFAULTS, 'short') } : {}),
+    revPoint: revPointReport(candles, oiPoints(derivatives)),
     rsiDiff: rsiDiffReport(closes, 6, 12),
   }
 }
@@ -310,6 +323,7 @@ export function renderSnapshot(timeframe: string, s: RegimeSnapshot): string {
   lines.push(renderStructure(s.structure))
   lines.push(renderSignal(s.signal))
   lines.push(renderRsiGrid(s.rsiGrid, s.rsiGridShort))
+  lines.push(renderRevPoint(s.revPoint))
   lines.push(renderRsiDiff(s.rsiDiff))
   if (s.derivatives) {
     const d = s.derivatives

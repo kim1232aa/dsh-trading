@@ -216,7 +216,7 @@ export function renderRsiGrid(r: RsiGridReport, shortReport?: RsiGridReport): st
       return '空仓'
     }
 
-    return `  RSI双向网格 [多: <${low}平≥${high} | ${formatState(r)}] [空: >${sHigh}平≤${sLow} | ${formatState(shortReport)}]`
+    return `  RSI网格(多=Pine原版；空=扩展,非Pine) [多: <${low}平≥${high} | ${formatState(r)}] [空: >${sHigh}平≤${sLow} | ${formatState(shortReport)}]`
   }
 
   const [len, low, high, th] = r.params as [number, number, number, number]
@@ -225,7 +225,7 @@ export function renderRsiGrid(r: RsiGridReport, shortReport?: RsiGridReport): st
     : `本序列已平 ${r.record.closed} 笔，盈利 ${r.record.wins} 笔，均 ${r.record.avgPct! >= 0 ? '+' : ''}${r.record.avgPct}%/笔`
   const trigger = isShort ? `RSI(${len})>${high} 且累计差值>${th} 进空` : `RSI(${len})<${low} 且累计差值>${th} 进多`
   const exitRule = isShort ? `RSI≤${low} 且不亏才平` : `RSI≥${high} 且不亏才平`
-  const head = `  RSI${isShort ? '空头' : ''}网格 [${trigger}；${exitRule}；无止损｜未验证，${rec}]: `
+  const head = `  RSI${isShort ? '空头' : ''}网格${isShort ? '(扩展,非Pine原版)' : ''} [${trigger}；${exitRule}；无止损｜未验证，${rec}]: `
   const rsiTxt = r.rsi === null ? `RSI${len} 未就绪` : `RSI${len} ${r.rsi}`
   const state: string[] = [`${rsiTxt} | 累计差值 ${r.cum}`]
   if (r.position !== null) {

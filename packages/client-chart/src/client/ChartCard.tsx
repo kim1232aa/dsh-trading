@@ -29,7 +29,8 @@ import { nadarayaWatsonTrend, nadarayaWatsonIndicator } from './indicators/nadar
 import { orderBlockBreaker, orderBlockIndicator } from './indicators/order-blocks.js'
 import { mtfSRZones, mtfSRIndicator } from './indicators/mtf-sr.js'
 import { entrySignalIndicator } from './indicators/entry-signal.js'
-import { rsiGridIndicator } from './indicators/rsi-grid.js'
+import { rsiGridIndicator, rsiGridCumIndicator, rsiGridMarksIndicator } from './indicators/rsi-grid.js'
+import { revPointIndicator } from './indicators/revpoint.js'
 import { detectPricePrecision, formatPrice } from './precision.js'
 import { createAnnotationOverlays } from './annotation-overlays.js'
 
@@ -253,6 +254,7 @@ export const EDITABLE: {
   { name: 'NW_TREND', title: '核回归趋势(QuantAlgo)', defaults: [50, 8, 2.0, 1.8], defaultVisible: false, params: [period('回溯周期'), { label: '带宽', min: 1, max: 50, step: 1 }, { label: '倍数', min: 0.5, max: 10, step: 0.1 }, { label: '通道倍数', min: 0.5, max: 10, step: 0.1 }] },
   { name: 'OB_BB', title: '订单块/破坏块(RWB)', defaults: [], defaultVisible: false, params: [] },
   { name: 'MTF_SR', title: '多周期支撑阻力(Syndicate)', defaults: [5], defaultVisible: false, params: [period('Pivot周期')] },
+  { name: 'REVPOINT', title: '反转点标注 RevPoint', defaults: [0.7, 2.0, 3, 0, 0, 1, 0, 1, 0], params: [{ label: '细档确认阈值%', min: 0.1, max: 10, step: 0.1 }, { label: '粗档(大周期)阈值%', min: 0.5, max: 20, step: 0.1 }, { label: '多周期pivot左右bar数', min: 1, max: 10, step: 1 }, { label: '15m(0/1)', min: 0, max: 1, step: 1 }, { label: '30m(0/1)', min: 0, max: 1, step: 1 }, { label: '1H(0/1)', min: 0, max: 1, step: 1 }, { label: '2H(0/1)', min: 0, max: 1, step: 1 }, { label: '4H(0/1)', min: 0, max: 1, step: 1 }, { label: '细档最少★数', min: 0, max: 4, step: 1 }] },
   { name: 'OI_POSTURE', title: '合约OI', pane: 'pane_oi_posture', defaults: [], params: [] },
   { name: 'LSR_RATIO', title: '多空比', pane: 'pane_lsr', defaults: [], params: [] },
   { name: 'ENTRY_SIGNAL', title: '多空观察信号(未验证)', defaults: [60, 4], defaultVisible: false, params: [period('ST周期'), { label: 'ST倍数', min: 0.1, max: 20, step: 0.1 }] },
@@ -538,7 +540,7 @@ export function calcLsrRatioRows(
   })
 }
 
-const DERIV_HISTORY_INDICATORS = new Set(['OI_POSTURE', 'LSR_RATIO'])
+const DERIV_HISTORY_INDICATORS = new Set(['OI_POSTURE', 'LSR_RATIO', 'REVPOINT'])
 
 
 function ensureRegistered(): void {
@@ -819,6 +821,9 @@ function ensureRegistered(): void {
   registerIndicator(mtfSRIndicator as never)
   registerIndicator(entrySignalIndicator as never)
   registerIndicator(rsiGridIndicator as never)
+  registerIndicator(rsiGridCumIndicator as never)
+  registerIndicator(rsiGridMarksIndicator as never)
+  registerIndicator(revPointIndicator as never)
   // Overlay shapes for the draw primitives. extendData: { color, dashed, label }.
   // Register exactly the callbacks exercised by the overlay regression tests.
   for (const overlay of createAnnotationOverlays(FONT_FAMILY, (text, style) =>
@@ -1072,6 +1077,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     chartRef.current?.setStyles({ indicator: { tooltip: { showRule: fold ? TooltipShowRule.None : TooltipShowRule.Always } } })
   }
   const paneCount = active.filter(id => CHIP_DEFS.find(d => d.id === id)?.indicator?.overlay !== true).length
+    + (active.includes('rsi') ? 1 : 0)
     + EDITABLE.filter(d => d.pane !== undefined && settings[d.name]?.visible).length
 
   useEffect(() => {
@@ -1125,6 +1131,11 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       if (!def?.indicator) continue
       if (def.indicator.builtIn === true) {
         chart.createIndicator(def.indicator.name, false, { id: `pane_${def.id}`, height: PANE_HEIGHT })
+        if (def.indicator.name === 'RSI_GRID') {
+          // 累计差值 gets its own pane/axis; entry/exit markers go on the candles.
+          chart.createIndicator('RSI_GRID_CUM', false, { id: 'pane_rsi_cum', height: PANE_HEIGHT })
+          chart.createIndicator('RSI_GRID_MARKS', true, { id: 'candle_pane' })
+        }
         continue
       }
       if (!hasSeries(data, def.indicator.figures)) continue

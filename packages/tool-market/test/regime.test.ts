@@ -344,7 +344,9 @@ describe("renderSnapshot", () => {
     expect(text).toContain("WMA(60,100,200) above 60/100/200")
     expect(text).toContain("SuperTrend(60,4) bullish")
     expect(text).toContain("Signal [")
-    expect(text.split("\n")).toHaveLength(9)
+    expect(text.split("\n")).toHaveLength(10)  // + RevPoint line
+    expect(text).toContain("RevPoint反转点")
+    expect(text).not.toContain("空=扩展")  // short grid is opt-in
   })
 
   it("renders derivatives line when present", () => {
@@ -371,7 +373,7 @@ describe("renderSnapshot", () => {
     expect(text).toContain("账户人数比 1.5(>1净多)")
     expect(text).toContain("主动买卖 1.2")
     expect(text).toContain("中性≈0.01%/8h")
-    expect(text.split("\n")).toHaveLength(10)
+    expect(text.split("\n")).toHaveLength(11)
   })
 })
 

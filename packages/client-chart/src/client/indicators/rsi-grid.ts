@@ -1,6 +1,7 @@
 /**
- * "RSI策略网格现货" on its own pane: RSI line, 累计差值 line, the low/high
- * threshold lines (Pine hline), and markers where the strategy enters/exits.
+ * "RSI策略网格现货" in three parts: RSI_GRID (RSI 0–100 + 30/60 hlines),
+ * RSI_GRID_CUM (累计差值 on its own pane/axis) and RSI_GRID_MARKS
+ * (strategy.entry/close markers on the candle pane).
  * The logic is imported from tool-market/src/rsi-grid.ts so the chart and
  * market_snapshot cannot disagree.
  */
@@ -32,10 +33,12 @@ export const rsiGridIndicator = {
   name: 'RSI_GRID',
   shortName: 'RSI策略网格现货',
   precision: 2,
+  // Pine plots RSI against 0–100; cum lives in its own pane (RSI_GRID_CUM) so it can't squash RSI.
+  minValue: 0,
+  maxValue: 100,
   calcParams: [...RSI_GRID_DEFAULTS],
   figures: [
     { key: 'rsi', title: 'RSI: ', type: 'line', styles: () => ({ color: RSI_C }) },
-    { key: 'cum', title: '累计差值: ', type: 'line', styles: () => ({ color: CUM_C }) },
   ],
   calc: (list: K[], ind: { calcParams: number[] }) => rsiGridRows(list, ind.calcParams),
   createTooltipDataSource: ({ indicator, crosshair, kLineDataList }: {
@@ -86,22 +89,87 @@ export const rsiGridIndicator = {
       ctx.fillText(t, bounding.width - 4, y - 3)
     }
     ctx.setLineDash([])
+    ctx.restore()
+    return false
+  },
+}
+
+type DrawArgs = {
+  ctx: CanvasRenderingContext2D
+  indicator: { calcParams: number[]; result: Row[] }
+  xAxis: { convertToPixel: (v: number) => number }
+  yAxis: { convertToPixel: (v: number) => number }
+  visibleRange: { from: number; to: number }
+  bounding: { width: number }
+  kLineDataList: K[]
+}
+
+/** 累计差值 on its own pane and own y-axis, with the entry threshold as a dashed line. */
+export const rsiGridCumIndicator = {
+  name: 'RSI_GRID_CUM',
+  shortName: '累计差值',
+  precision: 2,
+  minValue: 0,
+  calcParams: [...RSI_GRID_DEFAULTS],
+  figures: [{ key: 'cum', title: '累计差值: ', type: 'line', styles: () => ({ color: CUM_C }) }],
+  calc: (list: K[], ind: { calcParams: number[] }) => rsiGridRows(list, ind.calcParams),
+  draw: ({ ctx, indicator, yAxis, bounding }: DrawArgs) => {
+    const th = indicator.calcParams[3] ?? 10
+    const y = yAxis.convertToPixel(th)
+    ctx.save()
+    ctx.strokeStyle = CUM_C
+    ctx.globalAlpha = 0.6
+    ctx.setLineDash([4, 3])
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(bounding.width, y); ctx.stroke()
+    ctx.globalAlpha = 1
+    ctx.fillStyle = CUM_C; ctx.font = FONT; ctx.textAlign = 'right'
+    ctx.fillText(`阈值${th}`, bounding.width - 4, y - 3)
+    ctx.restore()
+    return false
+  },
+}
+
+/**
+ * strategy.entry / strategy.close markers on the CANDLE pane, at the fill bar
+ * (next open after the signal close), like TradingView draws strategy orders.
+ */
+export const rsiGridMarksIndicator = {
+  name: 'RSI_GRID_MARKS',
+  shortName: 'RSI网格信号',
+  series: 'price',
+  calcParams: [...RSI_GRID_DEFAULTS],
+  figures: [],
+  calc: (list: K[], ind: { calcParams: number[] }) => rsiGridRows(list, ind.calcParams),
+  createTooltipDataSource: () => ({ name: '', calcParamsText: '', values: [], icons: [] }),
+  draw: ({ ctx, indicator, xAxis, yAxis, visibleRange, kLineDataList }: DrawArgs) => {
+    const res = indicator.result ?? []
+    ctx.save()
     ctx.font = FONT
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    // Fills happen on the bar after the signal; mark the fill bar, as strategy() does.
     for (let i = Math.max(0, visibleRange.from); i < Math.min(res.length, visibleRange.to); i++) {
       const r = res[i]!
-      if (r.entry === undefined && r.exit === undefined) continue
+      const k = kLineDataList[i]
+      if (!k || (r.entry === undefined && r.exit === undefined)) continue
       const x = xAxis.convertToPixel(i)
-      const isEntry = r.entry !== undefined
-      const y = yAxis.convertToPixel(isEntry ? low : high) + (isEntry ? 10 : -10)
-      ctx.fillStyle = isEntry ? HIGH_C : LOW_C
-      ctx.beginPath()
-      ctx.arc(x, y, 7, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.fillStyle = '#fff'
-      ctx.fillText(isEntry ? '多' : '平', x, y)
+      for (const isEntry of [true, false]) {
+        const px = isEntry ? r.entry : r.exit
+        if (px === undefined) continue
+        const yBar = yAxis.convertToPixel(isEntry ? k.low : k.high)
+        const y = yBar + (isEntry ? 16 : -16)
+        const col = isEntry ? HIGH_C : LOW_C
+        ctx.fillStyle = col
+        ctx.beginPath()
+        // arrow pointing at the bar
+        if (isEntry) { ctx.moveTo(x, yBar + 4); ctx.lineTo(x - 5, yBar + 9); ctx.lineTo(x + 5, yBar + 9) }
+        else { ctx.moveTo(x, yBar - 4); ctx.lineTo(x - 5, yBar - 9); ctx.lineTo(x + 5, yBar - 9) }
+        ctx.fill()
+        const txt = `${isEntry ? 'RSI多头' : '平仓'} ${formatPrice(px)}`
+        const w = ctx.measureText(txt).width + 8
+        ctx.beginPath(); ctx.roundRect?.(x - w / 2, y - 8, w, 16, 3); if (!ctx.roundRect) ctx.rect(x - w / 2, y - 8, w, 16); ctx.fill()
+        ctx.fillStyle = '#fff'
+        ctx.fillText(txt, x, y)
+      }
     }
     ctx.restore()
     return false

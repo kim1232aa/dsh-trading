@@ -51,6 +51,8 @@ export { entrySignals, renderSignal, signalReport, signalStatus, SIGNAL_RULES } 
 export type { EntrySignal, SignalReport } from './signal.js'
 export { priceStructure, renderStructure } from './structure.js'
 export { rsiGrid, rsiGridReport, renderRsiGrid, RSI_GRID_DEFAULTS } from './rsi-grid.js'
+export { revPoint, revPointReport, renderRevPoint, REVPOINT_DEFAULTS } from './revpoint.js'
+export type { RevPointReport, RevPointResult } from './revpoint.js'
 export type { RsiGridReport } from './rsi-grid.js'
 export { rsiDiffReport, rsiDiffSeries, renderRsiDiff, RSI_DIFF_DEFAULTS } from './rsi-diff.js'
 export type { RsiDiffCross, RsiDiffReport } from './rsi-diff.js'
