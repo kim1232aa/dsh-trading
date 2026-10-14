@@ -259,7 +259,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.tools.register(defineTool({
     name: 'market_snapshot',
-    description: 'Multi-timeframe indicator dashboard for one symbol: latest close, RSI14, slow stochastic, ADX/DI, MACD(12,26,9), MFI14, ATR14, SMA20/50/200 + EMA20 posture, Bollinger(20,2) — each with a coarse state label. Call this FIRST when asked to analyse an instrument; fetch raw candles with get_ohlcv only when you need bar-level structure.',
+    description: 'Multi-timeframe indicator dashboard for one symbol: close/RSI/Stoch/ADX/MACD/MFI/ATR/MA/BB plus, for perps, 合约指标 (OI名义USDT、费率+年化、账户人数比/大户持仓比、主动买卖、CVD、基差、近1h爆仓；缺数据会标明来源如参OKX). Call this FIRST when analysing; use get_ohlcv only for bar-level structure.',
     parameters: {
       symbol: { type: 'string', required: true, description: 'Instrument symbol exactly as list_symbols reports it.' },
       timeframes: {

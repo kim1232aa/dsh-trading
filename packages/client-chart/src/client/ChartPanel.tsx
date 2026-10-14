@@ -254,6 +254,17 @@ export function formatFunding(rate: number): string {
   return `${rate >= 0 ? '+' : ''}${(rate * 100).toFixed(4)}%`
 }
 
+/** Chinese compact USDT: 亿 / 万. Shared feel with market_snapshot / 爆仓文案. */
+export function formatUsdtCn(n: number): string {
+  if (!Number.isFinite(n)) return '—'
+  const sign = n < 0 ? '-' : ''
+  const abs = Math.abs(n)
+  if (abs >= 1e8) return `${sign}${(abs / 1e8).toFixed(2)}亿`
+  if (abs >= 1e4) return `${sign}${(abs / 1e4).toFixed(1)}万`
+  if (abs < 0.5) return `${sign}0`
+  return `${sign}${abs.toFixed(0)}`
+}
+
 /** "3h 07m" until settlement, "" once it has passed (the next poll brings the new time). */
 export function formatCountdown(untilIso: string, now: number): string {
   const ms = Date.parse(untilIso) - now
@@ -364,34 +375,40 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
           K线 {new Date(historyBar.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </span>
       ) : null}
-      <span title="未平仓合约名义（USDT）= 底仓×标记价。跨所请并列比较，勿混口径。">OI名义<span style={VALUE}>{show(target?.openInterestValue, n => `${compact.format(n)} USDT`)}</span></span>
-      <span title="未平仓底仓（币数量），Δ% 用此计算以免价格单独伪装成平仓。">底仓<span style={VALUE}>{show(target?.openInterest, n => compact.format(n))}</span></span>
-      <span title="当前资金费率（每8h）。中性参考≈+0.01%/8h≈年化10.95%，不是看多。">
-        资金费率<span style={VALUE}>{show(target?.fundingRate, formatFunding)}</span>
+      <span title="未平仓名义USDT=币数×标记价。跨所并列比，勿混口径。">OI名义<span style={VALUE}>{show(target?.openInterestValue, formatUsdtCn)}</span></span>
+      <span title="未平仓币数；Δ%按币数算，避免价涨价跌伪装成平仓。">币数<span style={VALUE}>{show(target?.openInterest, n => compact.format(n))}</span></span>
+      <span title="每8h结算。中性≈+0.01%/8h≈年化10.95%，不是看多。">
+        费率<span style={VALUE}>{show(target?.fundingRate, r => `${formatFunding(r)}/8h`)}</span>
         {data?.fundingRateAnnualizedPct != null ? <span style={{ marginLeft: 3, opacity: 0.85 }}>年化{data.fundingRateAnnualizedPct}%</span> : null}
         {data?.fundingLabel ? <span style={{ marginLeft: 3, opacity: 0.85 }}>{data.fundingLabel}</span> : null}
         {countdown !== '' ? <span style={{ marginLeft: 4 }}>{countdown}</span> : null}
       </span>
-      <span title="全市场多空账户数比（Binance globalLongShortAccountRatio）。>1=净多账户，不是仓位。">账户人数比<span style={VALUE}>{show(target?.longShortRatio, n => n.toFixed(2))}</span></span>
-      {target?.topPositionRatio !== null && target?.topPositionRatio !== undefined ? (
-        <span title="大户持仓量多空比（Binance topLongShortPositionRatio / OKX top-trader）。>1=净多仓位。">大户持仓比<span style={VALUE}>{show(target.topPositionRatio, n => n.toFixed(2))}</span></span>
+      {target?.longShortRatio != null ? (
+        <span title="全市场账户数多空比。>1=净多账户，不是仓位。">账户人数比<span style={VALUE}>{target.longShortRatio.toFixed(2)}</span></span>
       ) : null}
-      {target?.topAccountRatio !== null && target?.topAccountRatio !== undefined ? (
-        <span title="大户账户数比（Binance topLongShortAccountRatio）。和持仓比背离时，更大的仓在另一侧。">大户账户比<span style={VALUE}>{show(target.topAccountRatio, n => n.toFixed(2))}</span></span>
+      {target?.topPositionRatio != null ? (
+        <span title="大户持仓量多空比。>1=净多仓。">大户持仓比<span style={VALUE}>{target.topPositionRatio.toFixed(2)}</span></span>
       ) : null}
-      <span title="最近窗口主动买入量 / 主动卖出量（taker）">主动买卖比<span style={VALUE}>{show(target?.takerBuySellRatio, n => n.toFixed(2))}</span></span>
+      {target?.topAccountRatio != null ? (
+        <span title="大户账户数比；与持仓比背离时更大仓在另一侧。">大户账户比<span style={VALUE}>{target.topAccountRatio.toFixed(2)}</span></span>
+      ) : null}
+      {target?.takerBuySellRatio != null ? (
+        <span title="主动买/卖量比（成交口径）">主动买卖<span style={VALUE}>{target.takerBuySellRatio.toFixed(2)}</span></span>
+      ) : null}
       {data?.cvd1h != null ? (
-        <span title={`近1h累计主动买卖差（CVD代理）。${data.cvdNote ?? ''} 仅作背离描述，非独立信号。`}>CVD1h<span style={VALUE}>{compact.format(data.cvd1h)}</span>{data.cvdNote ? <span style={{ marginLeft: 3, opacity: 0.85 }}>{data.cvdNote}</span> : null}</span>
+        <span title={`近1h主动买卖差。${data.cvdNote ?? ''} 仅描述背离，非信号。`}>CVD1h<span style={VALUE}>{formatUsdtCn(data.cvd1h)}</span>{data.cvdNote ? <span style={{ marginLeft: 3, opacity: 0.85 }}>{data.cvdNote}</span> : null}</span>
       ) : null}
       {data?.basisPct != null ? (
-        <span title="标记价相对指数溢价。(mark−index)/index。正=永续升水。">基差<span style={VALUE}>{`${data.basisPct >= 0 ? '+' : ''}${data.basisPct.toFixed(3)}%`}</span></span>
+        <span title="标记相对指数；正=升水。">基差<span style={VALUE}>{`${data.basisPct >= 0 ? '+' : ''}${data.basisPct.toFixed(3)}%`}</span></span>
       ) : null}
       {data?.liquidationSummary ? (
-        <span title={data.liquidationSource && data.liquidationSource !== data.source ? `爆仓来源 ${data.liquidationSource}（与主书源不同，仅参考）` : '近1h多/空爆仓名义 USDT'}>{data.liquidationSummary}</span>
+        <span title={data.liquidationSource && data.liquidationSource !== (data.source ?? '') ? `来源${data.liquidationSource}，与主所不同仅参考` : '近1h多/空爆仓名义'}>{data.liquidationSummary}</span>
+      ) : data && data.source && !data.liquidationSummary ? (
+        <span style={{ opacity: 0.7 }} title="本所近1h爆仓暂无">爆仓 –</span>
       ) : null}
       {target?.quadrant || target?.posture ? (
         <span
-          title={`价×OI姿态(底仓Δ)。1h: 价 ${target.priceChangePct1h != null ? (target.priceChangePct1h > 0 ? '+' : '') + target.priceChangePct1h.toFixed(2) + '%' : '—'} OI ${target.oiChangePct1h != null ? (target.oiChangePct1h > 0 ? '+' : '') + target.oiChangePct1h.toFixed(2) + '%' : '—'}；4h OI ${data?.oiChangePct4h != null ? (data.oiChangePct4h > 0 ? '+' : '') + data.oiChangePct4h.toFixed(2) + '%' : '—'}；24h OI ${data?.oiChangePct24h != null ? (data.oiChangePct24h > 0 ? '+' : '') + data.oiChangePct24h.toFixed(2) + '%' : '—'}。升价+升OI=新仓推动；升价+降OI=空头回补/平仓。${target.quadrantNote ?? target.posture ?? ''}`}
+          title={`价×仓姿态(按币数Δ)。1h价 ${target.priceChangePct1h != null ? (target.priceChangePct1h > 0 ? '+' : '') + target.priceChangePct1h.toFixed(2) + '%' : '—'} 仓 ${target.oiChangePct1h != null ? (target.oiChangePct1h > 0 ? '+' : '') + target.oiChangePct1h.toFixed(2) + '%' : '—'}；4h仓 ${data?.oiChangePct4h != null ? (data.oiChangePct4h > 0 ? '+' : '') + data.oiChangePct4h.toFixed(2) + '%' : '—'}；24h仓 ${data?.oiChangePct24h != null ? (data.oiChangePct24h > 0 ? '+' : '') + data.oiChangePct24h.toFixed(2) + '%' : '—'}。涨+增仓=新仓推动；涨+减仓=空头回补。${target.quadrantNote ?? target.posture ?? ''}`}
           style={{
             fontWeight: 600,
             padding: '0 4px',
@@ -443,7 +460,7 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
       ))}
       {target?.crowdVsWhale ? (
         <span
-          title="散户多空人数比与大户持仓资金比背离诊断"
+          title="账户人数比与大户持仓比背离"
           style={{
             fontSize: 10.5,
             padding: '1px 5px',

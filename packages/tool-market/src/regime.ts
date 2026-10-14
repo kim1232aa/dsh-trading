@@ -12,6 +12,7 @@
  */
 
 import type { Candle, Derivatives } from '@dsh-trading/market-data'
+import { formatUsdtCn, formatPctCn } from '@dsh-trading/market-data'
 import { rsi, sma, wma } from './indicators.js'
 import { adx, atr, bollinger, ema, macd, mfi, stochastic, supertrend } from './candle-indicators.js'
 import { renderSignal, signalReport } from './signal.js'
@@ -291,8 +292,14 @@ export function regimeSnapshot(
 
 /** Render one timeframe's snapshot as the compact text block the model reads. */
 export function renderSnapshot(timeframe: string, s: RegimeSnapshot): string {
-  const fmt = (v: number | null): string => v === null ? '–' : String(v)
-  const pct = (v: number): string => `${v >= 0 ? '+' : ''}${v}%`
+  const fmt = (v: number | null): string => {
+    if (v === null) return '–'
+    if (!Number.isFinite(v)) return '–'
+    const a = Math.abs(v)
+    // 币数上千取整；比值/小数统一两位，避免 0.9006 这类长尾。
+    if (a >= 1000) return String(Number(v.toFixed(0)))
+    return String(Number(v.toFixed(2)))
+  }
   const lines = [
     `[${timeframe}] ${s.bars} bars, last ${s.lastTime}, close ${s.close}${s.changePct !== null ? ` (${s.changePct > 0 ? '+' : ''}${s.changePct}%)` : ''}`,
     `  RSI14 ${fmt(s.rsi14.value)} (${s.rsi14.state ?? '–'}) | Stoch %K ${fmt(s.stochastic.k)} %D ${fmt(s.stochastic.d)} (${s.stochastic.state ?? '–'}) | ADX ${fmt(s.adx14.value)} +DI ${fmt(s.adx14.plusDi)} −DI ${fmt(s.adx14.minusDi)} (${s.adx14.state ?? '–'})`,
@@ -306,28 +313,34 @@ export function renderSnapshot(timeframe: string, s: RegimeSnapshot): string {
   lines.push(renderRsiDiff(s.rsiDiff))
   if (s.derivatives) {
     const d = s.derivatives
-    const oiUsdt = d.openInterestValue !== null ? `USDT名义 ${fmt(d.openInterestValue)}` : 'USDT名义 –'
-    const oiBase = d.openInterest !== null ? `底仓 ${fmt(d.openInterest)}` : '底仓 –'
+    const oiUsdt = d.openInterestValue !== null ? `OI名义 ${formatUsdtCn(d.openInterestValue)}` : 'OI名义 –'
+    const oiBase = d.openInterest !== null ? `币数 ${fmt(d.openInterest)}` : null
     const fr = d.fundingRate !== null ? `${(d.fundingRate * 100).toFixed(4)}%/8h` : '–'
     const apr = d.fundingRateAnnualizedPct != null ? `年化${d.fundingRateAnnualizedPct}%` : ''
     const frLabel = d.fundingLabel ? ` ${d.fundingLabel}` : ''
-    const lsKind = d.longShortRatioKind === 'top_positions' ? '大户持仓比'
-      : d.longShortRatioKind === 'top_accounts' ? '大户账户比'
-      : '账户人数比'
-    const ls = d.longShortRatio !== null ? `${lsKind} ${fmt(d.longShortRatio)}(>1净多)` : `${lsKind} –`
-    const topPos = d.topPositionRatio != null ? ` | 大户持仓比 ${fmt(d.topPositionRatio)}` : ''
-    const topAcc = d.topAccountRatio != null ? ` | 大户账户比 ${fmt(d.topAccountRatio)}` : ''
+    const ratioBits: string[] = []
+    if (d.longShortRatio !== null) {
+      ratioBits.push(`账户人数比 ${fmt(d.longShortRatio)}(>1净多)`)
+    }
+    if (d.topPositionRatio != null) ratioBits.push(`大户持仓比 ${fmt(d.topPositionRatio)}`)
+    if (d.topAccountRatio != null) ratioBits.push(`大户账户比 ${fmt(d.topAccountRatio)}`)
+    // OKX only has top positions — do not print empty 账户人数比 –
+    if (ratioBits.length === 0 && d.longShortRatioKind === 'top_positions') {
+      ratioBits.push('大户持仓比 –')
+    }
     const oiHoriz = [
-      d.oiChangePct1h != null ? `1h OI ${pct(d.oiChangePct1h)} 价 ${d.priceChangePct1h != null ? pct(d.priceChangePct1h) : '–'}` : null,
-      d.oiChangePct4h != null ? `4h OI ${pct(d.oiChangePct4h)}` : null,
-      d.oiChangePct24h != null ? `24h OI ${pct(d.oiChangePct24h)}` : null,
+      d.oiChangePct1h != null ? `1h仓 ${formatPctCn(d.oiChangePct1h)} 价 ${d.priceChangePct1h != null ? formatPctCn(d.priceChangePct1h) : '–'}` : null,
+      d.oiChangePct4h != null ? `4h仓 ${formatPctCn(d.oiChangePct4h)}` : null,
+      d.oiChangePct24h != null ? `24h仓 ${formatPctCn(d.oiChangePct24h)}` : null,
     ].filter(Boolean).join(' · ')
     const posture = d.posture ? ` → ${d.posture}` : ''
-    const cvd = d.cvd1h != null ? ` | CVD1h ${fmt(d.cvd1h)}${d.cvdNote ? `(${d.cvdNote})` : ''}` : ''
-    const basis = d.basisPct != null ? ` | 基差 ${d.basisPct}%` : ''
+    const cvd = d.cvd1h != null ? ` | CVD1h ${formatUsdtCn(d.cvd1h, { signed: true })}${d.cvdNote ? `(${d.cvdNote})` : ''}` : ''
+    const basis = d.basisPct != null ? ` | 基差 ${formatPctCn(d.basisPct, 3)}` : ''
     const liq = d.liquidationSummary ? ` | ${d.liquidationSummary}` : ''
-    const crowd = d.crowdVsWhale ? ` | 博弈: ${d.crowdVsWhale}` : ''
-    lines.push(`  Derivatives (${d.source}): ${oiUsdt} (${oiBase}) | Funding ${fr}${apr ? ` ${apr}` : ''}${frLabel} | ${ls}${topPos}${topAcc} | Taker ${fmt(d.takerBuySellRatio)}${oiHoriz ? ` | ${oiHoriz}${posture}` : ''}${cvd}${basis}${crowd}${liq}`)
+    const crowd = d.crowdVsWhale ? ` | ${d.crowdVsWhale}` : ''
+    const taker = d.takerBuySellRatio !== null ? `主动买卖 ${fmt(d.takerBuySellRatio)}` : '主动买卖 –'
+    const head = [oiUsdt, oiBase].filter(Boolean).join(' · ')
+    lines.push(`  合约(${d.source}): ${head} | 费率 ${fr}${apr ? ` ${apr}` : ''}${frLabel} | ${ratioBits.join(' · ') || '多空比 –'} | ${taker}${oiHoriz ? ` | ${oiHoriz}${posture}` : ''}${cvd}${basis}${crowd}${liq}`)
   }
   if (s.moneyFlow?.summary) {
     lines.push(`  资金流向: ${s.moneyFlow.summary}`)

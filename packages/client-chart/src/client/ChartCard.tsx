@@ -39,6 +39,16 @@ export { orderBlockBreaker } from './indicators/order-blocks.js'
 export { mtfSRZones } from './indicators/mtf-sr.js'
 
 const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 })
+
+function formatUsdtCnLocal(n: number): string {
+  if (!Number.isFinite(n)) return '—'
+  const sign = n < 0 ? '-' : ''
+  const abs = Math.abs(n)
+  if (abs >= 1e8) return `${sign}${(abs / 1e8).toFixed(2)}亿`
+  if (abs >= 1e4) return `${sign}${(abs / 1e4).toFixed(1)}万`
+  if (abs < 0.5) return `${sign}0`
+  return `${sign}${abs.toFixed(0)}`
+}
 let chartDomSeq = 0
 
 const CHART_HEIGHT = 320
@@ -477,7 +487,7 @@ function ensureRegistered(): void {
     figures: [
       {
         key: 'oi',
-        title: 'OI: ',
+        title: '币数: ',
         type: 'line',
         styles: () => ({
           color: '#27C6DA',
@@ -586,7 +596,7 @@ function ensureRegistered(): void {
           name: '持仓动向',
           calcParamsText: '',
           values: [
-            { title: 'OI: ', value: { text: '—', color: '#8b949e' } },
+            { title: '币数: ', value: { text: '—', color: '#8b949e' } },
             { title: '动向: ', value: { text: '历史无快照', color: '#8b949e' } },
           ],
         }
@@ -606,18 +616,18 @@ function ensureRegistered(): void {
         : null
 
       const values: { title: string; value: { text: string; color: string } }[] = [
-        { title: 'OI: ', value: { text: oiText, color: '#27C6DA' } },
-        { title: '价值: ', value: { text: target.openInterestValue ? `$${compact.format(target.openInterestValue)}` : '—', color: '#8b949e' } },
+        { title: '币数: ', value: { text: oiText, color: '#27C6DA' } },
+        { title: 'OI名义: ', value: { text: target.openInterestValue ? formatUsdtCnLocal(target.openInterestValue) : '—', color: '#8b949e' } },
       ]
       if (row?.oiMa !== undefined && Number.isFinite(row.oiMa)) {
-        values.push({ title: 'OI均线: ', value: { text: `$${compact.format(row.oiMa)}`, color: '#f59e0b' } })
+        values.push({ title: 'OI均线: ', value: { text: formatUsdtCnLocal(row.oiMa), color: '#f59e0b' } })
       }
       if (deltaText) {
-        values.push({ title: 'ΔOI: ', value: { text: deltaText, color: deltaVal! >= 0 ? '#22c55e' : '#ef4444' } })
+        values.push({ title: 'Δ币数: ', value: { text: deltaText, color: deltaVal! >= 0 ? '#22c55e' : '#ef4444' } })
       }
       values.push({ title: '动向: ', value: { text: postureText ?? '—', color: pColor } })
       if (tkText) {
-        values.push({ title: '主动买卖比: ', value: { text: tkText, color: Number(tkText) >= 1.0 ? '#22c55e' : '#ef4444' } })
+        values.push({ title: '主动买卖: ', value: { text: tkText, color: Number(tkText) >= 1.0 ? '#22c55e' : '#ef4444' } })
       }
       values.push({ title: '账户人数比: ', value: { text: lsrText, color: '#c9d1d9' } })
       if (topPos) {

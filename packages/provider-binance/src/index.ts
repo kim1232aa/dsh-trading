@@ -17,6 +17,7 @@ import type {
   OhlcvQuery,
   Timeframe,
 } from '@dsh-trading/market-data'
+import { formatUsdtCn } from '@dsh-trading/market-data'
 
 export const name = 'provider-binance'
 export const inject = ['marketData']
@@ -417,7 +418,7 @@ export class BinanceProvider implements MarketDataProvider {
           const liq = await okxLiquidations1h(symbol)
           liquidationLongUsd1h = liq.longUsd
           liquidationShortUsd1h = liq.shortUsd
-          liquidationSummary = `${liq.summary}（参考OKX）`
+          liquidationSummary = liq.summary.replace('近1h爆仓', '近1h爆仓(参OKX)')
           liquidationSource = 'OKX'
         } catch { /* best-effort */ }
 
@@ -568,24 +569,24 @@ export function postureOf(pricePct: number, oiPct: number, long: boolean, factor
   if (pricePct > 0) {
     head = oiUp ? '价涨增仓' : '价涨减仓'
     if (oiUp) {
-      tail = tk && tk >= 1.12 ? '多头主动吃单做多' : tk && tk <= 0.88 ? '多头被动推高 (量能背离)' : '新仓推动'
+      tail = tk && tk >= 1.12 ? '多头主动吃单' : tk && tk <= 0.88 ? '多头被动推高' : '新仓推动'
     } else {
-      tail = factors && pricePct > 2.0 ? '空头爆仓轧空止损' : '空头回补'
+      tail = factors && pricePct > 2.0 ? '空头爆仓轧空' : '空头回补'
     }
   } else {
     head = oiUp ? '价跌增仓' : '价跌减仓'
     if (oiUp) {
-      tail = tk && tk <= 0.88 ? '空头主动砸盘做空' : tk && tk >= 1.12 ? '大户接盘吸筹 (散户追空)' : '空头增仓'
+      tail = tk && tk <= 0.88 ? '空头主动砸盘' : tk && tk >= 1.12 ? '大户接盘(人数追空)' : '空头增仓'
     } else {
-      tail = factors && pricePct < -2.0 ? '多头恐慌清算踩踏' : '多头平仓'
+      tail = factors && pricePct < -2.0 ? '多头踩踏' : '多头平仓'
     }
   }
 
   let result = long ? `${head} (${tail}为主)` : tail
   const fr = factors?.fundingRate
   if (long && fr !== null && fr !== undefined) {
-    if (fr >= 0.0003) result += ' [多头费率极度拥挤]'
-    else if (fr <= -0.0002) result += ' [空头负费率过度拥挤]'
+    if (fr >= 0.0003) result += ' [费率多头拥挤]'
+    else if (fr <= -0.0002) result += ' [费率空头拥挤]'
   }
   return result
 }
@@ -603,11 +604,11 @@ export function crowdVsWhaleOf(globalRatio: number | null, topPosRatio: number |
   const retailShort = globalRatio <= 0.87
   if (globalRatio >= 2 && whaleShort) {
     const longPct = Math.round((globalRatio / (1 + globalRatio)) * 100)
-    return `散户账户多头${longPct}%，大户持仓偏空`
+    return `人数多头${longPct}%·大户仓偏空`
   }
-  if (retailShort && whaleLong) return '散户账户偏空，大户持仓偏多'
-  if (globalRatio >= 1.5 && topPosRatio >= 1.8) return '大户散户共识做多'
-  if (retailShort && whaleShort) return '大户散户共识做空'
+  if (retailShort && whaleLong) return '人数偏空·大户仓偏多'
+  if (globalRatio >= 1.5 && topPosRatio >= 1.8) return '人数与大户仓同向偏多'
+  if (retailShort && whaleShort) return '人数与大户仓同向偏空'
   return null
 }
 
@@ -640,10 +641,10 @@ export function fundingAnnualizedPct(rate: number | null | undefined): number | 
  */
 export function fundingLabelOf(rate: number): string {
   if (rate >= 0.0003) return '多头拥挤'
-  if (rate > 0.00015) return '费率偏多'
+  if (rate > 0.00015) return '偏多'
   if (rate <= -0.0002) return '空头拥挤'
-  if (rate < -0.00005) return '费率偏空'
-  return '费率中性(≈0.01%/8h)'
+  if (rate < -0.00005) return '偏空'
+  return '中性≈0.01%/8h'
 }
 
 /** Cumulative taker buy−sell over rows whose timestamp is within lookback of nowMs. */
@@ -670,12 +671,12 @@ export function cvdFromTakerRows(
 /** Brief CVD vs price note — descriptive only, not a signal. */
 export function cvdNoteOf(cvd: number | null, priceChangePct: number | null): string | null {
   if (cvd === null || priceChangePct === null) return null
-  if (Math.abs(cvd) < 1e-9) return 'CVD~0'
+  if (Math.abs(cvd) < 1e-9) return 'CVD≈0'
   const buyHeavy = cvd > 0
-  if (buyHeavy && priceChangePct < -0.1) return 'CVD↑价↓(主动买积压背离)'
-  if (!buyHeavy && priceChangePct > 0.1) return 'CVD↓价↑(主动卖积压背离)'
-  if (buyHeavy && priceChangePct > 0.1) return 'CVD与价同向偏多'
-  if (!buyHeavy && priceChangePct < -0.1) return 'CVD与价同向偏空'
+  if (buyHeavy && priceChangePct < -0.1) return 'CVD↑价↓背离'
+  if (!buyHeavy && priceChangePct > 0.1) return 'CVD↓价↑背离'
+  if (buyHeavy && priceChangePct > 0.1) return 'CVD价同向'
+  if (!buyHeavy && priceChangePct < -0.1) return 'CVD价同向'
   return buyHeavy ? 'CVD偏买' : 'CVD偏卖'
 }
 
@@ -706,7 +707,7 @@ export function positionReadings(input: {
     out.push({
       id: 'accounts',
       label: ratioWord(accounts, 1.15, 0.87, '人数偏多', '人数均衡', '人数偏空'),
-      note: '全市场多空账户数比，不是仓位。人数多的一侧人均仓位更小。',
+      note: '全市场账户数多空比，>1净多账户；非持仓量。',
       tone: 'neutral',
     })
   }
@@ -714,7 +715,7 @@ export function positionReadings(input: {
     out.push({
       id: 'top-positions',
       label: ratioWord(positions, 1.15, 0.87, '大户仓偏多', '大户仓均衡', '大户仓偏空'),
-      note: '保证金余额前 20% 的持仓量多空比。这是仓位，不是账户数。',
+      note: '大户持仓量多空比，>1净多仓；非账户数。',
       tone: 'neutral',
     })
   }
@@ -722,15 +723,15 @@ export function positionReadings(input: {
     out.push({
       id: 'top-accounts',
       label: ratioWord(topAccounts, 1.15, 0.87, '大户户偏多', '大户户均衡', '大户户偏空'),
-      note: '保证金余额前 20% 的账户数比。人数偏多而仓位偏空时，更大的仓在空头。',
+      note: '大户账户数比；与持仓比背离时更大仓在另一侧。',
       tone: 'neutral',
     })
   }
   if (accounts !== null && accounts !== undefined && positions !== null && positions !== undefined) {
     if (accounts >= 1.15 && positions <= 0.87) {
-      out.push({ id: 'crowd-vs-size', label: '人数多、大户仓空', note: '账户数偏多，大户持仓量偏空。人数多不等于资金多。', tone: 'warn' })
+      out.push({ id: 'crowd-vs-size', label: '人数多·大户仓空', note: '账户数偏多但大户仓偏空；人数≠资金。', tone: 'warn' })
     } else if (accounts <= 0.87 && positions >= 1.15) {
-      out.push({ id: 'crowd-vs-size', label: '人数空、大户仓多', note: '账户数偏空，大户持仓量偏多。', tone: 'warn' })
+      out.push({ id: 'crowd-vs-size', label: '人数空·大户仓多', note: '账户数偏空但大户仓偏多。', tone: 'warn' })
     }
   }
   if (topAccounts !== null && topAccounts !== undefined && positions !== null && positions !== undefined) {
@@ -745,7 +746,7 @@ export function positionReadings(input: {
     out.push({
       id: 'taker',
       label: ratioWord(taker, 1.12, 0.88, '主动买', '买卖均衡', '主动卖'),
-      note: '这一窗主动买入量 / 主动卖出量。这是成交，不是持仓。',
+      note: '主动买/卖量比；成交口径，非持仓。',
       tone: 'neutral',
     })
   }
@@ -756,7 +757,7 @@ export function positionReadings(input: {
     out.push({
       id: 'funding',
       label,
-      note: `资金费率 ${(fr * 100).toFixed(4)}%/8h，年化约 ${apr !== null ? apr.toFixed(1) + '%' : '–'}。中性参考≈0.01%/8h（≈10.95%/年），正费率=多头付给空头，不是看多。`,
+      note: `${(fr * 100).toFixed(4)}%/8h，年化${apr !== null ? apr.toFixed(1) + '%' : '–'}；中性≈0.01%/8h，正费率=多付空，非看多。`,
       tone: label.includes('拥挤') ? 'warn' : 'neutral',
     })
   }
@@ -766,7 +767,7 @@ export function positionReadings(input: {
     out.push({
       id: 'basis',
       label: `${word} ${basis.toFixed(3)}%`,
-      note: '标记价相对指数。升水表示合约贵于指数，多头在付溢价，不是涨跌保证。',
+      note: '标记相对指数；正=升水(合约贵)，非涨跌保证。',
       tone: 'neutral',
     })
   }
@@ -1019,11 +1020,10 @@ export async function okxLiquidations1h(rawSymbol: string): Promise<{
     if (side === 'long') longUsd += notional
     else if (side === 'short') shortUsd += notional
   }
-  const fmt = (v: number): string => v >= 1e6 ? `${(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `${(v / 1e3).toFixed(1)}k` : v.toFixed(0)
   return {
     longUsd: Number(longUsd.toFixed(2)),
     shortUsd: Number(shortUsd.toFixed(2)),
-    summary: `近1h爆仓 多 ${fmt(longUsd)} / 空 ${fmt(shortUsd)} USDT`,
+    summary: `近1h爆仓 多${formatUsdtCn(longUsd)} / 空${formatUsdtCn(shortUsd)}`,
   }
 }
 

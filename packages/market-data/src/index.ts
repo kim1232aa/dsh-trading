@@ -19,6 +19,7 @@ import type {
 } from './types.js'
 
 export type * from './types.js'
+export { formatUsdtCn, formatPctCn } from './format.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {

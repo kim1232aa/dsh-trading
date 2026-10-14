@@ -19,6 +19,7 @@ import {
   pctChange,
   BinanceProvider,
 } from '../src/index.js'
+import { formatUsdtCn } from '@dsh-trading/market-data'
 
 describe('Binance Provider Helpers', () => {
   it('normalizes various symbol representations', () => {
@@ -49,23 +50,23 @@ describe('Binance Provider Helpers', () => {
     expect(postureOf(0.01, 0.01, false)).toBe('持仓持平')
 
     // Multi-factor taker volume & funding rate evaluation
-    expect(postureOf(1.5, 2.0, false, { takerRatio: 1.35 })).toBe('多头主动吃单做多')
-    expect(postureOf(1.5, 2.0, false, { takerRatio: 0.82 })).toBe('多头被动推高 (量能背离)')
-    expect(postureOf(-1.5, 2.0, false, { takerRatio: 0.75 })).toBe('空头主动砸盘做空')
-    expect(postureOf(-1.5, 2.0, false, { takerRatio: 1.25 })).toBe('大户接盘吸筹 (散户追空)')
-    expect(postureOf(-2.5, -2.5, false, { takerRatio: 0.6 })).toBe('多头恐慌清算踩踏')
-    expect(postureOf(2.5, -2.5, false, { takerRatio: 1.4 })).toBe('空头爆仓轧空止损')
-    expect(postureOf(1.5, 2.0, true, { fundingRate: 0.0004 })).toBe('价涨增仓 (新仓推动为主) [多头费率极度拥挤]')
-    expect(postureOf(-1.5, 2.0, true, { fundingRate: -0.0003 })).toBe('价跌增仓 (空头增仓为主) [空头负费率过度拥挤]')
+    expect(postureOf(1.5, 2.0, false, { takerRatio: 1.35 })).toBe('多头主动吃单')
+    expect(postureOf(1.5, 2.0, false, { takerRatio: 0.82 })).toBe('多头被动推高')
+    expect(postureOf(-1.5, 2.0, false, { takerRatio: 0.75 })).toBe('空头主动砸盘')
+    expect(postureOf(-1.5, 2.0, false, { takerRatio: 1.25 })).toBe('大户接盘(人数追空)')
+    expect(postureOf(-2.5, -2.5, false, { takerRatio: 0.6 })).toBe('多头踩踏')
+    expect(postureOf(2.5, -2.5, false, { takerRatio: 1.4 })).toBe('空头爆仓轧空')
+    expect(postureOf(1.5, 2.0, true, { fundingRate: 0.0004 })).toBe('价涨增仓 (新仓推动为主) [费率多头拥挤]')
+    expect(postureOf(-1.5, 2.0, true, { fundingRate: -0.0003 })).toBe('价跌增仓 (空头增仓为主) [费率空头拥挤]')
   })
 
   it('derives crowd vs whale sentiment correctly', () => {
     expect(crowdVsWhaleOf(2.0, 1.2)).toBeNull()
     expect(crowdVsWhaleOf(2.85, 1.55)).toBeNull()
-    expect(crowdVsWhaleOf(2.85, 0.8)).toBe('散户账户多头74%，大户持仓偏空')
-    expect(crowdVsWhaleOf(0.7, 1.6)).toBe('散户账户偏空，大户持仓偏多')
-    expect(crowdVsWhaleOf(1.6, 1.9)).toBe('大户散户共识做多')
-    expect(crowdVsWhaleOf(0.7, 0.8)).toBe('大户散户共识做空')
+    expect(crowdVsWhaleOf(2.85, 0.8)).toBe('人数多头74%·大户仓偏空')
+    expect(crowdVsWhaleOf(0.7, 1.6)).toBe('人数偏空·大户仓偏多')
+    expect(crowdVsWhaleOf(1.6, 1.9)).toBe('人数与大户仓同向偏多')
+    expect(crowdVsWhaleOf(0.7, 0.8)).toBe('人数与大户仓同向偏空')
     expect(crowdVsWhaleOf(0.7, 0.9)).toBeNull()
     expect(crowdVsWhaleOf(1.0, 1.0)).toBeNull()
   })
@@ -121,18 +122,18 @@ describe('Binance Provider Helpers', () => {
       '人数偏多 1.42',
       '大户仓偏空 0.81',
       '大户户偏多 1.20',
-      '人数多、大户仓空',
+      '人数多·大户仓空',
       '头部仓位在空',
       '主动买 1.20',
       '多头拥挤',
       '升水 0.080%',
     ])
-    expect(rows.find(r => r.id === 'accounts')?.note).toContain('不是仓位')
+    expect(rows.find(r => r.id === 'accounts')?.note).toContain('非持仓量')
     expect(rows.find(r => r.id === 'funding')?.tone).toBe('warn')
     expect(positionReadings({}).map(r => r.id)).toEqual([])
-    expect(positionReadings({ fundingRate: 0.00005 }).map(r => r.label)).toEqual(['费率中性(≈0.01%/8h)'])
-    expect(positionReadings({ fundingRate: 0.0001 }).map(r => r.label)).toEqual(['费率中性(≈0.01%/8h)'])
-    expect(positionReadings({ fundingRate: 0.0002 }).map(r => r.label)).toEqual(['费率偏多'])
+    expect(positionReadings({ fundingRate: 0.00005 }).map(r => r.label)).toEqual(['中性≈0.01%/8h'])
+    expect(positionReadings({ fundingRate: 0.0001 }).map(r => r.label)).toEqual(['中性≈0.01%/8h'])
+    expect(positionReadings({ fundingRate: 0.0002 }).map(r => r.label)).toEqual(['偏多'])
     expect(basisPct(2502, 2500)).toBeCloseTo(0.08, 2)
     expect(basisPct(2500, 0)).toBeNull()
   })
@@ -159,7 +160,7 @@ describe('OKX derivatives live smoke', () => {
     expect(d.openInterestValue).toBeGreaterThan(0)
     expect(d.fundingRate).not.toBeNull()
     expect(d.fundingRateAnnualizedPct).not.toBeNull()
-    expect(d.fundingLabel).toContain('费率')
+    expect(d.fundingLabel).toMatch(/中性|偏多|偏空|拥挤/)
     expect(d.longShortRatioKind).toBe('top_positions')
     expect(d.oiChangePct1h === null || Number.isFinite(d.oiChangePct1h)).toBe(true)
     expect(d.oiChangePct24h === null || Number.isFinite(d.oiChangePct24h)).toBe(true)
@@ -170,15 +171,24 @@ describe('OKX derivatives live smoke', () => {
   }, 45_000)
 })
 
+describe('formatUsdtCn', () => {
+  it('prints 亿/万 and collapses near-zero', () => {
+    expect(formatUsdtCn(7_594_311_663)).toBe('75.94亿')
+    expect(formatUsdtCn(910_000)).toBe('91.0万')
+    expect(formatUsdtCn(0)).toBe('0')
+    expect(formatUsdtCn(323)).toBe('323')
+  })
+})
+
 describe('funding / CVD / pct helpers', () => {
   it('annualizes 8h funding and treats 0.01%/8h as neutral, not bullish', () => {
     expect(fundingAnnualizedPct(0.0001)).toBeCloseTo(10.95, 2)
     expect(fundingAnnualizedPct(null)).toBeNull()
-    expect(fundingLabelOf(0.0001)).toBe('费率中性(≈0.01%/8h)')
-    expect(fundingLabelOf(0)).toBe('费率中性(≈0.01%/8h)')
-    expect(fundingLabelOf(0.0002)).toBe('费率偏多')
+    expect(fundingLabelOf(0.0001)).toBe('中性≈0.01%/8h')
+    expect(fundingLabelOf(0)).toBe('中性≈0.01%/8h')
+    expect(fundingLabelOf(0.0002)).toBe('偏多')
     expect(fundingLabelOf(0.0004)).toBe('多头拥挤')
-    expect(fundingLabelOf(-0.0001)).toBe('费率偏空')
+    expect(fundingLabelOf(-0.0001)).toBe('偏空')
     expect(fundingLabelOf(-0.0003)).toBe('空头拥挤')
   })
 
@@ -190,7 +200,7 @@ describe('funding / CVD / pct helpers', () => {
       { timestamp: now - 90 * 60_000, buyVol: '100', sellVol: '0' }, // outside 1h
     ]
     expect(cvdFromTakerRows(rows, now)).toBeCloseTo(3, 4) // (10-4)+(5-8)
-    expect(cvdNoteOf(3, -0.5)).toContain('背离')
+    expect(cvdNoteOf(3, -0.5)).toBe('CVD↑价↓背离')
     expect(cvdNoteOf(-3, 0.5)).toContain('背离')
     expect(pctChange(110, 100)).toBe(10)
     expect(pctChange(null, 100)).toBeNull()
