@@ -82,7 +82,7 @@ export class WatchlistStore {
     const item: WatchlistItem = {
       symbol: sym,
       group: grp,
-      notes: params.notes,
+      ...(params.notes !== undefined && params.notes !== '' ? { notes: params.notes } : {}),
       addedAt: existingIdx >= 0 ? state.items[existingIdx]!.addedAt : now,
     }
 

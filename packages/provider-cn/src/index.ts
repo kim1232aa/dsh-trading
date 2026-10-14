@@ -19,6 +19,7 @@ export interface Config {
   eastmoneyBaseURL: string
   sinaBaseURL: string
   tencentBaseURL: string
+  sinaMoneyFlowBaseURL: string
   timeoutMs: number
 }
 
@@ -27,6 +28,7 @@ export const Config: z<Config> = z.object({
   eastmoneyBaseURL: z.string().default('https://push2his.eastmoney.com'),
   sinaBaseURL: z.string().default('https://quotes.sina.cn'),
   tencentBaseURL: z.string().default('https://qt.gtimg.cn'),
+  sinaMoneyFlowBaseURL: z.string().default('https://vip.stock.finance.sina.com.cn'),
   timeoutMs: z.number().min(1).default(8000).description('Per-request upstream timeout (ms).'),
 }) as unknown as z<Config>
 
@@ -228,6 +230,7 @@ export class CnMarketProvider implements MarketDataProvider {
     private readonly sinaBaseURL: string,
     private readonly tencentBaseURL: string = 'https://qt.gtimg.cn',
     private readonly timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS,
+    private readonly sinaMoneyFlowBaseURL: string = 'https://vip.stock.finance.sina.com.cn',
   ) {
     this.id = id
     this.description = 'A股行情与资金流 (东财主源 + 新浪容灾 + 腾讯极速盘口)'
@@ -348,6 +351,32 @@ export class CnMarketProvider implements MarketDataProvider {
   }
 
   async getMoneyFlow(symbol: string): Promise<MoneyFlow> {
+    try {
+      return await this.moneyFlowEastmoney(symbol)
+    } catch (emErr) {
+      try {
+        return await this.moneyFlowSina(symbol)
+      } catch (sinaErr) {
+        throw new Error(`CN money flow failed for '${symbol}': Eastmoney (${(emErr as Error).message}), Sina (${(sinaErr as Error).message})`)
+      }
+    }
+  }
+
+  /** Sina fallback: daily 主力净流入 trend. Only main / 超大单 legs exist there; tiers it lacks stay null. */
+  private async moneyFlowSina(symbol: string): Promise<MoneyFlow> {
+    const sym = parseCnSymbol(symbol)
+    const url = new URL('/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_zjlrqs', this.sinaMoneyFlowBaseURL)
+    url.searchParams.set('page', '1')
+    url.searchParams.set('num', '1')
+    url.searchParams.set('sort', 'opendate')
+    url.searchParams.set('asc', '0')
+    url.searchParams.set('daima', sym.sinaSymbol)
+    const res = await this.fetchT(url)
+    if (!res.ok) throw new Error(`Sina moneyflow HTTP ${res.status}`)
+    return parseSinaMoneyFlow(await res.text(), symbol)
+  }
+
+  private async moneyFlowEastmoney(symbol: string): Promise<MoneyFlow> {
     const sym = parseCnSymbol(symbol)
     const url = new URL('/api/qt/stock/fflow/kline/get', this.emBaseURL)
     url.searchParams.set('secid', sym.secid)
@@ -435,6 +464,30 @@ export class CnMarketProvider implements MarketDataProvider {
 }
 
 
+/** Parse Sina MoneyFlow.ssl_qsfx_zjlrqs (newest row first). netamount = 主力净流入, r0_net = 超大单, ratioamount = net / 成交额. */
+export function parseSinaMoneyFlow(raw: string, symbol: string): MoneyFlow {
+  let rows: unknown
+  try { rows = JSON.parse(raw) } catch { throw new Error(`invalid Sina moneyflow JSON: ${raw.slice(0, 80)}`) }
+  const row = Array.isArray(rows) ? rows[0] as Record<string, string> | undefined : undefined
+  const net = row ? Number(row['netamount']) : NaN
+  if (!row || !Number.isFinite(net) || !row['opendate']) throw new Error(`no Sina money flow rows for ${symbol}`)
+  const superLarge = Number(row['r0_net'])
+  const ratio = Number(row['ratioamount'])
+  const mainRatioPct = Number.isFinite(ratio) ? Number((ratio * 100).toFixed(2)) : null
+  const ratioStr = mainRatioPct !== null ? ` (${mainRatioPct >= 0 ? '+' : ''}${mainRatioPct}%)` : ''
+  return {
+    symbol,
+    time: cnTimeToIso(row['opendate']),
+    netInflow: net,
+    superLargeInflow: Number.isFinite(superLarge) ? superLarge : null,
+    largeInflow: null,
+    mediumInflow: null,
+    smallInflow: null,
+    mainRatioPct,
+    summary: `主力净流入 ${formatRmbAmount(net)}${ratioStr}${Number.isFinite(superLarge) ? ` | 超大单 ${formatRmbAmount(superLarge)}` : ''} [新浪兜底]`,
+  }
+}
+
 /** Upstream quote endpoints occasionally hang; never let a tool call wait forever. */
 // Tunable per docs/user/develop/basic/config.md ("Do not hardcode tunable values"): Config.timeoutMs.
 const DEFAULT_FETCH_TIMEOUT_MS = 8_000
@@ -445,5 +498,5 @@ export function finiteBars(bars: Candle[]): Candle[] {
 }
 
 export function apply(ctx: Context, config: Config): void {
-  ctx.effect(() => ctx.marketData.register(new CnMarketProvider(config.id, config.eastmoneyBaseURL, config.sinaBaseURL, config.tencentBaseURL, config.timeoutMs)))
+  ctx.effect(() => ctx.marketData.register(new CnMarketProvider(config.id, config.eastmoneyBaseURL, config.sinaBaseURL, config.tencentBaseURL, config.timeoutMs, config.sinaMoneyFlowBaseURL)))
 }

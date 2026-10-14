@@ -156,3 +156,33 @@ describe('finiteBars', () => {
     expect(finiteBars([ok, { ...ok, close: NaN }, { ...ok, time: 'bogus' }])).toEqual([ok])
   })
 })
+
+describe('Sina money-flow fallback', () => {
+  it('parses newest row and leaves missing tiers null', async () => {
+    const { parseSinaMoneyFlow } = await import('../src/index.js')
+    const raw = '[{"opendate":"2026-10-14","netamount":"563322203.38","ratioamount":"0.184962","r0_net":"450109682.25"},{"opendate":"2026-10-13","netamount":"-1"}]'
+    const mf = parseSinaMoneyFlow(raw, '600519')
+    expect(mf.netInflow).toBe(563322203.38)
+    expect(mf.superLargeInflow).toBe(450109682.25)
+    expect(mf.mainRatioPct).toBe(18.5)
+    expect(mf.largeInflow).toBeNull()
+    expect(mf.summary).toContain('新浪兜底')
+    expect(() => parseSinaMoneyFlow('[]', '600519')).toThrow()
+  })
+
+  it('falls back to Sina when Eastmoney fails', async () => {
+    const provider = new CnMarketProvider('cn', 'http://127.0.0.1:9', 'https://quotes.sina.cn', 'https://qt.gtimg.cn', 500, 'http://sina.test')
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async (input: string | URL) => {
+      const u = String(input)
+      if (u.startsWith('http://sina.test')) return new Response('[{"opendate":"2026-10-14","netamount":"100","ratioamount":"0.01","r0_net":"50"}]')
+      throw new TypeError('fetch failed')
+    }) as typeof fetch
+    try {
+      const mf = await provider.getMoneyFlow('600519')
+      expect(mf.netInflow).toBe(100)
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+})

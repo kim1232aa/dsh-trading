@@ -11,6 +11,7 @@ import {
   applyTradeToPosition,
   createEmptyPosition,
   inferAssetClassAndCurrency,
+  rollLockedQuantity,
   summarizePortfolio,
   updatePositionMarketValue,
 } from './ledger.js'
@@ -57,7 +58,13 @@ export class HoldingsStore {
     await this.init()
     const id = randomUUID()
     const trade: StagedTrade = {
-      ...params,
+      symbol: params.symbol,
+      side: params.side,
+      quantity: params.quantity,
+      price: params.price,
+      currency: params.currency,
+      ...(params.fee !== undefined ? { fee: params.fee } : {}),
+      ...(params.notes !== undefined ? { notes: params.notes } : {}),
       id,
       stagedAt: new Date().toISOString(),
       status: 'staged',
@@ -179,18 +186,27 @@ export class HoldingsStore {
   /** Returns all active holding positions (quantity !== 0 or non-zero PnL). */
   async getPositions(): Promise<HoldingPosition[]> {
     const map = await this.getHoldingsMap()
-    return Object.values(map).filter(p => Math.abs(p.quantity) > 0.00000001)
+    return Object.values(map)
+      .map(p => rollLockedQuantity(p))
+      .filter(p => Math.abs(p.quantity) > 0.00000001)
   }
 
-  /** Refreshes positions with latest market prices. */
-  async updateMarketPrices(priceMap: Record<string, number>): Promise<HoldingPosition[]> {
+  /**
+   * Refreshes positions with latest market prices.
+   * `marks[symbol] = { price, previousClose? }` — previousClose drives today PnL.
+   */
+  async updateMarketPrices(
+    marks: Record<string, number | { price: number; previousClose?: number }>,
+  ): Promise<HoldingPosition[]> {
     const map = await this.getHoldingsMap()
     let changed = false
 
-    for (const [sym, price] of Object.entries(priceMap)) {
+    for (const [sym, mark] of Object.entries(marks)) {
       const key = sym.toUpperCase()
+      const price = typeof mark === 'number' ? mark : mark.price
+      const previousClose = typeof mark === 'number' ? undefined : mark.previousClose
       if (map[key] && price > 0) {
-        map[key] = updatePositionMarketValue(map[key]!, price)
+        map[key] = updatePositionMarketValue(map[key]!, price, previousClose)
         changed = true
       }
     }

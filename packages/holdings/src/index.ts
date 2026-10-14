@@ -12,6 +12,7 @@ import type { MarketData } from '@dsh-trading/market-data'
 import {
   createEmptyPosition,
   inferAssetClassAndCurrency,
+  omitUndefined,
   summarizePortfolio,
   updatePositionMarketValue,
 } from './ledger.js'
@@ -44,7 +45,7 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.tools.register(defineTool({
     name: 'get_holdings',
-    description: 'Query user portfolio holdings, asset positions, average cost basis, live market value, unrealized PnL, and pending staged trades awaiting review. Automatically fetches live prices.',
+    description: 'Query portfolio holdings: quantity/sellable, cost basis, live mark & market value, unrealized/realized/today PnL, weight, and portfolio totals (exposure, concentration). Fetches live prices via marketData.',
     parameters: {
       symbols: { type: 'array', items: { type: 'string' }, description: 'Optional list of symbols to filter by. Omit to query all holdings.' },
     },
@@ -69,11 +70,11 @@ export function apply(ctx: Context, config: Config): void {
         positions = positions.filter(p => filterSet.has(p.symbol.toUpperCase()))
       }
 
-      // Attempt to fetch current market price for each position
-      const priceMap: Record<string, number> = {}
+      // Live marks via resolveProvider so A-shares / crypto hit the right source.
+      const marks: Record<string, { price: number; previousClose?: number }> = {}
       for (const pos of positions) {
         try {
-          const provider = ctx.marketData.provider()
+          const provider = ctx.marketData.resolveProvider(pos.symbol)
           const candles = await provider.getOhlcv({
             symbol: pos.symbol,
             timeframe: '1d',
@@ -81,50 +82,91 @@ export function apply(ctx: Context, config: Config): void {
           })
           if (candles && candles.length > 0) {
             const latest = candles[candles.length - 1]
+            const prev = candles.length > 1 ? candles[candles.length - 2] : undefined
             if (latest?.close) {
-              priceMap[pos.symbol] = latest.close
+              marks[pos.symbol] = {
+                price: latest.close,
+                ...(prev?.close !== undefined ? { previousClose: prev.close } : {}),
+              }
             }
           }
         } catch {
-          // If live price fetch fails for a symbol, keep existing cached price
+          // Keep cached mark if live fetch fails.
         }
       }
 
-      if (Object.keys(priceMap).length > 0) {
-        await store.updateMarketPrices(priceMap)
+      if (Object.keys(marks).length > 0) {
+        await store.updateMarketPrices(marks)
         positions = await store.getPositions()
+        if (args.symbols && args.symbols.length > 0) {
+          const filterSet = new Set(args.symbols.map(s => s.toUpperCase()))
+          positions = positions.filter(p => filterSet.has(p.symbol.toUpperCase()))
+        }
       }
 
       const summary = await store.getPortfolioSummary()
+      positions = summary.positions
+      if (args.symbols && args.symbols.length > 0) {
+        const filterSet = new Set(args.symbols.map(s => s.toUpperCase()))
+        positions = positions.filter(p => filterSet.has(p.symbol.toUpperCase()))
+      }
       const lines: string[] = []
-      lines.push(`【投资组合持仓】包含 ${positions.length} 个持仓品种，${summary.stagedTradesCount} 笔待确认交易：`)
+      lines.push(`【投资组合持仓】${positions.length} 个品种，${summary.stagedTradesCount} 笔待确认：`)
 
       if (positions.length === 0) {
         lines.push('当前暂无任何持仓。可通过 stage_trade 暂存或录入交易。')
       } else {
         for (const p of positions) {
           const pnlSign = (p.unrealizedPnl ?? 0) >= 0 ? '+' : ''
-          const pnlStr = p.unrealizedPnl !== undefined
-            ? ` | 盈亏: ${pnlSign}${p.unrealizedPnl} ${p.currency} (${pnlSign}${p.unrealizedPnlPct}%)`
-            : ''
-          const priceStr = p.currentPrice !== undefined ? ` | 现价: ${p.currentPrice}` : ''
-          const mvalStr = p.marketValue !== undefined ? ` | 市值: ${p.marketValue} ${p.currency}` : ''
-          lines.push(`• ${p.symbol}: 持仓 ${p.quantity} | 均价 ${p.averageCost} ${p.currency}${priceStr}${mvalStr}${pnlStr}`)
+          const todaySign = (p.todayPnl ?? 0) >= 0 ? '+' : ''
+          const bits = [
+            `持仓 ${p.quantity} (可卖 ${p.sellableQuantity}${p.lockedQuantity > 0 ? `，锁定 ${p.lockedQuantity}` : ''})`,
+            `成本 ${p.averageCost} ${p.currency} (成本额 ${p.costBasis})`,
+          ]
+          if (p.currentPrice !== undefined) bits.push(`现价 ${p.currentPrice}`)
+          if (p.marketValue !== undefined) bits.push(`市值 ${p.marketValue}`)
+          if (p.unrealizedPnl !== undefined) bits.push(`盈亏 ${pnlSign}${p.unrealizedPnl} (${pnlSign}${p.unrealizedPnlPct}%)`)
+          if (p.todayPnl !== undefined) bits.push(`今盈亏 ${todaySign}${p.todayPnl} (${todaySign}${p.todayPnlPct}%)`)
+          if (p.weightPct !== undefined) bits.push(`占比 ${p.weightPct}%`)
+          bits.push(`已实现 ${p.realizedPnl}`)
+          lines.push(`• ${p.symbol}: ${bits.join(' | ')}`)
+        }
+        for (const [cur, mv] of Object.entries(summary.totalMarketValue)) {
+          const cost = summary.totalCost[cur] ?? 0
+          const upnl = summary.totalUnrealizedPnl[cur] ?? 0
+          const upnlPct = summary.totalUnrealizedPnlPct[cur] ?? 0
+          const today = summary.totalTodayPnl[cur]
+          const long = summary.longExposure[cur] ?? 0
+          const short = summary.shortExposure[cur] ?? 0
+          const net = summary.netExposure[cur] ?? 0
+          const todayStr = today !== undefined ? ` | 今盈亏 ${today >= 0 ? '+' : ''}${today}` : ''
+          lines.push(`合计[${cur}]: 市值 ${mv} | 成本 ${cost} | 未实现 ${upnl >= 0 ? '+' : ''}${upnl} (${upnlPct}%)${todayStr} | 多头 ${long} / 空头 ${short} / 净 ${net}`)
+        }
+        if (summary.maxWeightSymbol) {
+          lines.push(`集中度: 最大单票 ${summary.maxWeightSymbol} ${summary.maxWeightPct}%`)
         }
       }
 
       if (summary.stagedTradesCount > 0) {
-        lines.push(`\n提示: 尚有 ${summary.stagedTradesCount} 笔交易处于待确认区 (Staging Zone)，需人工核对后 commit_trade 入账。`)
+        lines.push(`\n提示: 尚有 ${summary.stagedTradesCount} 笔交易处于待确认区，需 commit_trade 入账。`)
       }
 
       return {
         summary: lines.join('\n'),
-        positions: positions as any,
-        totals: {
+        positions: positions.map(p => omitUndefined(p as unknown as Record<string, unknown>)) as any,
+        totals: omitUndefined({
           marketValue: summary.totalMarketValue,
+          cost: summary.totalCost,
           unrealizedPnl: summary.totalUnrealizedPnl,
+          unrealizedPnlPct: summary.totalUnrealizedPnlPct,
           realizedPnl: summary.totalRealizedPnl,
-        } as any,
+          todayPnl: summary.totalTodayPnl,
+          longExposure: summary.longExposure,
+          shortExposure: summary.shortExposure,
+          netExposure: summary.netExposure,
+          maxWeightPct: summary.maxWeightPct,
+          maxWeightSymbol: summary.maxWeightSymbol,
+        }) as any,
         stagedTradesCount: summary.stagedTradesCount,
       }
     },
@@ -162,19 +204,19 @@ export function apply(ctx: Context, config: Config): void {
     isConcurrencySafe: () => true,
     async execute(args, _exec) {
       const inferred = inferAssetClassAndCurrency(args.symbol)
-      const trade = await store.stageTrade({
+      const trade = await store.stageTrade(omitUndefined({
         symbol: args.symbol,
         side: args.side as TradeSide,
         quantity: args.quantity,
         price: args.price,
         currency: (args.currency as Currency) ?? inferred.currency,
-        fee: args.fee,
-        notes: args.notes,
-      })
+        fee: typeof args.fee === 'number' ? args.fee : undefined,
+        notes: typeof args.notes === 'string' ? args.notes : undefined,
+      }) as Omit<StagedTrade, 'id' | 'stagedAt' | 'status'>)
 
       return {
         summary: `已将交易暂存至待确认区 (Trade ID: ${trade.id}): ${trade.side.toUpperCase()} ${trade.quantity} ${trade.symbol} @ ${trade.price} ${trade.currency}。请核对无误后调用 commit_trade 入账。`,
-        trade: trade as any,
+        trade: omitUndefined(trade as unknown as Record<string, unknown>) as any,
       }
     },
     presentCall: args => ({

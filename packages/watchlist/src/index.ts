@@ -19,6 +19,12 @@ export interface Config {
 export const name = 'watchlist'
 export const inject = ['tools']
 
+function omitUndefined<T extends Record<string, unknown>>(obj: T): T {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(obj)) if (v !== undefined) out[k] = v
+  return out as T
+}
+
 export function apply(ctx: Context, config: Config): void {
   const storePath = resolve(process.cwd(), config.storePath ?? './data/watchlist.json')
   const store = new WatchlistStore({ filePath: storePath })
@@ -94,17 +100,15 @@ export function apply(ctx: Context, config: Config): void {
         const sym = String(args.symbol ?? '').trim()
         const grp = typeof args.group === 'string' ? args.group.trim() : undefined
         const notes = typeof args.notes === 'string' ? args.notes.trim() : undefined
-
-        const item = await store.addItem({
-          symbol: sym,
+        const item = await store.addItem(omitUndefined({
+          symbol: args.symbol,
           group: grp,
           notes,
-        })
+        }))
         const summary = `✅ 已成功将标的 **${item.symbol}** 加入自选分组 **[${item.group}]**${item.notes ? `（备注: ${item.notes}）` : ''}。`
-
         return {
           summary,
-          item: item as any,
+          item: omitUndefined(item as unknown as Record<string, unknown>) as any,
         }
       },
       presentCall: args => ({
