@@ -28,7 +28,29 @@ import { rsi as rsiSeries } from './indicators.js'
 export const RSI_GRID_DEFAULTS = [7, 30, 60, 10] as const
 export const RSI_GRID_SHORT_DEFAULTS = [7, 40, 70, 10] as const
 
-type Bar = { open: number; close: number }
+type Bar = { open: number; close: number; timestamp?: number; time?: string | number }
+
+export type RsiGridOpts = {
+  /** Pine strategy default (calc_on_every_tick=false): the forming bar never fires a signal. */
+  closedOnly?: boolean
+  nowMs?: number
+}
+
+const tsOf = (b: Bar): number | null => {
+  if (typeof b.timestamp === 'number') return b.timestamp
+  if (typeof b.time === 'number') return b.time < 1e12 ? b.time * 1000 : b.time
+  if (typeof b.time === 'string') { const t = Date.parse(b.time); return Number.isFinite(t) ? t : null }
+  return null
+}
+
+/** Index of the last bar if it is still forming (open time + bar period > now), else -1. */
+export function formingLastIndex(bars: readonly Bar[], nowMs = Date.now()): number {
+  const n = bars.length
+  if (n < 2) return -1
+  const a = tsOf(bars[n - 2]!), b = tsOf(bars[n - 1]!)
+  if (a === null || b === null || b <= a) return -1
+  return b + (b - a) > nowMs ? n - 1 : -1
+}
 
 export type RsiGridSide = 'long' | 'short'
 
@@ -37,6 +59,8 @@ export type RsiGridBar = {
   cum: number
   /** Condition fired on this bar's close (order fills next bar). */
   signal?: 'entry' | 'exit'
+  /** Bar still forming: values shown provisionally, no signal (closedOnly). */
+  provisional?: boolean
   /** Fill price on this bar's open. */
   entry?: number
   exit?: number
@@ -64,7 +88,9 @@ export function rsiGrid(
   high = 60,
   cumThreshold = 10,
   side: RsiGridSide = 'long',
+  opts: RsiGridOpts = {},
 ): RsiGridResult {
+  const forming = opts.closedOnly ? formingLastIndex(bars, opts.nowMs) : -1
   const rs = rsiSeries(bars.map(b => b.close), length)
   const out: RsiGridBar[] = []
   const trades: RsiGridTrade[] = []
@@ -98,6 +124,7 @@ export function rsiGrid(
       else cum = 0
     }
     row.cum = cum
+    if (i === forming) { row.provisional = true; out.push(row); break }
 
     const isLoss = pos !== null && (isShort ? b.close > pos.entry : b.close < pos.entry)
     if (isShort) {
@@ -132,9 +159,10 @@ export function rsiGridReport(
   bars: readonly Bar[],
   params: readonly number[] = RSI_GRID_DEFAULTS,
   side: RsiGridSide = 'long',
+  opts: RsiGridOpts = { closedOnly: true },
 ): RsiGridReport {
   const [len, low, high, th] = params as [number, number, number, number]
-  const g = rsiGrid(bars, len, low, high, th, side)
+  const g = rsiGrid(bars, len, low, high, th, side, opts)
   const last = g.bars.at(-1)
   const close = bars.at(-1)?.close ?? 0
   const isShort = side === 'short'

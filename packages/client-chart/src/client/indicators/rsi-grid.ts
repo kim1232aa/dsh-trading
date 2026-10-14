@@ -8,7 +8,7 @@ import { rsiGrid, RSI_GRID_DEFAULTS } from '../../../../tool-market/src/rsi-grid
 import type { RsiGridBar } from '../../../../tool-market/src/rsi-grid.js'
 import { formatPrice } from '../precision.js'
 
-type K = { open: number; high: number; low: number; close: number }
+type K = { open: number; high: number; low: number; close: number; timestamp?: number }
 type Row = RsiGridBar & { inPos: boolean; posEntry?: number }
 
 const RSI_C = '#539bf5'
@@ -19,7 +19,7 @@ const FONT = '11px system-ui, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei
 
 export function rsiGridRows(list: readonly K[], p: readonly number[]): Row[] {
   const [len, low, high, th] = p.length === 4 ? p : RSI_GRID_DEFAULTS
-  const g = rsiGrid(list, len, low, high, th)
+  const g = rsiGrid(list, len, low, high, th, 'long', { closedOnly: true })
   let pos: number | undefined
   return g.bars.map(b => {
     if (b.exit !== undefined) pos = undefined
@@ -56,6 +56,7 @@ export const rsiGridIndicator = {
       const pnl = 100 * (c - r.posEntry) / r.posEntry
       values.push({ title: '持多 ', value: { text: `@${formatPrice(r.posEntry)} ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%`, color: pnl >= 0 ? HIGH_C : LOW_C } })
     }
+    if (r?.provisional) values.push({ title: '', value: { text: '未收盘·不出信号', color: '#768390' } })
     if (r?.signal) values.push({ title: '', value: { text: r.signal === 'entry' ? '触发进多' : '触发平仓', color: r.signal === 'entry' ? HIGH_C : LOW_C } })
     return { calcParamsText: `(${indicator.calcParams.join(',')}｜低${low} 高${high})`, values, icons: [] }
   },
