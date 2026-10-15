@@ -66,6 +66,12 @@ export interface MtfSROptions {
   enableSupport?: boolean
   timeframes?: (string | number)[]
   simulatedBuckets?: number[]
+  /** Source bars are closed by default; live callers can exclude their forming tail. */
+  lastBarClosed?: boolean
+  /** Known fixed source period; otherwise bucket closure waits for a later observed bucket. */
+  sourceTimeframeSeconds?: number
+  /** Native calendar source identity; monthly OHLC cannot reconstruct fixed intraday slots. */
+  sourceTimeframe?: string
   atrPeriod?: number
   thicknessMode?: 'ATR ×' | '% of Price'
   thicknessAtr?: number
@@ -111,6 +117,14 @@ export interface MtfSRResult {
 
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v))
+}
+
+export function mtfSourceTimeframeSeconds(tf: string): number | undefined {
+  const match = /^([1-9]\d*)([mhdw])$/.exec(tf)
+  if (!match) return undefined
+  const units: Record<string, number> = { m: 60, h: 3600, d: 86400, w: 604800 }
+  const seconds = Number(match[1]) * units[match[2]!]!
+  return Number.isSafeInteger(seconds) ? seconds : undefined
 }
 
 export function parseTimeframeSeconds(tf: string | number): number {
@@ -355,6 +369,7 @@ function resampleCandles(
   candles: readonly Candle[],
   slotSec: number,
   bucketMultiplier?: number,
+  sourceTimeframeSeconds = 0,
 ): HTFCandle[] {
   const n = candles.length
   if (n === 0) return []
@@ -364,8 +379,8 @@ function resampleCandles(
   // Case A: explicit bucket multiplier (simulated MTF)
   if (bucketMultiplier && bucketMultiplier > 0) {
     const bSize = Math.max(1, Math.round(bucketMultiplier))
-    for (let i = 0; i < n; i += bSize) {
-      const chunkEnd = Math.min(i + bSize, n)
+    for (let i = 0; i + bSize <= n; i += bSize) {
+      const chunkEnd = i + bSize
       const firstBar = candles[i]!
       const lastBar = candles[chunkEnd - 1]!
       const o = firstBar.open ?? firstBar.close
@@ -397,6 +412,8 @@ function resampleCandles(
   const slotMs = slotSec * 1000
 
   if (hasTimestamps) {
+    // Source-bar opens alone cannot prove a fixed period across missing candles.
+    const sourceStepMs = sourceTimeframeSeconds * 1000
     let currentBucket: HTFCandle | null = null
     let currentBucketKey = -1
 
@@ -407,6 +424,11 @@ function resampleCandles(
 
       if (bucketKey !== currentBucketKey) {
         if (currentBucket) {
+          const previous = candles[i - 1]!
+          if ((previous.timestamp ?? previous.time)! + sourceStepMs < currentBucket.timestamp + slotMs) {
+            // A gap only proves this bucket closed now, not on its earlier last source bar.
+            currentBucket.endBaseBarIndex = i
+          }
           result.push(currentBucket)
         }
         currentBucketKey = bucketKey
@@ -428,7 +450,8 @@ function resampleCandles(
         currentBucket.endBaseBarIndex = i
       }
     }
-    if (currentBucket) {
+    const last = candles[n - 1]!
+    if (currentBucket && sourceStepMs > 0 && (last.timestamp ?? last.time)! + sourceStepMs >= currentBucket.timestamp + slotMs) {
       result.push(currentBucket)
     }
     return result
@@ -623,8 +646,12 @@ export function calculateMtfSR(
 
   // Collect all confirmed pivot events from all MTF slots
   const allEventsByBaseBar = new Map<number, PivotEvent[]>()
+  const closedCandles = options.lastBarClosed === false ? candles.slice(0, -1) : candles
+  const sourceSec = options.sourceTimeframeSeconds
+  const sourceTimeframeSeconds = sourceSec !== undefined && Number.isFinite(sourceSec) && sourceSec > 0 ? sourceSec : 0
   for (const slot of slots) {
-    const htfBars = resampleCandles(candles, slot.sec, slot.bucket)
+    if (options.sourceTimeframe === '1M' || sourceTimeframeSeconds > slot.sec) continue
+    const htfBars = resampleCandles(closedCandles, slot.sec, slot.bucket, sourceTimeframeSeconds)
     const events = computePivotsForHTF(
       htfBars,
       pL,
@@ -900,14 +927,19 @@ export const mtfSRIndicator = {
       { color: '#7458a6', size: 2, style: 'dashed', smooth: false, dashedValue: [3, 3] },
     ],
   },
-  calc: (dataList: Candle[], ind?: { calcParams?: number[] }): MtfSRBarPoint[] => {
+  calc: (dataList: Candle[], ind?: { calcParams?: number[]; extendData?: { sourceTimeframeSeconds?: number; sourceTimeframe?: string } }): MtfSRBarPoint[] => {
     const pL = ind?.calcParams?.[0] ?? 5
     const pR = ind?.calcParams?.[1] ?? pL
     const mergeAtr = ind?.calcParams?.[2] ?? 0.35
+    const sourceTimeframeSeconds = ind?.extendData?.sourceTimeframeSeconds
+    const sourceTimeframe = ind?.extendData?.sourceTimeframe
     const res = calculateMtfSR(dataList, {
       pivotLeft: pL,
       pivotRight: pR,
       mergeAtrMultiple: mergeAtr,
+      lastBarClosed: false,
+      ...(sourceTimeframeSeconds !== undefined ? { sourceTimeframeSeconds } : {}),
+      ...(sourceTimeframe !== undefined ? { sourceTimeframe } : {}),
     })
     return res.series
   },

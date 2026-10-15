@@ -1,20 +1,21 @@
 /**
- * "RSI策略网格现货" in three parts: RSI_GRID (RSI 0–100 + 30/60 hlines),
- * RSI_GRID_CUM (累计差值 on its own pane/axis) and RSI_GRID_MARKS
- * (strategy.entry/close markers on the candle pane).
- * The logic is imported from tool-market/src/rsi-grid.ts so the chart and
- * market_snapshot cannot disagree.
+ * RSI grid observations in three parts: RSI_GRID (RSI 0–100 and both sides' thresholds),
+ * RSI_GRID_CUM (long strength above zero, short strength below zero) and RSI_GRID_MARKS
+ * (next-open entry/exit observations on the candle pane).
+ * The calculation engine is shared with market_snapshot; chart parameters may differ.
  */
-import { rsiGrid, RSI_GRID_DEFAULTS } from '../../../../tool-market/src/rsi-grid.js'
+import { rsiGrid, rsiGridShortParams, RSI_GRID_DEFAULTS } from '../../../../tool-market/src/rsi-grid.js'
 import type { RsiGridBar } from '../../../../tool-market/src/rsi-grid.js'
 import { formatPrice } from '../precision.js'
 import { statusTableRect } from './revpoint-layout.js'
 
 type K = { open: number; high: number; low: number; close: number; timestamp?: number }
-type Row = RsiGridBar & { inPos: boolean; posEntry?: number }
+type PositionRow = RsiGridBar & { inPos: boolean; posEntry?: number }
+type Row = PositionRow & { short: PositionRow; shortCum: number; longThreshold: number; shortThreshold: number }
 
 const RSI_C = '#539bf5'
 const CUM_C = '#ffa726'
+const SHORT_C = '#f47067'
 const LOW_C = '#f47067'
 const HIGH_C = '#3ddc97'
 export const RSI_AXIS_MIN = -8
@@ -25,20 +26,27 @@ export function clampLabelX(x: number, w: number, paneW: number): number {
 }
 const FONT = '11px system-ui, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif'
 
-export function rsiGridRows(list: readonly K[], p: readonly number[]): Row[] {
-  const [len, low, high, th] = p.length === 4 ? p : RSI_GRID_DEFAULTS
-  const g = rsiGrid(list, len, low, high, th, 'long', { closedOnly: true })
+function positionRows(rows: readonly RsiGridBar[]): PositionRow[] {
   let pos: number | undefined
-  return g.bars.map(b => {
+  return rows.map(b => {
     if (b.exit !== undefined) pos = undefined
     if (b.entry !== undefined) pos = b.entry
     return { ...b, inPos: pos !== undefined, ...(pos !== undefined ? { posEntry: pos } : {}) }
   })
 }
 
+export function rsiGridRows(list: readonly K[], p: readonly number[]): Row[] {
+  const params = p.length === 4 ? p : RSI_GRID_DEFAULTS
+  const long = positionRows(rsiGrid(list, params[0], params[1], params[2], params[3], 'long', { closedOnly: true }).bars)
+  const short = positionRows(rsiGrid(list, ...rsiGridShortParams(params), 'short', { closedOnly: true }).bars)
+  const threshold = params[3] ?? 10
+  return long.map((b, i) => ({ ...b, short: short[i]!, shortCum: short[i]!.cum === 0 ? 0 : -short[i]!.cum,
+    longThreshold: threshold, shortThreshold: -threshold }))
+}
+
 export const rsiGridIndicator = {
   name: 'RSI_GRID',
-  shortName: 'RSI策略网格现货',
+  shortName: 'RSI网格多空',
   precision: 2,
   // Pine plots RSI against 0–100; cum lives in its own pane (RSI_GRID_CUM) so it can't squash RSI.
   // Padded past 0–100 so 0 isn't pinned to the pane boundary and the 30/60 hlines stay labelled.
@@ -58,18 +66,22 @@ export const rsiGridIndicator = {
     const i = Math.min(crosshair.dataIndex ?? res.length - 1, res.length - 1)
     const r = res[i]
     const [, low, high, th] = indicator.calcParams
+    const [, shortLow, shortHigh] = rsiGridShortParams(indicator.calcParams)
     const values: { title: string; value: { text: string; color: string } }[] = r === undefined ? [] : [
       { title: 'RSI: ', value: { text: r.rsi === null ? '–' : r.rsi.toFixed(2), color: RSI_C } },
-      { title: '累计差值: ', value: { text: `${r.cum.toFixed(2)}/${th}`, color: CUM_C } },
+      { title: '多累计: ', value: { text: r.rsi === null ? '–' : `${r.cum.toFixed(2)}/${th}`, color: CUM_C } },
+      { title: '空累计: ', value: { text: r.rsi === null ? '–' : `${r.shortCum.toFixed(2)}/-${th}`, color: SHORT_C } },
     ]
-    if (r?.inPos && r.posEntry !== undefined) {
-      const c = kLineDataList[i]?.close ?? r.posEntry
-      const pnl = 100 * (c - r.posEntry) / r.posEntry
-      values.push({ title: '持多 ', value: { text: `@${formatPrice(r.posEntry)} ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%`, color: pnl >= 0 ? HIGH_C : LOW_C } })
+    if (r) for (const [short, row] of [[false, r], [true, r.short]] as const) {
+      if (row.inPos && row.posEntry !== undefined) {
+        const c = kLineDataList[i]?.close ?? row.posEntry
+        const pnl = 100 * (short ? row.posEntry - c : c - row.posEntry) / row.posEntry
+        values.push({ title: short ? '持空 ' : '持多 ', value: { text: `@${formatPrice(row.posEntry)} ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%`, color: pnl >= 0 ? HIGH_C : LOW_C } })
+      }
+      if (row.signal) values.push({ title: '', value: { text: row.signal === 'entry' ? (short ? '触发进空' : '触发进多') : (short ? '触发平空' : '触发平多'), color: short ? SHORT_C : HIGH_C } })
     }
-    if (r?.provisional) values.push({ title: '', value: { text: '未收盘·不出信号', color: '#768390' } })
-    if (r?.signal) values.push({ title: '', value: { text: r.signal === 'entry' ? '触发进多' : '触发平仓', color: r.signal === 'entry' ? HIGH_C : LOW_C } })
-    return { calcParamsText: `(${indicator.calcParams.join(',')}｜低${low} 高${high})`, values, icons: [] }
+    if (r?.provisional) values.push({ title: '', value: { text: '未收盘·不出新信号', color: '#768390' } })
+    return { calcParamsText: `(${indicator.calcParams[0]}｜多<${low}平≥${high} 空>${shortHigh}平≤${shortLow})`, values, icons: [] }
   },
   draw: ({ ctx, indicator, xAxis, yAxis, visibleRange, bounding }: {
     ctx: CanvasRenderingContext2D
@@ -81,9 +93,12 @@ export const rsiGridIndicator = {
   }) => {
     const res = indicator.result ?? []
     const [, low, high] = indicator.calcParams as [number, number, number, number]
+    const [, shortLow, shortHigh] = rsiGridShortParams(indicator.calcParams)
     ctx.save()
-    // hline(threshold_rsi_low / threshold_rsi_high)
-    for (const [v, c, t] of [[low, LOW_C, `低${low}`], [high, HIGH_C, `高${high}`]] as [number, string, string][]) {
+    for (const [v, c, t, align] of [
+      [low, HIGH_C, `多入${low}`, 'right'], [high, HIGH_C, `多平${high}`, 'left'],
+      [shortLow, SHORT_C, `空平${shortLow}`, 'left'], [shortHigh, SHORT_C, `空入${shortHigh}`, 'right'],
+    ] as [number, string, string, CanvasTextAlign][]) {
       const y = yAxis.convertToPixel(v)
       ctx.strokeStyle = c
       ctx.setLineDash([4, 3])
@@ -93,8 +108,8 @@ export const rsiGridIndicator = {
       ctx.stroke()
       ctx.fillStyle = c
       ctx.font = FONT
-      ctx.textAlign = 'right'
-      ctx.fillText(t, bounding.width - 4, y - 3)
+      ctx.textAlign = align
+      ctx.fillText(t, align === 'left' ? 4 : bounding.width - 4, y - 3)
     }
     ctx.setLineDash([])
     ctx.restore()
@@ -112,26 +127,41 @@ type DrawArgs = {
   kLineDataList: K[]
 }
 
-/** 累计差值 on its own pane and own y-axis, with the entry threshold as a dashed line. */
+/** Positive long strength and negative short strength; each retains its own unsigned strategy accumulator. */
 export const rsiGridCumIndicator = {
   name: 'RSI_GRID_CUM',
-  shortName: '累计差值',
+  shortName: '累计差值·多空',
   precision: 2,
-  minValue: 0,
   calcParams: [...RSI_GRID_DEFAULTS],
-  figures: [{ key: 'cum', title: '累计差值: ', type: 'line', styles: () => ({ color: CUM_C }) }],
+  figures: [
+    { key: 'cum', title: '多累计: ', type: 'line', styles: () => ({ color: CUM_C }) },
+    { key: 'shortCum', title: '空累计: ', type: 'line', styles: () => ({ color: SHORT_C }) },
+    { key: 'longThreshold', title: '多阈值: ', type: 'line', styles: () => ({ color: CUM_C, style: 'dashed', dashedValue: [4, 3] }) },
+    { key: 'shortThreshold', title: '空阈值: ', type: 'line', styles: () => ({ color: SHORT_C, style: 'dashed', dashedValue: [4, 3] }) },
+  ],
   calc: (list: K[], ind: { calcParams: number[] }) => rsiGridRows(list, ind.calcParams),
+  createTooltipDataSource: ({ indicator, crosshair }: { indicator: { calcParams: number[]; result: Row[] }; crosshair: { dataIndex?: number } }) => {
+    const rows = indicator.result ?? []
+    const row = rows[Math.min(crosshair.dataIndex ?? rows.length - 1, rows.length - 1)]
+    const value = (n: number) => row?.rsi === null ? '–' : n.toFixed(2)
+    return { calcParamsText: `(多+ 空−｜±${indicator.calcParams[3] ?? 10})`, icons: [], values: row ? [
+      { title: '多累计: ', value: { text: value(row.cum), color: CUM_C } },
+      { title: '空累计: ', value: { text: value(row.shortCum), color: SHORT_C } },
+    ] : [] }
+  },
   draw: ({ ctx, indicator, yAxis, bounding }: DrawArgs) => {
     const th = indicator.calcParams[3] ?? 10
-    const y = yAxis.convertToPixel(th)
     ctx.save()
-    ctx.strokeStyle = CUM_C
-    ctx.globalAlpha = 0.6
-    ctx.setLineDash([4, 3])
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(bounding.width, y); ctx.stroke()
+    ctx.strokeStyle = '#768390'
+    ctx.globalAlpha = 0.5
+    const zero = yAxis.convertToPixel(0)
+    ctx.beginPath(); ctx.moveTo(0, zero); ctx.lineTo(bounding.width, zero); ctx.stroke()
     ctx.globalAlpha = 1
-    ctx.fillStyle = CUM_C; ctx.font = FONT; ctx.textAlign = 'right'
-    ctx.fillText(`阈值${th}`, bounding.width - 4, y - 3)
+    ctx.font = FONT; ctx.textAlign = 'right'
+    for (const [n, color, label] of [[th, CUM_C, `多阈值${th}`], [-th, SHORT_C, `空阈值-${th}`]] as const) {
+      ctx.fillStyle = color
+      ctx.fillText(label, bounding.width - 4, yAxis.convertToPixel(n) - 3)
+    }
     ctx.restore()
     return false
   },
@@ -158,45 +188,56 @@ export const rsiGridMarksIndicator = {
     for (let i = Math.max(0, visibleRange.from); i < Math.min(res.length, visibleRange.to); i++) {
       const r = res[i]!
       const k = kLineDataList[i]
-      if (!k || (r.entry === undefined && r.exit === undefined)) continue
+      if (!k) continue
       const x = xAxis.convertToPixel(i)
-      for (const isEntry of [true, false]) {
-        const px = isEntry ? r.entry : r.exit
-        if (px === undefined) continue
-        const yBar = yAxis.convertToPixel(isEntry ? k.low : k.high)
-        const y = yBar + (isEntry ? 16 : -16)
-        const col = isEntry ? HIGH_C : LOW_C
-        ctx.fillStyle = col
-        ctx.beginPath()
-        // arrow pointing at the bar
-        if (isEntry) { ctx.moveTo(x, yBar + 4); ctx.lineTo(x - 5, yBar + 9); ctx.lineTo(x + 5, yBar + 9) }
-        else { ctx.moveTo(x, yBar - 4); ctx.lineTo(x - 5, yBar - 9); ctx.lineTo(x + 5, yBar - 9) }
-        ctx.fill()
-        const txt = `${isEntry ? 'RSI多头' : '平仓'} ${formatPrice(px)}`
-        const w = ctx.measureText(txt).width + 8
-        const lx = clampLabelX(x, w, bounding.width)
-        ctx.beginPath(); ctx.rect(lx - w / 2, y - 8, w, 16); ctx.fill()
-        ctx.fillStyle = '#fff'
-        ctx.fillText(txt, lx, y)
+      for (const [short, row] of [[false, r], [true, r.short]] as const) {
+        for (const isEntry of [true, false]) {
+          const px = isEntry ? row.entry : row.exit
+          if (px === undefined) continue
+          const below = short !== isEntry
+          const yBar = yAxis.convertToPixel(below ? k.low : k.high)
+          const y = yBar + (below ? 1 : -1) * (short ? 34 : 16)
+          const col = below ? HIGH_C : LOW_C
+          ctx.fillStyle = col
+          ctx.beginPath()
+          if (below) { ctx.moveTo(x, yBar + 4); ctx.lineTo(x - 5, yBar + 9); ctx.lineTo(x + 5, yBar + 9) }
+          else { ctx.moveTo(x, yBar - 4); ctx.lineTo(x - 5, yBar - 9); ctx.lineTo(x + 5, yBar - 9) }
+          ctx.fill()
+          const txt = `${isEntry ? (short ? 'RSI空头' : 'RSI多头') : (short ? '平空' : '平多')} ${formatPrice(px)}`
+          const w = ctx.measureText(txt).width + 8
+          const lx = clampLabelX(x, w, bounding.width)
+          ctx.beginPath(); ctx.rect(lx - w / 2, y - 8, w, 16); ctx.fill()
+          ctx.fillStyle = '#fff'
+          ctx.fillText(txt, lx, y)
+        }
       }
     }
     // Open position whose entry bar may be scrolled out of view: Pine keeps holding
     // (no exit while openprofit < 0, pyramiding = 1 ignores new entries), so show
     // the cost line — otherwise a 累计差值 spike with no marker looks like a bug.
-    const last = res.at(-1)
-    if (last?.inPos && last.posEntry !== undefined) {
-      const y = yAxis.convertToPixel(last.posEntry)
-      const c = kLineDataList.at(-1)?.close ?? last.posEntry
-      const pnl = 100 * (c - last.posEntry) / last.posEntry
-      ctx.strokeStyle = HIGH_C
+    const lastIndex = Math.min(res.length - 1, Math.ceil(visibleRange.to) - 1)
+    const last = res[lastIndex]
+    if (last) for (const [short, row] of [[false, last], [true, last.short]] as const) {
+      if (!row.inPos || row.posEntry === undefined) continue
+      const y = yAxis.convertToPixel(row.posEntry)
+      const c = kLineDataList[lastIndex]?.close ?? row.posEntry
+      const pnl = 100 * (short ? row.posEntry - c : c - row.posEntry) / row.posEntry
+      const color = short ? SHORT_C : HIGH_C
+      ctx.strokeStyle = color
       ctx.setLineDash([6, 4])
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(bounding.width, y); ctx.stroke()
       ctx.setLineDash([])
-      const txt = `RSI网格持多 @${formatPrice(last.posEntry)} ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%（浮亏不平、不加仓）`
+      let txt = `RSI网格${short ? '持空' : '持多'} @${formatPrice(row.posEntry)} ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%（浮亏不平、不加仓）`
+      const maxWidth = Math.max(0, bounding.width - 8)
+      if (ctx.measureText(txt).width > maxWidth) {
+        while (txt.length && ctx.measureText(`${txt}…`).width > maxWidth) txt = txt.slice(0, -1)
+        if (!txt) continue
+        txt += '…'
+      }
       const x = costLabelX(ctx.measureText(txt).width, y, bounding.width)
       ctx.textAlign = 'left'
-      ctx.fillStyle = HIGH_C
-      ctx.fillText(txt, x, y - 8)
+      ctx.fillStyle = color
+      ctx.fillText(txt, x, y + (short ? 18 : -8))
     }
     ctx.restore()
     return false

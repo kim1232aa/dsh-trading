@@ -165,7 +165,7 @@ export type RegimeSnapshot = {
   signal: SignalReport
   structure: Structure
   rsiGrid: RsiGridReport
-  /** Extension (not in the Pine source, which is long-only): opt-in via regimeSnapshot opts. */
+  /** Mirrored short extension (not in the long-only Pine source); enabled unless explicitly disabled. */
   rsiGridShort?: RsiGridReport
   revPoint: RevPointReport
   rsiDiff: RsiDiffReport
@@ -297,7 +297,7 @@ export function regimeSnapshot(
     signal: signalReport(candles),
     structure: priceStructure(candles),
     rsiGrid: rsiGridReport(candles),
-    ...(opts.rsiGridShort ? { rsiGridShort: rsiGridReport(candles, RSI_GRID_SHORT_DEFAULTS, 'short') } : {}),
+    ...(opts.rsiGridShort !== false ? { rsiGridShort: rsiGridReport(candles, RSI_GRID_SHORT_DEFAULTS, 'short') } : {}),
     revPoint: revPointReport(candles, oiPoints(derivatives)),
     rsiDiff: rsiDiffReport(closes, 6, 12),
   }

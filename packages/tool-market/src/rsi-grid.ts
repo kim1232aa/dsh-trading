@@ -28,6 +28,12 @@ import { rsi as rsiSeries } from './indicators.js'
 export const RSI_GRID_DEFAULTS = [7, 30, 60, 10] as const
 export const RSI_GRID_SHORT_DEFAULTS = [7, 40, 70, 10] as const
 
+/** Reflect the long entry/exit thresholds around RSI 50; retain the stored four-parameter format. */
+export function rsiGridShortParams(params: readonly number[] = RSI_GRID_DEFAULTS): [number, number, number, number] {
+  const [length = 7, low = 30, high = 60, threshold = 10] = params.length === 4 ? params : RSI_GRID_DEFAULTS
+  return [length, 100 - high, 100 - low, threshold]
+}
+
 type Bar = { open: number; close: number; timestamp?: number; time?: string | number }
 
 export type RsiGridOpts = {
@@ -193,30 +199,33 @@ export function rsiGridReport(
   }
 }
 
+/** Observation state shared by the text dashboard and chart chip. */
+export function rsiGridStateText(r: RsiGridReport): string {
+  const short = r.side === 'short'
+  const [, low = 30, high = 60, threshold = 10] = r.params ?? (short ? RSI_GRID_SHORT_DEFAULTS : RSI_GRID_DEFAULTS)
+  if (r.pending === 'entry') return short ? '触发进空' : '触发进多'
+  if (r.pending === 'exit') return short ? '触发平空' : '触发平多'
+  if (r.position != null) {
+    const p = r.position
+    const pnl = Number.isFinite(p.pnlPct) ? ` (${p.pnlPct >= 0 ? '+' : ''}${p.pnlPct}%)` : ''
+    return `${short ? '持空' : '持多'} @${Number.isFinite(p.entry) ? p.entry : '—'}${pnl}`
+  }
+  if (typeof r.rsi !== 'number' || !Number.isFinite(r.rsi)) return '未就绪'
+  if (short && r.rsi > high) return `超买累计 ${r.cum}/${threshold}`
+  if (!short && r.rsi < low) return `超卖累计 ${r.cum}/${threshold}`
+  return '空仓'
+}
+
 export function renderRsiGrid(r: RsiGridReport, shortReport?: RsiGridReport): string {
   if (shortReport) {
-    const [len, low, high, th] = r.params as [number, number, number, number]
+    const [length, low, high, threshold] = r.params
     const sParams = shortReport.params
     const sLow = sParams[1] ?? 40
     const sHigh = sParams[2] ?? 70
-    const sTh = sParams[3] ?? th
+    const shortThreshold = sParams[3] ?? threshold
+    const shortCum = shortReport.cum === 0 ? 0 : -shortReport.cum
 
-    const formatState = (item: RsiGridReport) => {
-      const isShort = item.side === 'short'
-      if (item.position !== null) {
-        const p = item.position
-        return `${isShort ? '持空' : '持多'} @${p.entry} (${p.pnlPct >= 0 ? '+' : ''}${p.pnlPct}%)`
-      }
-      if (item.pending === 'entry') return `触发${isShort ? '进空' : '进多'}`
-      if (item.pending === 'exit') return '触发平仓'
-      if (item.rsi !== null) {
-        if (!isShort && item.rsi < low) return `超卖累计 ${item.cum}/${th}`
-        if (isShort && item.rsi > sHigh) return `超买累计 ${item.cum}/${sTh}`
-      }
-      return '空仓'
-    }
-
-    return `  RSI网格(多=Pine原版；空=扩展,非Pine) [多: <${low}平≥${high} | ${formatState(r)}] [空: >${sHigh}平≤${sLow} | ${formatState(shortReport)}]`
+    return `  RSI网格(多=Pine原版；空=扩展,非Pine; RSI${length} ${r.rsi ?? '–'}; 多差 ${r.cum}/${threshold}; 空差 ${shortCum}/-${shortThreshold}) [多: <${low}平≥${high} | ${rsiGridStateText(r)}] [空: >${sHigh}平≤${sLow} | ${rsiGridStateText(shortReport)}]`
   }
 
   const [len, low, high, th] = r.params as [number, number, number, number]

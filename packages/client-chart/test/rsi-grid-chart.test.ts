@@ -7,7 +7,8 @@ describe("RSI 网格 chart split (Pine layout)", () => {
     expect(rsiGridIndicator.minValue).toBeLessThan(0)
     expect(rsiGridIndicator.maxValue).toBeGreaterThan(100)
     expect(rsiGridIndicator.figures.map(f => f.key)).toEqual(["rsi"])
-    expect(rsiGridCumIndicator.figures.map(f => f.key)).toEqual(["cum"])
+    expect(rsiGridCumIndicator.figures.map(f => f.key)).toEqual(["cum", "shortCum", "longThreshold", "shortThreshold"])
+    expect(rsiGridCumIndicator).not.toHaveProperty("minValue")
   })
   it("entry/exit markers are a price-series (candle pane) indicator", () => {
     expect(rsiGridMarksIndicator.series).toBe("price")

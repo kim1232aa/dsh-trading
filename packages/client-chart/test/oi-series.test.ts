@@ -76,6 +76,28 @@ describe('OI_POSTURE / LSR_RATIO series', () => {
     expect(Object.keys(rows[1]!).sort()).toEqual(['bar', 'deltaOi', 'oi', 'oiMa'].sort())
   })
 
+  it('keeps the first OI delta unknown and preserves positive, negative, and zero changes', () => {
+    const hist = [100, 120, 90, 90].map((openInterest, i) => bar({
+      time: new Date(t0 + i * 15 * 60_000).toISOString(), openInterest,
+    }))
+    const rows = calcOiPostureRows(hist.map(h => ({ timestamp: Date.parse(h.time) })), hist)
+    expect(rows[0]).not.toHaveProperty('deltaOi')
+    expect(rows.slice(1).map(row => row.deltaOi)).toEqual([20, -30, 0])
+  })
+
+  it.each([null, undefined, Number.NaN, Number.POSITIVE_INFINITY])(
+    'keeps OI delta unknown after a missing or invalid predecessor (%s)', missing => {
+      const hist = [100, missing, 90, 80].map((openInterest, i) => bar({
+        time: new Date(t0 + i * 15 * 60_000).toISOString(), openInterest,
+      }))
+      const rows = calcOiPostureRows(hist.map(h => ({ timestamp: Date.parse(h.time) })), hist)
+      expect(rows[1]).toEqual({})
+      expect(rows[2]?.oi).toBe(90)
+      expect(rows[2]).not.toHaveProperty('deltaOi')
+      expect(rows[3]?.deltaOi).toBe(-10)
+    },
+  )
+
   it('LSR_RATIO draws account ratio + top position ratio with mid=1 boundary', () => {
     const rows = calcLsrRatioRows(candles.slice(0, 2), history)
     expect(rows[0]).toEqual(expect.objectContaining({ lsr: 1.40, topPos: 1.55, mid: 1 }))

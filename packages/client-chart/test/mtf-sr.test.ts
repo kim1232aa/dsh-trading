@@ -8,6 +8,7 @@ import {
   getTimeframeLabel,
   getTimeframeWeight,
   mtfSRIndicator,
+  mtfSourceTimeframeSeconds,
   mtfSRZones,
   parseTimeframeSeconds,
   type Candle,
@@ -26,6 +27,14 @@ describe('MTF S/R Zones - Intraday MTF SR Pine Script v6 Port', () => {
   }
 
   describe('Math, Helpers & Formulas', () => {
+    it.each([['1m', 60], ['15m', 900], ['4h', 14400], ['1d', 86400], ['3d', 259200], ['1w', 604800]] as const)('parses native fixed source timeframe %s', (tf, seconds) => {
+      expect(mtfSourceTimeframeSeconds(tf)).toBe(seconds)
+    })
+
+    it.each(['1M', '3M', 'M', 'D', '60', '0m', '-1h', '1.5h', '1s', 'bad'])('leaves unsupported source timeframe %s unknown', tf => {
+      expect(mtfSourceTimeframeSeconds(tf)).toBeUndefined()
+    })
+
     it('parses timeframe strings and seconds accurately', () => {
       expect(parseTimeframeSeconds('30')).toBe(1800)
       expect(parseTimeframeSeconds('60')).toBe(3600)
@@ -225,6 +234,164 @@ describe('MTF S/R Zones - Intraday MTF SR Pine Script v6 Port', () => {
     })
   })
 
+  describe('MTF bucket finality', () => {
+    const cases = ['timestamp', 'simulated', 'synthesized'].flatMap(mode => [false, true].map(mirror => ({ mode, mirror })))
+    const unknownOptions = { pivotLeft: 1, pivotRight: 1, timeframes: ['10'], mergeEnabled: false }
+    const options = { ...unknownOptions, sourceTimeframeSeconds: 300 }
+
+    function fixture(highs: number[], mirror: boolean, mode = 'timestamp'): Candle[] {
+      return highs.map((high, i) => {
+        const bar: Candle = { open: high - 1, high, low: high - 2, close: high - 1 }
+        if (mirror) {
+          bar.open = 100 - bar.open!
+          bar.close = 100 - bar.close
+          bar.low = 100 - high
+          bar.high = 100 - (high - 2)
+        }
+        if (mode !== 'synthesized') bar.timestamp = Date.UTC(2024, 0, 1) + i * 300_000
+        return bar
+      })
+    }
+
+    it.each(cases)('ignores the partial right-leg bucket ($mode, mirror=$mirror)', ({ mode, mirror }) => {
+      const bars = fixture([10, 10, 20, 20, 10, 25], mirror, mode)
+      const params = { ...options, ...(mode === 'simulated' ? { simulatedBuckets: [2] } : {}) }
+      const prefix = calculateMtfSR(bars.slice(0, 5), params)
+      const appended = calculateMtfSR(bars, params)
+      const key = mirror ? 'sup' : 'res'
+      expect(prefix.series[4]?.[key]).toBeUndefined()
+      expect(prefix.allZones).toEqual([])
+      expect(appended.series.slice(0, 5)).toEqual(prefix.series)
+      expect(appended.allZones).toEqual([])
+    })
+
+    it.each(cases)('retains a complete final bucket without an extra source bar ($mode, mirror=$mirror)', ({ mode, mirror }) => {
+      const bars = fixture([10, 10, 20, 20, 10, 10], mirror, mode)
+      const params = { ...options, ...(mode === 'simulated' ? { simulatedBuckets: [2] } : {}) }
+      const result = calculateMtfSR(bars, params)
+      const key = mirror ? 'sup' : 'res'
+      const level = mirror ? 80 : 20
+      expect(result.series[4]?.[key]).toBeUndefined()
+      expect(result.series[5]?.[key]).toBe(level)
+      expect(result.allZones.find(zone => zone.level === level)?.startBar).toBe(5)
+    })
+
+    it.each(cases)('matches batch history at every closed source prefix ($mode, mirror=$mirror)', ({ mode, mirror }) => {
+      const bars = fixture([10, 10, 20, 20, 10, 10, 30, 30, 10, 10, 18, 18, 10, 10], mirror, mode)
+      const params = { ...options, ...(mode === 'simulated' ? { simulatedBuckets: [2] } : {}) }
+      const batch = calculateMtfSR(bars, params)
+      for (let count = 2; count <= bars.length; count++) {
+        expect(calculateMtfSR(bars.slice(0, count), params).series).toEqual(batch.series.slice(0, count))
+      }
+    })
+
+    it.each(cases)('excludes an explicitly forming source tail ($mode, mirror=$mirror)', ({ mode, mirror }) => {
+      const bars = fixture([10, 10, 20, 20, 10, 10, 10], mirror, mode)
+      const params = { ...options, ...(mode === 'simulated' ? { simulatedBuckets: [2] } : {}), lastBarClosed: false }
+      const forming = calculateMtfSR(bars.slice(0, 6), params)
+      const updatedTail = fixture([10, 10, 20, 20, 10, 25], mirror, mode)
+      const next = calculateMtfSR(bars, params)
+      const key = mirror ? 'sup' : 'res'
+      expect(forming.allZones).toEqual([])
+      expect(calculateMtfSR(updatedTail, params).allZones).toEqual([])
+      expect(next.series.slice(0, 5)).toEqual(forming.series.slice(0, 5))
+      expect(next.series[5]?.[key]).toBe(mirror ? 80 : 20)
+      expect(calculateMtfSR(bars.slice(0, 6), { ...params, lastBarClosed: true }).series[5]?.[key]).toBe(mirror ? 80 : 20)
+    })
+
+    it.each([false, true])('does not infer source cadence from an initial gap (mirror=%s)', mirror => {
+      const bars = fixture([10, 20, 10, 30], mirror)
+      ;[0, 180, 195, 196].forEach((minute, i) => { bars[i]!.timestamp = minute * 60_000 })
+      const params = { ...unknownOptions, timeframes: ['15'], minScore: 0, atrPeriod: 1 }
+      const prefix = calculateMtfSR(bars.slice(0, 3), params)
+      const appended = calculateMtfSR(bars, params)
+      const key = mirror ? 'sup' : 'res'
+      expect(prefix.series[2]?.[key]).toBeUndefined()
+      expect(prefix.allZones).toEqual([])
+      expect(appended.series.slice(0, 3)).toEqual(prefix.series)
+      expect(appended.allZones).toEqual([])
+    })
+
+    it.each([false, true])('waits for a later bucket when source cadence is unknown (mirror=%s)', mirror => {
+      const bars = fixture([10, 10, 20, 20, 10, 10, 10], mirror)
+      const prefix = calculateMtfSR(bars.slice(0, 6), unknownOptions)
+      const appended = calculateMtfSR(bars, unknownOptions)
+      const key = mirror ? 'sup' : 'res'
+      expect(prefix.allZones).toEqual([])
+      expect(appended.series.slice(0, 6)).toEqual(prefix.series)
+      expect(appended.series[6]?.[key]).toBe(mirror ? 80 : 20)
+      expect(appended.allZones.find(zone => zone.level === (mirror ? 80 : 20))?.startBar).toBe(6)
+    })
+
+    it.each([false, true])('confirms an unknown-cadence gap on its first provable source row (mirror=%s)', mirror => {
+      const bars = fixture([10, 20, 10, 10, 10], mirror)
+      ;[0, 180, 195, 196, 210].forEach((minute, i) => { bars[i]!.timestamp = minute * 60_000 })
+      const params = { ...unknownOptions, timeframes: ['15'], minScore: 0, atrPeriod: 1 }
+      const prefix = calculateMtfSR(bars.slice(0, 4), params)
+      const appended = calculateMtfSR(bars, params)
+      const key = mirror ? 'sup' : 'res'
+      expect(prefix.allZones).toEqual([])
+      expect(appended.series.slice(0, 4)).toEqual(prefix.series)
+      expect(appended.series[4]?.[key]).toBe(mirror ? 80 : 20)
+      expect(appended.allZones.find(zone => zone.level === (mirror ? 80 : 20))?.startBar).toBe(4)
+    })
+
+    it.each([0, -300, NaN, Infinity])('treats unprovable source cadence %s as unknown', sourceTimeframeSeconds => {
+      const bars = fixture([10, 10, 20, 20, 10, 10, 10], false)
+      const params = { ...unknownOptions, sourceTimeframeSeconds }
+      const prefix = calculateMtfSR(bars.slice(0, 6), params)
+      const appended = calculateMtfSR(bars, params)
+      expect(prefix.allZones).toEqual([])
+      expect(appended.series.slice(0, 6)).toEqual(prefix.series)
+      expect(appended.series[6]?.res).toBe(20)
+    })
+
+    it('does not manufacture a finer timeframe from coarser source OHLC', () => {
+      const bars = fixture([10, 20, 10, 10], false)
+      expect(calculateMtfSR(bars, { ...options, timeframes: ['1'] }).allZones).toEqual([])
+    })
+
+    it.each([false, true])('keeps gapped live indicator history stable without source cadence (mirror=%s)', mirror => {
+      const bars = fixture([10, 20, 10, 30, 10], mirror)
+      ;[0, 180, 210, 211, 212].forEach((minute, i) => { bars[i]!.timestamp = minute * 60_000 })
+      const prefix = mtfSRIndicator.calc(bars.slice(0, 4), { calcParams: [1, 1, 0.35] })
+      const appended = mtfSRIndicator.calc(bars, { calcParams: [1, 1, 0.35] })
+      const key = mirror ? 'sup' : 'res'
+      expect(prefix[2]?.[key]).toBeUndefined()
+      expect(appended.slice(0, 3)).toEqual(prefix.slice(0, 3))
+    })
+
+    it.each([false, true])('confirms a gapped bucket when its closure becomes known (mirror=%s)', mirror => {
+      const bars = fixture([10, 10, 20, 20, 10, 10, 10], mirror)
+      bars[5]!.timestamp! += 600_000
+      bars[6]!.timestamp! += 600_000
+      const prefix = calculateMtfSR(bars.slice(0, 5), options)
+      const closed = calculateMtfSR(bars.slice(0, 6), options)
+      const batch = calculateMtfSR(bars, options)
+      const key = mirror ? 'sup' : 'res'
+      expect(closed.series.slice(0, 5)).toEqual(prefix.series)
+      expect(closed.series[5]?.[key]).toBe(mirror ? 80 : 20)
+      expect(closed.allZones.find(zone => zone.level === (mirror ? 80 : 20))?.startBar).toBe(5)
+      expect(batch.series.slice(0, 6)).toEqual(closed.series)
+    })
+
+    it('keeps the live chart tail out of higher-timeframe pivot confirmation', () => {
+      const highs = [...Array(6).fill(10), ...Array(6).fill(20), ...Array(8).fill(10)]
+      const bars = fixture(highs, false)
+      const ind = { calcParams: [1, 1, 0.35], extendData: { sourceTimeframeSeconds: 300 } }
+      const forming = mtfSRIndicator.calc(bars.slice(0, 18), ind)
+      const next = mtfSRIndicator.calc(bars.slice(0, 19), ind)
+      expect(forming[17]?.res).toBeUndefined()
+      expect(next[17]?.res).toBe(20)
+      expect(next.slice(0, 17)).toEqual(forming.slice(0, 17))
+      const unknown = mtfSRIndicator.calc(bars.slice(0, 19), { calcParams: ind.calcParams })
+      const observedNext = mtfSRIndicator.calc(bars, { calcParams: ind.calcParams })
+      expect(unknown[17]?.res).toBeUndefined()
+      expect(observedNext.slice(0, 18)).toEqual(unknown.slice(0, 18))
+      expect(observedNext[18]?.res).toBe(20)
+    })
+  })
+
   describe('Klinecharts Indicator Integration', () => {
     it('defines mtfSRIndicator with required figures and styles', () => {
       expect(mtfSRIndicator.name).toBe('MTF_SR')
@@ -256,6 +423,20 @@ describe('MTF S/R Zones - Intraday MTF SR Pine Script v6 Port', () => {
       expect(ds.values[1]!.value.text).toBe('95.20')
       expect(ds.values[2]!.title).toContain('共振带')
       expect(ds.values[2]!.value.text).toBe('100.00')
+    })
+
+    it.each([false, true])('does not synthesize fixed intraday zones from calendar-month candles (mirror=%s)', mirror => {
+      const data: Candle[] = [10, 20, 10, 10, 10].map((high, i) => ({
+        timestamp: Date.UTC(2024, i, 1), open: mirror ? 45 : 5, close: mirror ? 45 : 5,
+        high: mirror ? 50 : high, low: mirror ? 50 - high : 0, volume: 100,
+      }))
+      const result = calculateMtfSR(data, { sourceTimeframe: '1M', timeframes: ['30', '60', '120', '240'],
+        pivotLeft: 1, pivotRight: 1, mergeEnabled: false, minScore: 0, atrPeriod: 1 })
+      expect(result.resistanceLevels).toEqual([])
+      expect(result.supportLevels).toEqual([])
+      const rows = mtfSRIndicator.calc(data, { calcParams: [1, 1, 0.35], extendData: { sourceTimeframe: '1M' } })
+      expect(rows).toHaveLength(data.length)
+      expect(rows.every(r => r.res === undefined && r.sup === undefined)).toBe(true)
     })
 
     it('maintains compatibility with legacy mtfSRZones function', () => {

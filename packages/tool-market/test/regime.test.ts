@@ -346,7 +346,10 @@ describe("renderSnapshot", () => {
     expect(text).toContain("Signal [")
     expect(text.split("\n")).toHaveLength(10)  // + RevPoint line
     expect(text).toContain("RevPoint反转点")
-    expect(text).not.toContain("空=扩展")  // short grid is opt-in
+    expect(snapshot.rsiGridShort).toBeDefined()
+    expect(text).toContain("空=扩展")
+    expect(text).toContain("[多:")
+    expect(text).toContain("[空:")
   })
 
   it("renders derivatives line when present", () => {

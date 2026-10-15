@@ -23,11 +23,13 @@ import type { ChartAnnotation, ChartPayload, ChartScenario, ChartTimeframeData }
 import type { PanelDerivativeBar, PanelDerivatives } from './market-client.js'
 import { contractOpenInterest, postureColor } from './market-client.js'
 import { regimeSnapshot } from '../../../tool-market/src/regime.js'
+import { rsiGridStateText } from '../../../tool-market/src/rsi-grid.js'
+import type { RsiGridReport } from '../../../tool-market/src/rsi-grid.js'
 import { regimeSeries } from '../../../tool-market/src/chart-payload.js'
 import { evasiveSuperTrend, evasiveSuperTrendIndicator } from './indicators/evasive-st.js'
 import { nadarayaWatsonTrend, nadarayaWatsonIndicator } from './indicators/nadaraya-watson.js'
 import { orderBlockBreaker, orderBlockIndicator } from './indicators/order-blocks.js'
-import { mtfSRZones, mtfSRIndicator } from './indicators/mtf-sr.js'
+import { mtfSRZones, mtfSRIndicator, mtfSourceTimeframeSeconds } from './indicators/mtf-sr.js'
 import { entrySignalIndicator } from './indicators/entry-signal.js'
 import { rsiGridIndicator, rsiGridCumIndicator, rsiGridMarksIndicator } from './indicators/rsi-grid.js'
 import { revPointIndicator, REVPOINT_TABLE_W } from './indicators/revpoint.js'
@@ -260,7 +262,7 @@ export const EDITABLE: {
   { name: 'NW_TREND', title: '核回归趋势(QuantAlgo)', defaults: [50, 8, 2.0, 1.8], defaultVisible: false, params: [period('回溯周期'), { label: '带宽', min: 1, max: 50, step: 1 }, { label: '倍数', min: 0.5, max: 10, step: 0.1 }, { label: '通道倍数', min: 0.5, max: 10, step: 0.1 }] },
   { name: 'OB_BB', title: '订单块/破坏块(RWB)', defaults: [], defaultVisible: false, params: [] },
   { name: 'MTF_SR', title: '多周期支撑阻力(Syndicate)', defaults: [5], defaultVisible: false, params: [period('Pivot周期')] },
-  { name: 'RSI_GRID', title: 'RSI策略网格现货', pane: 'pane_rsi_grid', defaults: [7, 30, 60, 10], params: [period('RSI周期'), period('低阈值'), period('高阈值'), period('累加阈值')] },
+  { name: 'RSI_GRID', title: 'RSI网格（多空）', pane: 'pane_rsi_grid', defaults: [7, 30, 60, 10], params: [period('RSI周期'), period('多入阈值'), period('多平阈值'), period('累计阈值')] },
   { name: 'REVPOINT', title: '反转点标注 RevPoint', defaults: [0.7, 2.0, 3, 0, 0, 1, 0, 1, 0], params: [{ label: '细档确认阈值%', min: 0.1, max: 10, step: 0.1 }, { label: '粗档(大周期)阈值%', min: 0.5, max: 20, step: 0.1 }, { label: '多周期pivot左右bar数', min: 1, max: 10, step: 1 }, { label: '15m(0/1)', min: 0, max: 1, step: 1 }, { label: '30m(0/1)', min: 0, max: 1, step: 1 }, { label: '1H(0/1)', min: 0, max: 1, step: 1 }, { label: '2H(0/1)', min: 0, max: 1, step: 1 }, { label: '4H(0/1)', min: 0, max: 1, step: 1 }, { label: '细档最少★数', min: 0, max: 4, step: 1 }] },
   { name: 'OI_POSTURE', title: '合约OI', pane: 'pane_oi_posture', defaults: [], params: [] },
   { name: 'LSR_RATIO', title: '多空比', pane: 'pane_lsr', defaults: [], params: [] },
@@ -482,7 +484,7 @@ export function calcOiPostureRows(
     const prev = idx > 0 ? history[idx - 1] : undefined
     const curVal = contractOpenInterest(h)
     const prevVal = prev ? contractOpenInterest(prev) : null
-    return curVal !== null && prevVal !== null ? curVal - prevVal : 0
+    return curVal !== null && prevVal !== null ? curVal - prevVal : undefined
   })
   const oiValues: (number | undefined)[] = []
   return kLineDataList.map(k => {
@@ -514,12 +516,8 @@ export function calcOiPostureRows(
     }
     const row: OiPostureRow = { oi, bar }
     if (count > 0) row.oiMa = sum / count
-    if (histIdx >= 0) {
-      const delta = deltas[histIdx]
-      row.deltaOi = delta !== undefined ? delta : 0
-    } else {
-      row.deltaOi = 0
-    }
+    const delta = deltas[histIdx]
+    if (delta !== undefined) row.deltaOi = delta
     return row
   })
 }
@@ -977,19 +975,16 @@ const CHIP_DEFS: ChipDef[] = [
     label: ind => {
       const rg = ind['rsiGrid'] as Record<string, unknown> | undefined
       if (!rg) return { text: 'RSI网格', state: '—' }
+      const sg = ind['rsiGridShort'] as Record<string, unknown> | undefined
       const cum = fmt(get(rg, 'cum'))
+      const shortCum = get(sg, 'cum')
       const rsiVal = fmt(get(rg, 'rsi'))
-      const pos = get(rg, 'position') as Record<string, unknown> | undefined
-      let state = '正常'
-      if (pos) {
-        const pnl = get(pos, 'pnlPct')
-        state = `持多${typeof pnl === 'number' ? ` (${pnl >= 0 ? '+' : ''}${pnl}%)` : ''}`
-      } else {
-        const pending = get(rg, 'pending')
-        if (pending === 'entry') state = '触发进多'
-        else if (typeof get(rg, 'rsi') === 'number' && (get(rg, 'rsi') as number) < 30) state = '超卖累加中'
-      }
-      return { text: `RSI7 ${rsiVal} · 差值 ${cum}`, state }
+      const params = get(rg, 'params')
+      const length = Array.isArray(params) ? params[0] : 7
+      const longState = rsiGridStateText({ ...rg, side: 'long' } as unknown as RsiGridReport)
+      const shortState = sg ? rsiGridStateText({ ...sg, side: 'short' } as unknown as RsiGridReport) : '—'
+      return { text: `RSI${length} ${rsiVal} · 多差 ${cum} / 空差 ${typeof shortCum === 'number' ? fmt(shortCum === 0 ? 0 : -shortCum) : '—'}`,
+        state: `多·${longState} / 空·${shortState}` }
     },
   },
   { id: 'macd', indicator: { name: 'TM_MACD', figures: { hist: 'macd_hist', macd: 'macd', signal: 'macd_signal' } }, label: ind => ({ text: `MACD ${fmt(get(ind['macd'], 'histogram'))}`, state: get(ind['macd'], 'state') }) },
@@ -1160,7 +1155,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     })))
     for (const def of EDITABLE) {
       const s = settingsRef.current[def.name]!
-      const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivativesRef.current?.history : undefined
+      const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivativesRef.current?.history
+        : def.name === 'MTF_SR' ? { sourceTimeframe: data.timeframe, sourceTimeframeSeconds: mtfSourceTimeframeSeconds(data.timeframe) } : undefined
       if (def.pane !== undefined) {
         // Own pane: created only when shown, so a hidden one doesn't leave a blank strip.
         if (s.visible) {
@@ -1276,7 +1272,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     chart.setStyles(ohlcTooltipAvoidTable(settings['REVPOINT']?.visible ?? false, chart.getSize('candle_pane', 'main' as never)?.width ?? 0))
     for (const def of EDITABLE) {
       const s = settings[def.name]!
-      const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivatives?.history : undefined
+      const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivatives?.history
+        : def.name === 'MTF_SR' ? { sourceTimeframe: data.timeframe, sourceTimeframeSeconds: mtfSourceTimeframeSeconds(data.timeframe) } : undefined
       if (def.pane !== undefined) {
         const exists = chart.getIndicatorByPaneId(def.pane, def.name) != null
         if (!s.visible) {
@@ -1302,7 +1299,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       }
       chart.overrideIndicator({ name: def.name, calcParams: s.params, visible: s.visible, extendData: ext }, 'candle_pane')
     }
-  }, [settings, derivatives])
+  }, [settings, derivatives, data.timeframe])
 
   // Live tail: push the newest bar into the existing plot. klinecharts updates
   // the last bar in place, or appends when the timestamp has moved on, so the
