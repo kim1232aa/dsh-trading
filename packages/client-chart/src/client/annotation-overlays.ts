@@ -102,10 +102,21 @@ export function createAnnotationOverlays(family: string, measureText: MeasureTex
       const color = typeof ext['color'] === 'string' ? ext['color'] : '#888888'
       const top = Math.min(y0, y1)
       const bottom = Math.max(y0, y1)
+      const originX = ext['anchored'] === true ? coordinates[0]?.x : 0
+      if (originX === undefined || !Number.isFinite(originX)) return []
+      const left = Math.max(0, originX)
+      if (left >= bounding.width) return []
+      const confirmationX = coordinates[2]?.x
+      if (ext['knownAfterConfirmation'] === true &&
+        (confirmationX === undefined || !Number.isFinite(confirmationX) || confirmationX > bounding.width)) return []
       const figures: OverlayFigure[] = [{
-        type: 'rect', attrs: { x: 0, y: top, width: bounding.width, height: bottom - top },
+        type: 'rect', attrs: { x: left, y: top, width: bounding.width - left, height: bottom - top },
         styles: { style: 'fill', color: `${color}26` }, ignoreEvent: true,
       }]
+      if (ext['knownAfterConfirmation'] === true && confirmationX !== undefined && confirmationX >= left) {
+        figures.push({ type: 'line', attrs: { coordinates: [{ x: confirmationX, y: top }, { x: confirmationX, y: bottom }] },
+          styles: { style: 'dashed', color }, ignoreEvent: true })
+      }
       if (bottom >= 0 && top <= bounding.height) {
         figures.push(...laneCaption(ext, color, Math.max(0, top), bounding))
       }

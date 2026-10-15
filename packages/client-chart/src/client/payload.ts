@@ -46,6 +46,8 @@ export type ChartPayload = {
   symbol: string
   timeframes: ChartTimeframeData[]
   scenarios?: ChartScenario[]
+  /** An authoritative candidate result may explicitly replace earlier marks with none. */
+  replaceMarks?: boolean
 }
 
 function isRecord(x: unknown): x is Record<string, unknown> {
@@ -116,6 +118,7 @@ export function readChartPayload(meta: unknown): ChartPayload | null {
     provider: meta['provider'],
     symbol: meta['symbol'],
     timeframes,
+    ...meta['replaceMarks'] === true ? { replaceMarks: true } : {},
     ...scenarios !== undefined && scenarios.length > 0 ? { scenarios } : {},
   }
 }

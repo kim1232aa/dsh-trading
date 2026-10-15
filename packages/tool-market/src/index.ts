@@ -38,6 +38,7 @@ import type { ScreenerMatch, ScreenerPattern } from './screener.js'
 import { runCustomIndicator, detectSwingPoints, classifySwingStructure } from './indicator-sandbox.js'
 import type { CustomIndicatorOptions, CustomIndicatorResult } from './indicator-sandbox.js'
 import { trendlineCandidate } from './trendlines.js'
+import { registerSupplyDemandTool } from './supply-demand-tool.js'
 export { trendlineCandidate } from './trendlines.js'
 
 export { runCustomIndicator, detectSwingPoints, classifySwingStructure } from './indicator-sandbox.js'
@@ -117,6 +118,7 @@ function renderCsv(candles: Candle[], indicators: Record<string, (number | null)
 }
 
 export function apply(ctx: Context, config: Config): void {
+  registerSupplyDemandTool(ctx, TIMEFRAMES)
   ctx.tools.register(defineTool({
     name: 'list_symbols',
     description: 'List the instruments available from the mounted market-data providers, with the timeframes each one can serve. Call this before get_ohlcv when unsure which symbols exist.',
@@ -489,7 +491,7 @@ export function apply(ctx: Context, config: Config): void {
       },
       zones: {
         type: 'array',
-        description: 'Horizontal price bands (supply/demand, confluence areas).',
+        description: 'Unverified support/resistance or confluence reference bands. Supply/demand candidates require find_supply_demand_zones.',
         items: {
           type: 'object',
           additionalProperties: false,
@@ -622,6 +624,9 @@ export function apply(ctx: Context, config: Config): void {
         })
       }
       for (const zone of args.zones ?? []) {
+        if (/供给|供应|供應|需求|供需|\b(?:supply|demand)\b/iu.test(zone.label)) {
+          throw new Error('Supply/demand candidates require find_supply_demand_zones; annotate_chart zones are unverified reference bands')
+        }
         const role = (zone.role ?? 'other') as AnnotationRole
         const label = clean(zone.label, 120)
         if (!Number.isFinite(zone.low) || !Number.isFinite(zone.high) || zone.low >= zone.high) {

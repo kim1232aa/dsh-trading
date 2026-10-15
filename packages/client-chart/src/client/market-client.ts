@@ -264,7 +264,8 @@ export interface MergeMarksResult {
 }
 
 /**
- * Lift the drawings off an agent payload, or null when it carries none.
+ * Lift drawings off an agent payload, or null when it carries no replacement.
+ * Explicit replaceMarks results may carry an empty set after candidate invalidation.
  *
  * `market_snapshot` and `get_ohlcv` payloads have neither annotations nor
  * scenarios, so they can never blank existing marks — the panel's adoption
@@ -279,7 +280,7 @@ export function readMarks(payload: ChartPayload | null): ChartMarks | null {
   if (tf === undefined) return null
   const annotations = [...tf.annotations ?? []]
   const scenarios = [...payload.scenarios ?? []]
-  if (annotations.length === 0 && scenarios.length === 0) return null
+  if (annotations.length === 0 && scenarios.length === 0 && payload.replaceMarks !== true) return null
   const rawSymbol = payload.symbol.trim()
   const symbol = rawSymbol.toUpperCase()
   return {
@@ -370,7 +371,11 @@ export function mergeMarks(payload: ChartPayload, marks: ChartMarks): MergeMarks
       if (inBand(record['price'], role, lo, hi, isCrossTf)) kept.push(a)
       else dropped += 1
     } else if (a.type === 'zone') {
-      if (inBand(record['low'], role, lo, hi, isCrossTf) && inBand(record['high'], role, lo, hi, isCrossTf)) kept.push(a)
+      const availableAt = record['availableAt']
+      // A candidate's confirmation must be known; path projection tolerance cannot reveal it early.
+      const known = availableAt === undefined || (typeof availableAt === 'string'
+        && Number.isFinite(Date.parse(availableAt)) && Date.parse(availableAt) <= lastMs)
+      if (known && inBand(record['low'], role, lo, hi, isCrossTf) && inBand(record['high'], role, lo, hi, isCrossTf)) kept.push(a)
       else dropped += 1
     } else if (a.type === 'path') {
       const points = Array.isArray(record['points']) ? record['points'] : []

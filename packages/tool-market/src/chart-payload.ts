@@ -57,7 +57,7 @@ export type ChartLevelAnnotation = {
   confidence?: number
 }
 
-/** A horizontal price band (supply/demand zone, confluence area). */
+/** A reference band, or a rule-derived candidate with a recorded time origin. */
 export type ChartZoneAnnotation = {
   type: 'zone'
   low: number
@@ -65,6 +65,12 @@ export type ChartZoneAnnotation = {
   label: string
   role: AnnotationRole
   sources: string[]
+  /** Omitted for full-width reference bands; candidate boxes begin at their base. */
+  startTime?: string
+  /** The confirmation candle's open time, distinct from the base's origin. */
+  confirmedAt?: string
+  /** Earliest known time after confirmation closes (normally the next bar's open). */
+  availableAt?: string
   /** 0..1; omit rather than invent. */
   confidence?: number
 }
@@ -131,6 +137,8 @@ export type ChartPayload = {
   timeframes: ChartTimeframeData[]
   /** Present on annotate_chart results. */
   scenarios?: ChartScenario[]
+  /** Authoritative candidate query: an empty annotation set clears earlier marks. */
+  replaceMarks?: boolean
 }
 
 /**

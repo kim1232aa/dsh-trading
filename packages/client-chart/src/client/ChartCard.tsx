@@ -14,7 +14,7 @@
  */
 import { Component, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, ErrorInfo, ReactNode } from 'react'
-import { ActionType, TooltipShowRule, dispose, init, registerIndicator, registerOverlay, utils } from 'klinecharts'
+import { ActionType, dispose, init, registerIndicator, registerOverlay, utils } from 'klinecharts'
 import type { Chart, YAxisType } from 'klinecharts'
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 import { publishLatestChart } from './latest.js'
@@ -34,6 +34,7 @@ import { revPointIndicator, REVPOINT_TABLE_W } from './indicators/revpoint.js'
 import { ohlcOffsetRightForTopLeft } from './indicators/revpoint-layout.js'
 import { detectPricePrecision, formatPrice } from './precision.js'
 import { createAnnotationOverlays } from './annotation-overlays.js'
+import { createMainPaneTooltipFold, SUBPLOT_TOOLTIP } from './indicator-tooltip.js'
 
 export { evasiveSuperTrend } from './indicators/evasive-st.js'
 export { nadarayaWatsonTrend } from './indicators/nadaraya-watson.js'
@@ -88,7 +89,7 @@ const DARK: Palette = {
 
 export type DrawPrimitive =
   | { kind: 'hline'; price: number; label?: string; color?: string; dashed?: boolean }
-  | { kind: 'region'; low: number; high: number; label?: string; color?: string }
+  | { kind: 'region'; low: number; high: number; label?: string; color?: string; startTime?: string; availableAt?: string }
   | { kind: 'polyline'; points: { time: string; price: number }[]; label?: string; color?: string; dashed?: boolean }
 
 export type AnnotationRendererContext = {
@@ -151,7 +152,11 @@ registerAnnotationRenderer('zone', (a, ctx) => {
   const low = num(a['low'])
   const high = num(a['high'])
   if (low === undefined || high === undefined) return []
-  return [{ kind: 'region', low, high, color: roleColor(a['role'], ctx.palette), ...str(a['label']) !== undefined ? { label: str(a['label'])! } : {} }]
+  return [{ kind: 'region', low, high, color: roleColor(a['role'], ctx.palette),
+    ...str(a['label']) !== undefined ? { label: str(a['label'])! } : {},
+    ...str(a['startTime']) !== undefined ? { startTime: str(a['startTime'])! } : {},
+    ...str(a['availableAt']) !== undefined ? { availableAt: str(a['availableAt'])! } : {},
+  }]
 })
 registerAnnotationRenderer('path', (a, ctx) => {
   const raw = a['points']
@@ -566,13 +571,13 @@ function ensureRegistered(): void {
     ind.extendData as unknown[]
   const line = (key: string, title: string): { key: string; title: string; type: string } =>
     ({ key, title: `${title}: `, type: 'line' })
-  const defs: { name: string; shortName: string; figures: { key: string; title: string; type: string; baseValue?: number }[] }[] = [
-    { name: 'TM_RSI', shortName: 'RSI14*', figures: [line('rsi', 'RSI14')] },
-    { name: 'TM_STOCH', shortName: 'STOCH*', figures: [line('k', 'K'), line('d', 'D')] },
-    { name: 'TM_ADX', shortName: 'ADX*', figures: [line('adx', 'ADX'), line('pdi', '+DI'), line('mdi', '-DI')] },
-    { name: 'TM_MACD', shortName: 'MACD*', figures: [{ key: 'hist', title: '柱: ', type: 'bar', baseValue: 0 }, line('macd', 'MACD'), line('signal', '信号')] },
-    { name: 'TM_MFI', shortName: 'MFI14*', figures: [line('mfi', 'MFI14')] },
-    { name: 'TM_BB', shortName: '布林(20,2)*', figures: [line('upper', '上'), line('middle', '中'), line('lower', '下')] },
+  const defs: { name: string; shortName: string; calcParams: number[]; precision?: number; figures: { key: string; title: string; type: string; baseValue?: number }[] }[] = [
+    { name: 'TM_RSI', shortName: 'RSI', calcParams: [14], figures: [line('rsi', 'RSI')] },
+    { name: 'TM_STOCH', shortName: 'STOCH', calcParams: [14, 3, 3], figures: [line('k', 'K'), line('d', 'D')] },
+    { name: 'TM_ADX', shortName: 'ADX', calcParams: [14], figures: [line('adx', 'ADX'), line('pdi', '+DI'), line('mdi', '-DI')] },
+    { name: 'TM_MACD', shortName: 'MACD', calcParams: [12, 26, 9], precision: 4, figures: [{ key: 'hist', title: '柱: ', type: 'bar', baseValue: 0 }, line('macd', 'MACD'), line('signal', '信号')] },
+    { name: 'TM_MFI', shortName: 'MFI', calcParams: [14], figures: [line('mfi', 'MFI')] },
+    { name: 'TM_BB', shortName: '布林', calcParams: [20, 2], figures: [line('upper', '上'), line('middle', '中'), line('lower', '下')] },
   ]
   for (const def of defs) {
     registerIndicator({ ...def, calc: passthrough } as never)
@@ -868,7 +873,7 @@ export function ohlcTooltipAvoidTable(revPointOn: boolean, paneW = 0): Record<st
   return { candle: { tooltip: { rect: { offsetRight: revPointOn && paneW > 0 ? ohlcOffsetRightForTopLeft(paneW) : 4 } } } }
 }
 
-function klineStyles(p: Palette, coordType: CoordType = 'normal'): Record<string, unknown> {
+export function klineStyles(p: Palette, coordType: CoordType = 'normal'): Record<string, unknown> {
   const tick = { color: p.faint, family: FONT_FAMILY }
   return {
     grid: { horizontal: { color: p.line }, vertical: { color: p.line } },
@@ -899,8 +904,7 @@ function klineStyles(p: Palette, coordType: CoordType = 'normal'): Record<string
     },
     indicator: {
       tooltip: {
-        showType: 'rect',
-        showRule: 'none',
+        ...SUBPLOT_TOOLTIP,
         text: { color: p.text, family: FONT_FAMILY },
       },
     },
@@ -915,12 +919,12 @@ function klineStyles(p: Palette, coordType: CoordType = 'normal'): Record<string
 }
 
 /** Map payload series onto klinecharts rows for one chip's figures. */
-function seriesRows(data: ChartTimeframeData, figures: Record<string, string>): Record<string, number | undefined>[] {
+export function seriesRows(data: ChartTimeframeData, figures: Record<string, string>): Record<string, number | undefined>[] {
   return data.candles.map((_, i) => {
     const row: Record<string, number | undefined> = {}
     for (const [figKey, seriesKey] of Object.entries(figures)) {
       const v = data.series?.[seriesKey]?.[i]
-      row[figKey] = typeof v === 'number' ? v : undefined
+      row[figKey] = typeof v === 'number' && Number.isFinite(v) ? v : undefined
     }
     return row
   })
@@ -1062,8 +1066,13 @@ function drawPrimitive(chart: Pick<Chart, 'createOverlay'>, prim: DrawPrimitive,
   } else if (prim.kind === 'region') {
     chart.createOverlay({
       name: 'tm_region', lock: true,
-      points: [{ value: prim.low }, { value: prim.high }],
-      extendData: { color: prim.color, label: prim.label ?? '', lane },
+      points: [
+        { value: prim.low, ...prim.startTime !== undefined ? { timestamp: Date.parse(prim.startTime) } : {} },
+        { value: prim.high, ...prim.startTime !== undefined ? { timestamp: Date.parse(prim.startTime) } : {} },
+        ...prim.availableAt !== undefined ? [{ timestamp: Date.parse(prim.availableAt), value: prim.high }] : [],
+      ],
+      extendData: { color: prim.color, label: prim.label ?? '', lane,
+        anchored: prim.startTime !== undefined, knownAfterConfirmation: prim.availableAt !== undefined },
     })
   } else {
     chart.createOverlay({
@@ -1114,11 +1123,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   onEditRef.current = onEditParams
   const onHoverRef = useRef(onCrosshairHover)
   onHoverRef.current = onCrosshairHover
-  // 默认收起指标行：浮窗只显示 时间/开高低收，不再挡住图。
+  // 默认只收起主图指标行，副图名称和数值保持可见。
   const foldRef = useRef(true)
-  const applyFold = (fold: boolean) => {
-    chartRef.current?.setStyles({ indicator: { tooltip: { showRule: fold ? TooltipShowRule.None : TooltipShowRule.Always } } })
-  }
   const paneCount = active.filter(id => CHIP_DEFS.find(d => d.id === id)?.indicator?.overlay !== true).length
     + EDITABLE.filter(d => d.pane !== undefined && settings[d.name]?.visible).length
     // RSI_GRID also mounts the 累计差值 pane under it.
@@ -1133,6 +1139,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     const chart = init(container, { locale: 'zh-CN' })
     if (chart === null) return
     chartRef.current = chart
+    const applyFold = createMainPaneTooltipFold(chart)
     const data = latest.current
     chart.setStyles(klineStyles(palette, axisSettings.coordType))
     const applyOhlcPark = () => chart.setStyles(ohlcTooltipAvoidTable(settingsRef.current['REVPOINT']?.visible ?? false, chart.getSize('candle_pane', 'main' as never)?.width ?? 0))
@@ -1199,6 +1206,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
         chart.createIndicator(create, false, { id: paneId, height: PANE_HEIGHT })
       }
     }
+    applyFold(foldRef.current)
     const close = data.candles[data.candles.length - 1]!.close
     const ctx: AnnotationRendererContext = { contractVersion: 1, timeframe: data.timeframe, close, palette }
     // Collect every primitive before drawing any: label placement is the one

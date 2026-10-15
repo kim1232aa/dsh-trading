@@ -1,6 +1,6 @@
 /**
- * Browser half: claims the keyed `tool.call.toolview` slot for the two
- * tool-market tools whose results carry a chart payload. Keys are wire tool
+ * Browser half: claims the keyed `tool.call.toolview` slot for market tools
+ * whose results carry a chart payload. Keys are wire tool
  * names; an unclaimed key falls back to dsh's generic card, so hosts without
  * this package lose nothing.
  */
@@ -24,7 +24,7 @@ export type { ChartAnnotation, ChartPayload, ChartScenario, ChartTimeframeData }
 export const name = 'client-chart'
 export const inject = ['slots', 'connection']
 
-const CHART_TOOLS = ['market_snapshot', 'get_ohlcv', 'annotate_chart']
+const CHART_TOOLS = ['market_snapshot', 'get_ohlcv', 'annotate_chart', 'find_supply_demand_zones']
 
 // ponytail: ctx typed `any` — dsh 0.2 dropped dsh-client-runtime and ships no
 // plugin-facing Context augmentation for `slots` (same as client-frame).

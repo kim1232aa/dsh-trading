@@ -177,7 +177,7 @@ describe('annotate_chart validation gate', () => {
       symbol: 'DEMO',
       timeframe: '1d',
       levels: [{ price: inRange, label: 'neckline test', role: 'neckline', sources: ['double-bottom neckline', '  '] }],
-      zones: [{ low: inRange, high: inRange * 1.05, label: 'supply', role: 'resistance', sources: ['order block'] }],
+      zones: [{ low: inRange, high: inRange * 1.05, label: 'resistance reference', role: 'resistance', sources: ['prior price cluster'] }],
       paths: [{ points: [{ time: midTime, price: inRange }, { time: lateTime, price: inRange * 1.1 }], label: 'measured move', sources: ['pattern leg'] }],
       scenarios: [{ direction: 'bear', stance: 'base', thesis: 't', trigger: 'close below x', invalidation: 'close above y', invalidationPrice: inRange }],
     }, {}) as never
