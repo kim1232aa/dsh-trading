@@ -507,8 +507,15 @@ export function calcOiPostureRows(
         count++
       }
     }
-    const oiMa = count > 0 ? sum / count : undefined
-    return { oi, oiMa, deltaOi: histIdx >= 0 ? deltas[histIdx] : 0, bar }
+    const row: OiPostureRow = { oi, bar }
+    if (count > 0) row.oiMa = sum / count
+    if (histIdx >= 0) {
+      const delta = deltas[histIdx]
+      row.deltaOi = delta !== undefined ? delta : 0
+    } else {
+      row.deltaOi = 0
+    }
+    return row
   })
 }
 
@@ -535,10 +542,15 @@ export function calcLsrRatioRows(
     if (ts === undefined) return {}
     const bar = matchDerivativeHistory(history, ts, inferIntervalMs(kLineDataList))
     if (!bar) return {}
-    const lsr = bar.longShortRatio != null && Number.isFinite(bar.longShortRatio) ? bar.longShortRatio : undefined
-    const topPos = bar.topPositionRatio != null && Number.isFinite(bar.topPositionRatio) ? bar.topPositionRatio : undefined
-    if (lsr === undefined && topPos === undefined) return {}
-    return { lsr, topPos, mid: 1, bar }
+    const row: LsrRatioRow = { mid: 1, bar }
+    if (bar.longShortRatio != null && Number.isFinite(bar.longShortRatio)) {
+      row.lsr = bar.longShortRatio
+    }
+    if (bar.topPositionRatio != null && Number.isFinite(bar.topPositionRatio)) {
+      row.topPos = bar.topPositionRatio
+    }
+    if (row.lsr === undefined && row.topPos === undefined) return {}
+    return row
   })
 }
 
