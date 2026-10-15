@@ -218,14 +218,39 @@ export class BinanceProvider implements MarketDataProvider {
     const isTimeout = lastNetworkError?.name === 'TimeoutError' || lastNetworkError?.message?.includes('timeout')
 
     // High availability failover: when Binance hosts are blocked or unreachable in mainland China,
-    // seamlessly fall back to domestic-resilient Gate.io and OKX spot candlesticks.
-    try {
-      return await gateSpotCandles(query.symbol, query.timeframe, query.limit)
-    } catch {
+    // fall back to Gate.io then OKX. Skip a venue that does not serve this timeframe — never
+    // invent bars or silently remap to a neighbouring interval.
+    const gateOk = query.timeframe in GATE_SPOT_TF
+    const okxOk = query.timeframe in OKX_SPOT_TF
+    if (!gateOk && !okxOk) {
+      throw new Error(
+        `[Binance行情不可达] 备用源 Gate/OKX 均不支持周期 '${query.timeframe}'`
+        + `（Gate: ${GATE_TIMEFRAMES.join(', ')}; OKX: ${OKX_TIMEFRAMES.join(', ')}）`,
+      )
+    }
+
+    let fallbackErr: Error | null = null
+    if (gateOk) {
+      try {
+        return await gateSpotCandles(query.symbol, query.timeframe, query.limit)
+      } catch (err) {
+        fallbackErr = err as Error
+        // Unsupported should not happen after the gateOk check; still fail clearly.
+        if (fallbackErr.message.includes('unsupported timeframe')) {
+          // try OKX below
+        }
+      }
+    }
+    if (okxOk) {
       try {
         return await okxSpotCandles(query.symbol, query.timeframe, query.limit)
-      } catch {
-        // Fall through to error reporting below if all fallback venues fail
+      } catch (err) {
+        fallbackErr = err as Error
+        if (fallbackErr.message.includes('unsupported timeframe')) {
+          throw new Error(
+            `OKX spot: unsupported timeframe ${query.timeframe} (available: ${OKX_TIMEFRAMES.join(', ')})`,
+          )
+        }
       }
     }
 
@@ -234,8 +259,9 @@ export class BinanceProvider implements MarketDataProvider {
       : isFetchFailed
         ? '行情网络连接被阻断或重置 (ECONNRESET/TLS failure)'
         : lastNetworkError?.message || '网络连接异常'
+    const fb = fallbackErr ? `；备用源失败: ${fallbackErr.message}` : ''
 
-    throw new Error(`[Binance行情不可达] ${detail}。若处于大陆网络，请检查代理配置或切换上方数据源至【东财/新浪A股】。`)
+    throw new Error(`[Binance行情不可达] ${detail}${fb}。若处于大陆网络，请检查代理配置或切换上方数据源至【东财/新浪A股】。`)
   }
 
   /** Until when fallback providers lead, after Binance futures failed. */
@@ -815,9 +841,10 @@ function ratioWord(ratio: number, high: number, low: number, up: string, mid: st
 
 const GATE_URL = 'https://api.gateio.ws'
 
+/** Gate spot intervals (REST). No 3m/2h/6h/12h/3d — reject those explicitly. */
 const GATE_SPOT_TF: Partial<Record<Timeframe, string>> = {
   '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m',
-  '1h': '1h', '4h': '4h', '1d': '1d', '1w': '7d',
+  '1h': '1h', '4h': '4h', '8h': '8h', '1d': '1d', '1w': '7d', '1M': '30d',
 }
 
 async function gateSpotCandles(rawSymbol: string, timeframe: Timeframe, limit = 200): Promise<Candle[]> {
@@ -826,7 +853,7 @@ async function gateSpotCandles(rawSymbol: string, timeframe: Timeframe, limit = 
   const quote = symbol.endsWith('USDC') ? 'USDC' : 'USDT'
   const pair = `${base}_${quote}`
   const interval = GATE_SPOT_TF[timeframe]
-  if (!interval) throw new Error(`Gate spot: unsupported timeframe ${timeframe}`)
+  if (!interval) throw new Error(`Gate spot: unsupported timeframe ${timeframe} (available: ${GATE_TIMEFRAMES.join(', ')})`)
   const url = new URL('/api/v4/spot/candlesticks', GATE_URL)
   url.searchParams.set('currency_pair', pair)
   url.searchParams.set('interval', interval)
@@ -845,11 +872,21 @@ async function gateSpotCandles(rawSymbol: string, timeframe: Timeframe, limit = 
   }))
 }
 
+/** OKX candle bars. No 8h — OKX does not serve that interval. */
 const OKX_SPOT_TF: Partial<Record<Timeframe, string>> = {
   '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m', '30m': '30m',
   '1h': '1H', '2h': '2H', '4h': '4H', '6h': '6H', '12h': '12H',
   '1d': '1D', '3d': '3D', '1w': '1W', '1M': '1M',
 }
+
+/** Timeframes OkxMarketProvider advertises via listSymbols (excludes 8h). */
+export const OKX_TIMEFRAMES: Timeframe[] = Object.keys(OKX_SPOT_TF) as Timeframe[]
+
+/** Timeframes Gate spot can serve (for tests / callers). */
+export const GATE_TIMEFRAMES: Timeframe[] = Object.keys(GATE_SPOT_TF) as Timeframe[]
+
+/** Full Binance spot interval set. */
+export const BINANCE_TIMEFRAMES: Timeframe[] = [...ALL_TIMEFRAMES]
 
 async function okxSpotCandles(rawSymbol: string, timeframe: Timeframe, limit = 200): Promise<Candle[]> {
   const symbol = normalizeSymbol(rawSymbol)
@@ -857,7 +894,7 @@ async function okxSpotCandles(rawSymbol: string, timeframe: Timeframe, limit = 2
   const quote = symbol.endsWith('USDC') ? 'USDC' : 'USDT'
   const instId = `${base}-${quote}`
   const bar = OKX_SPOT_TF[timeframe]
-  if (!bar) throw new Error(`OKX spot: unsupported timeframe ${timeframe}`)
+  if (!bar) throw new Error(`OKX spot: unsupported timeframe ${timeframe} (available: ${OKX_TIMEFRAMES.join(', ')})`)
   const data = await okxGet('/api/v5/market/candles', { instId, bar, limit: String(Math.min(limit, 300)) }) as unknown[][]
   if (!Array.isArray(data) || data.length === 0) throw new Error(`OKX spot: no bars for ${instId}`)
   return data.slice().reverse().map(r => ({
@@ -1349,10 +1386,15 @@ export class OkxMarketProvider implements MarketDataProvider {
   }
 
   async listSymbols(): Promise<InstrumentInfo[]> {
-    return this.symbols.map(symbol => ({ symbol, timeframes: [...ALL_TIMEFRAMES] }))
+    return this.symbols.map(symbol => ({ symbol, timeframes: [...OKX_TIMEFRAMES] }))
   }
 
   async getOhlcv(query: OhlcvQuery): Promise<Candle[]> {
+    if (!(query.timeframe in OKX_SPOT_TF)) {
+      throw new Error(
+        `OKX spot: unsupported timeframe ${query.timeframe} (available: ${OKX_TIMEFRAMES.join(', ')})`,
+      )
+    }
     return okxSpotCandles(query.symbol, query.timeframe, query.limit ?? 200)
   }
 

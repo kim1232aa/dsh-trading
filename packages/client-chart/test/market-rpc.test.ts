@@ -95,8 +95,15 @@ describe('readOhlcvRequest', () => {
     expect(readOhlcvRequest({ symbol: 'A'.repeat(200), timeframe: '1d' })).toMatch(/implausibly long/)
   })
 
+  it('accepts the expanded timeframe vocabulary', () => {
+    for (const tf of ['3m', '2h', '6h', '8h', '12h', '3d', '1M'] as const) {
+      const parsed = readOhlcvRequest({ symbol: 'US.MU', timeframe: tf })
+      expect(typeof parsed === 'object' && parsed.timeframe).toBe(tf)
+    }
+  })
+
   it('rejects a timeframe outside the seam vocabulary', () => {
-    expect(readOhlcvRequest({ symbol: 'US.MU', timeframe: '2h' })).toMatch(/timeframe must be one of/)
+    expect(readOhlcvRequest({ symbol: 'US.MU', timeframe: '2m' })).toMatch(/timeframe must be one of/)
     expect(readOhlcvRequest({ symbol: 'US.MU', timeframe: '../../etc' })).toMatch(/timeframe must be one of/)
   })
 

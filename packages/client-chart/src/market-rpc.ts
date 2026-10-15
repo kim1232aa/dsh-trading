@@ -95,7 +95,11 @@ export interface WatchlistResponse {
 /** Bars a single panel request may pull; a chart cannot show more than this usefully. */
 export const MAX_PANEL_BARS = 1000
 
-const TIMEFRAMES: ReadonlySet<string> = new Set(['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'])
+const TIMEFRAMES: ReadonlySet<string> = new Set([
+  '1m', '3m', '5m', '15m', '30m',
+  '1h', '2h', '4h', '6h', '8h', '12h',
+  '1d', '3d', '1w', '1M',
+])
 
 /** A validated `ohlcv` request. */
 export interface OhlcvRequest {

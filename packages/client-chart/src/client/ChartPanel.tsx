@@ -29,11 +29,20 @@ import type { ChartPayload } from './payload.js'
 import type { FundamentalsPackage, Orderbook } from '@dsh-trading/market-data'
 
 /** Timeframes the panel offers; the provider may serve a subset and will say so. */
-const TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'] as const
+const TIMEFRAMES = [
+  '1m', '3m', '5m', '15m', '30m',
+  '1h', '2h', '4h', '6h', '8h', '12h',
+  '1d', '3d', '1w', '1M',
+] as const
+
+/** OKX has no 8h candle; hide that button when the active source is OKX. */
+const OKX_HIDDEN_TFS = new Set<string>(['8h'])
 
 const TF_MS: Record<string, number> = {
-  '1m': 60_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
-  '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000, '1w': 604_800_000,
+  '1m': 60_000, '3m': 180_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
+  '1h': 3_600_000, '2h': 7_200_000, '4h': 14_400_000, '6h': 21_600_000,
+  '8h': 28_800_000, '12h': 43_200_000,
+  '1d': 86_400_000, '3d': 259_200_000, '1w': 604_800_000, '1M': 2_592_000_000,
 }
 
 /** Bars pulled per live refresh: the forming bar, plus a little overlap for a just-closed one. */
@@ -1028,6 +1037,10 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
   // the chart was not even drawn on.
   const shownSymbol = (payload?.symbol ?? '').trim()
   const shownTimeframe = payload?.timeframes[0]?.timeframe
+  const chartSource = manualProvider !== 'auto' ? manualProvider : (own?.provider ?? payload?.provider ?? 'auto')
+  const visibleTimeframes = chartSource === 'okx'
+    ? TIMEFRAMES.filter(tf => !OKX_HIDDEN_TFS.has(tf))
+    : TIMEFRAMES
   // A period the user just clicked wins until its data lands. Reading the
   // highlight off the payload alone meant a click gave no feedback while the
   // fetch was in flight, and was silently discarded if the fetch failed — the
@@ -1201,7 +1214,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
             </option>
           ))}
         </select>
-        {TIMEFRAMES.map(tf => (
+        {visibleTimeframes.map(tf => (
           <button key={tf} type="button" style={TF_BUTTON(tf === activeTimeframe)} onClick={() => pickTimeframe(tf)}>
             {tf}
           </button>

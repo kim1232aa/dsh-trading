@@ -11,7 +11,7 @@ persistent, live chart column on the left, the conversation on the right.
 
 ```
 ┌──┬────────────────────────────────────┬─────────────────────────┐
-│  │  CC.BTCUSDT   1m 5m [15m] 1h 1d    │  ⌄ Market Analyst       │
+│  │  CC.BTCUSDT  1m 3m [15m] … 1d 1M   │  ⌄ Market Analyst       │
 │▸ │  ┌──────────────────────────────┐  │                         │
 │  │  │        ╱╲    ╱╲              │  │  MU is coiling under    │
 │s │  │  ╱╲   ╱  ╲__╱  ╲_ ── 118,400 │  │  118.4k; the 15m ADX …  │
@@ -171,6 +171,23 @@ More providers (opt-in, NOT bundled — they call live public endpoints):
       - id: provider-binance
         name: '@dsh-trading/provider-binance'
   ```
+
+### Timeframes
+
+Chart buttons, market-RPC, and agent tools share one vocabulary:
+
+`1m` `3m` `5m` `15m` `30m` `1h` `2h` `4h` `6h` `8h` `12h` `1d` `3d` `1w` `1M`
+
+(`1M` is a calendar month; `1m` is one minute — case is load-bearing.)
+
+Venue coverage:
+
+| Venue | Notes |
+| --- | --- |
+| **Binance** | Full set above |
+| **OKX** | Same set **except `8h`** (OKX has no 8h candle). `listSymbols` and the chart hide/reject `8h` when the source is OKX |
+| **Gate** (Binance failover) | `1m` `5m` `15m` `30m` `1h` `4h` `8h` `1d` `1w` `1M` only — unsupported intervals fail clearly, never silent remap |
+| **CN / Futu / CSV** | Their own subsets; providers reject what they cannot serve |
 
 ## Why this and not another finance plugin?
 

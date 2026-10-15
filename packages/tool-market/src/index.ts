@@ -92,7 +92,11 @@ export const Config: z<Config> = z.object({
   chartDir: z.string().default('./charts'),
 }) as unknown as z<Config>
 
-const TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'] as const
+const TIMEFRAMES = [
+  '1m', '3m', '5m', '15m', '30m',
+  '1h', '2h', '4h', '6h', '8h', '12h',
+  '1d', '3d', '1w', '1M',
+] as const
 
 /**
  * Hard cap on bars served by one get_ohlcv call. The CSV block is rendered
@@ -467,7 +471,7 @@ export function apply(ctx: Context, config: Config): void {
     parameters: {
       symbol: { type: 'string', required: true, description: 'Instrument symbol exactly as list_symbols reports it.' },
       timeframe: { type: 'string', required: true, enum: [...TIMEFRAMES], description: 'Timeframe the analysis was read on; prices are validated against THIS window.' },
-      bars: { type: 'integer', description: 'Window drawn and validated against. Default scales with timeframe (1m 600, 5m 300, 15m 200, 30m 150, 1h 150, 4h 100, 1d 200, 1w 100).' },
+      bars: { type: 'integer', description: 'Window drawn and validated against. Default scales with timeframe (1m 600 … 1M 80).' },
       levels: {
         type: 'array',
         description: 'Horizontal price levels. Each must cite the evidence it rests on.',
@@ -573,7 +577,7 @@ export function apply(ctx: Context, config: Config): void {
     async execute(args, _exec) {
       const provider = ctx.marketData.resolveProvider(args.symbol, args.provider)
       const timeframe = args.timeframe as Timeframe
-      const defaultBars: Record<string, number> = { '1m': 600, '5m': 300, '15m': 200, '30m': 150, '1h': 150, '4h': 100, '1d': 200, '1w': 100 }
+      const defaultBars: Record<string, number> = { '1m': 600, '3m': 400, '5m': 300, '15m': 200, '30m': 150, '1h': 150, '2h': 150, '4h': 100, '6h': 100, '8h': 100, '12h': 100, '1d': 200, '3d': 120, '1w': 100, '1M': 80 }
       const candles = await provider.getOhlcv({ symbol: args.symbol, timeframe, limit: args.bars ?? defaultBars[timeframe] ?? 200 })
       if (candles.length === 0) throw new Error(`no candles for ${args.symbol} @ ${timeframe}`)
       const lo = Math.min(...candles.map(c => c.low))
@@ -930,7 +934,7 @@ export function apply(ctx: Context, config: Config): void {
     async execute(args, _exec) {
       const provider = ctx.marketData.resolveProvider(args.symbol, args.provider)
       const timeframe = args.timeframe as Timeframe
-      const defaultBars: Record<string, number> = { '1m': 600, '5m': 300, '15m': 200, '30m': 150, '1h': 150, '4h': 100, '1d': 200, '1w': 100 }
+      const defaultBars: Record<string, number> = { '1m': 600, '3m': 400, '5m': 300, '15m': 200, '30m': 150, '1h': 150, '2h': 150, '4h': 100, '6h': 100, '8h': 100, '12h': 100, '1d': 200, '3d': 120, '1w': 100, '1M': 80 }
       const limit = Math.min(Math.max(args.bars ?? defaultBars[timeframe] ?? 200, 20), 1000)
       const candles = await provider.getOhlcv({ symbol: args.symbol, timeframe, limit })
       if (candles.length < 10) throw new Error(`not enough candles for ${args.symbol} @ ${timeframe}`)
