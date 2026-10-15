@@ -22,15 +22,18 @@ import type { ConnectionRpcHandler, HostConnectionHandle } from '@deepseek-ai/ds
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type { ChartView, MarketDataLike } from './market-rpc.js'
-import { describeChartView, MARKET_CHANNEL, serveMarketEndpoint } from './market-rpc.js'
+import { chartPanelContextText, describeChartView, MARKET_CHANNEL, serveMarketEndpoint } from './market-rpc.js'
 
 export {
+  chartPanelContextText,
+  CHART_CONTEXT_PRESETS,
   describeChartView,
   ENDPOINTS,
   MARKET_CHANNEL,
   MAX_PANEL_BARS,
   readChartView,
   readOhlcvRequest,
+  resolveAgentPreset,
   serveMarketEndpoint,
 } from './market-rpc.js'
 export type { ChartView, DerivativesResponse, MarketDataLike, OhlcvRequest, OhlcvResponse, ProvidersResponse, SymbolsResponse } from './market-rpc.js'
@@ -100,16 +103,10 @@ export function apply(ctx: Context): void {
       order: 50,
       // Evaluated per assembly. Empty while no chart is up, and the prompt
       // layer treats empty text as no contribution — an idle panel is free.
-      // 默认不注入：仅在「交易模式」(preset === 'trading') 时向模型注入图表状态，
-      // 防止跨会话污染日常对话/狗头军师等其他场景。其他模式可通过 get_chart_view 按需读取。
-      text: (context?: any) => {
-        const preset = context?.agent?.session?.header?.agentPreset
-          ?? context?.agent?.session?.agentPreset
-        if (preset !== 'trading') {
-          return ''
-        }
-        return describeChartView(liveView())
-      },
+      // Gate: only trading / analyst agent presets get the chart snapshot so
+      // standard/minimal idle chat is not polluted. Other presets can still
+      // call get_chart_view on demand.
+      text: (context?: unknown) => chartPanelContextText(context, liveView()),
     }))
   })
 

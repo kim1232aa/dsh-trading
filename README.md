@@ -109,7 +109,8 @@ Fifteen packages, one direction of dependency:
         ▼
 @dsh-trading/client-frame     web-only: the shell frame. Replaces dsh's stock
                               three-column layout row with a chart-first one —
-                              sidebar | chart | conversation | details,
+                              sidebar | chart | main | rightbar (stock 0.2
+                              seat names; conversation mounts into `main`),
                               70/30 by default with the sidebar railed — and
                               declares the `trading.chart` seat
 
@@ -145,7 +146,7 @@ More providers (opt-in, NOT bundled — they call live public endpoints):
   The panel also **publishes what it is showing** back to the host, and the host feeds that to the model two ways: a one-line context injection each turn, and a `get_chart_view` tool for the same facts on demand. This closes a loop that was conspicuously open — the panel's data path bypasses the tool layer by design, so nothing about the user's chart reached the agent on its own, and the agent would ask the user to screenshot a chart it was rendering two columns away. The injection costs nothing while the panel is idle (empty text is no contribution), the published value is validated on arrival (it lands in a model's context, which makes it a prompt-injection surface as much as a correctness one), and it expires after 30s so an abandoned second tab cannot make the model confidently name the wrong symbol.
 
   The chart stays **live**: it re-reads the last few bars once a second and merges them by open time, so a forming bar is replaced in place and a new one is appended — append blindly and a live chart grows a duplicate candle every poll. Updates go through `updateData` on the existing plot rather than a rebuild, so the canvas never flickers. A poll rather than a push, deliberately: the host channel is unary, and a chart seconds old is worth far less engineering than a streaming transport. When the tape stops moving — eight polls that taught it nothing — the panel backs off to once every five seconds and springs back the moment a bar moves, which is cheaper and more honest than shipping a market calendar. A hidden tab backs off the same way rather than stopping: some embedded browsers report `hidden` while the user is plainly watching, and a kill-switch there is indistinguishable from the bug it looks like.
-- **`client-frame`** is the layout half of the same row-swap idea. dsh's shell is one plugin row (`ui-layout`) that occupies the built-in `root` slot and declares the `sidebar` / `conversation` / `details` / `shell.overlay` seats inside it. Slot core permits exactly **one declarer per seat**, so a frame cannot sit beside the stock one — the bundle disables that row and inserts ours, which re-declares those four seats *under the same names*. `ui-sidebar` and `ui-conversation` register by name, so dsh's real sidebar and its real conversation surface mount into a third-party frame unchanged; we only decide the column order. On top of them it adds a fifth seat, `trading.chart`, for the persistent chart column.
+- **`client-frame`** is the layout half of the same row-swap idea. dsh's shell is one plugin row (`ui-layout`) that occupies the built-in `root` slot and declares the stock 0.2 seats (`sidebar` / `main` / `rightbar` / `shell.overlay`) inside it. Slot core permits exactly **one declarer per seat**, so a frame cannot sit beside the stock one — the bundle disables that row and inserts ours, which re-declares those seats *under the same names*. `ui-sidebar` and `ui-conversation` register by name (`conversation` mounts into the keyed `main` seat), so dsh's real sidebar and its real conversation surface mount into a third-party frame unchanged; we only decide the column order. On top of them it adds a fifth seat, `trading.chart`, for the persistent chart column.
 
   Its defaults differ from the stock shell on purpose. The chart takes **70% of the free width** and the conversation 30 — stored as a *ratio*, not a pixel width, because "the chart takes 70%" has to survive a window resize to mean anything. The conversation floor drops from dsh's 640px to 420, since here it is a side column rather than the whole app; holding 640 would make the split impossible on a laptop. The sidebar starts collapsed to its rail: a permanent session-history column is a poor trade against chart width, so the frame contributes a session switcher to `conversation.session.header.utilities` instead — the route to your sessions lives in the conversation's own top-right, next to the thing it switches. No fork, no patched core — the same mechanism as swapping `market-data-provider`.
 
@@ -276,26 +277,33 @@ npm i futu-api@10.9   # must match your OpenD's version line
 `symbols` is the catalogue `list_symbols` reports; any symbol OpenD knows can
 still be typed straight into the chart column.
 
-### The Market Analyst preset
+### Agent presets (交易模式 / Market Analyst)
 
-`presets/analyst/` is an agent preset that turns the raw tools into a structured
-analysis workflow: it scopes the request first (horizon, focus, timeframes),
-then reports higher-timeframe context, a key-level table, the multi-timeframe
-indicator regime with conflicts named rather than averaged away, bull and bear
-scenarios with triggers and invalidation, and the levels that resolve the
-ambiguity. Install it and pick **Market Analyst** in the session's preset menu:
+Installing `@dsh-trading/bundle` ships two **Agent 预设** as ordinary
+`@deepseek-ai/dsh-agent-preset` rows in the bundle patch (ids `trading` and
+`analyst`). Pick them in the session's preset menu — no copy into
+`$DSH_HOME/.agent-presets/` (that directory is legacy and dsh no longer reads
+it).
 
-```sh
-DSH="${DSH_HOME:-$HOME/.dsh}"
-mkdir -p "$DSH/.agent-presets" && cp -r presets/analyst "$DSH/.agent-presets/"
-```
+| Preset id | Menu name | What it adds |
+|-----------|-----------|--------------|
+| `trading` | 交易模式 | Chinese trading-partner voice + full technical-analysis persona (`prefix` / `suffix` on `@deepseek-ai/dsh-persona`) |
+| `analyst` | Market Analyst | English structured multi-timeframe analysis persona (scope first, then levels / regime / scenarios) |
 
-The persona holds the research boundary in prose the way `risk-guard` holds it
-in code: report what the data shows, never recommend a position or an entry.
-It also decides *where* an analysis lands — `annotate_chart` draws on the
-reader's live column, and `render_chart` is reserved for exporting an image
-file. Getting that one paragraph wrong is what put drawings in the chat feed
-instead of on the chart.
+Under the default **standard** (or **minimal**) preset, idle chat keeps the
+coding persona: the trading voice and the chart-panel `systemPrompt.context`
+line do **not** apply. Tools from the bundle stay registered either way —
+that is the cost of selecting the trading profile, not a per-topic inject.
+
+Persona prose also lives under `presets/trading/` and `presets/analyst/` as
+human-editable mirrors (`prefix`, not the retired `text` field). The ship path
+is the bundle declaration; edit both when changing the voice.
+
+The analyst persona holds the research boundary in prose the way `risk-guard`
+holds it in code: report what the data shows, never recommend a position or an
+entry. It also decides *where* an analysis lands — `annotate_chart` draws on
+the reader's live column, and `render_chart` is reserved for exporting an image
+file.
 
 ### Chart cards in `dsh web`
 

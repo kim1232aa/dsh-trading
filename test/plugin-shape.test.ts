@@ -12,7 +12,9 @@ describe('plugin module shape', () => {
   for (const p of pkgs) {
     it(p, async () => {
       const mod = await import(join(root, p, 'src', 'index.ts'))
-      if (typeof mod.apply !== 'function') return // library-only package
+      if (typeof mod.apply !== 'function') return // library-only package / Service default
+      expect(typeof mod.name).toBe('string')
+      expect((mod.name as string).length).toBeGreaterThan(0)
       expect(Array.isArray(mod.inject ?? [])).toBe(true)
       for (const s of mod.inject ?? []) expect(['tools', 'marketData']).toContain(s)
       // docs/testing.md: namespace plugins must not carry a default export at all.

@@ -6,12 +6,15 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import {
+  chartPanelContextText,
+  CHART_CONTEXT_PRESETS,
   describeChartView,
   ENDPOINTS,
   MARKET_CHANNEL,
   MAX_PANEL_BARS,
   readChartView,
   readOhlcvRequest,
+  resolveAgentPreset,
   serveMarketEndpoint,
 } from '../src/market-rpc.js'
 import type { MarketDataLike } from '../src/market-rpc.js'
@@ -437,5 +440,51 @@ describe('marks reported through the view', () => {
   it('says nothing about marks when there are none', () => {
     const line = describeChartView({ symbol: 'US.MU', timeframe: '1d', bars: 10, live: false, origin: 'user' })
     expect(line).not.toMatch(/marks/)
+  })
+})
+
+
+describe('chartPanelContextText preset gate', () => {
+  const view = {
+    symbol: 'BTCUSDT', timeframe: '1h', bars: 100, live: true, origin: 'user' as const,
+  }
+
+  it('injects under trading and analyst', () => {
+    for (const id of ['trading', 'analyst'] as const) {
+      const ctx = { agent: { session: { header: { agentPreset: id } } } }
+      const line = chartPanelContextText(ctx, view)
+      expect(line).toContain('BTCUSDT')
+      expect(line.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('stays empty under standard / minimal / missing preset', () => {
+    for (const id of ['standard', 'minimal', undefined] as const) {
+      const ctx = id === undefined
+        ? {}
+        : { agent: { session: { header: { agentPreset: id } } } }
+      expect(chartPanelContextText(ctx, view)).toBe('')
+    }
+  })
+
+  it('stays empty when the panel is idle even on trading', () => {
+    const ctx = { agent: { session: { header: { agentPreset: 'trading' } } } }
+    expect(chartPanelContextText(ctx, undefined)).toBe('')
+  })
+
+  it('reads agentPreset from session root as well as header', () => {
+    const ctx = { agent: { session: { agentPreset: 'trading' } } }
+    expect(chartPanelContextText(ctx, view)).toContain('BTCUSDT')
+  })
+
+  it('exports the gated preset set', () => {
+    expect(CHART_CONTEXT_PRESETS.has('trading')).toBe(true)
+    expect(CHART_CONTEXT_PRESETS.has('analyst')).toBe(true)
+    expect(CHART_CONTEXT_PRESETS.has('standard')).toBe(false)
+  })
+
+  it('resolveAgentPreset ignores non-strings', () => {
+    expect(resolveAgentPreset({ agent: { session: { header: { agentPreset: 1 } } } })).toBeUndefined()
+    expect(resolveAgentPreset({ agent: { session: { header: { agentPreset: '' } } } })).toBeUndefined()
   })
 })

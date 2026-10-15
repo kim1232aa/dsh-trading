@@ -221,6 +221,7 @@ export function readChartView(payload: unknown): ChartView | string {
   }
 }
 
+
 /**
  * One line describing the chart for a model's context. Empty when no chart is
  * up — the prompt layer treats empty text as no contribution, so an idle panel
@@ -254,6 +255,34 @@ export function describeChartView(view: ChartView | undefined): string {
     + `Call get_chart_view for the same facts on demand, or the market tools for the data behind it.`
   )
 }
+/**
+ * Agent preset ids that receive the per-turn chart-panel context line.
+ * Trading voice + chart state only apply under these presets; standard /
+ * minimal idle chat must not inherit the panel snapshot.
+ */
+export const CHART_CONTEXT_PRESETS: ReadonlySet<string> = new Set(['trading', 'analyst'])
+
+/** Read the session's agentPreset from a prompt-assembly context blob. */
+export function resolveAgentPreset(context?: unknown): string | undefined {
+  const c = context as {
+    agent?: { session?: { header?: { agentPreset?: unknown }, agentPreset?: unknown } }
+  } | undefined
+  const raw = c?.agent?.session?.header?.agentPreset ?? c?.agent?.session?.agentPreset
+  return typeof raw === 'string' && raw.length > 0 ? raw : undefined
+}
+
+/**
+ * Per-turn chart context text, gated by agent preset.
+ * Empty when the preset is not trading/analyst or the panel is idle —
+ * the prompt layer treats empty as no contribution.
+ */
+export function chartPanelContextText(context: unknown, view: ChartView | undefined): string {
+  const preset = resolveAgentPreset(context)
+  if (preset === undefined || !CHART_CONTEXT_PRESETS.has(preset)) return ''
+  return describeChartView(view)
+}
+
+
 
 /** The slice of the market-data hub this channel needs (kept narrow for testing). */
 export interface MarketDataLike {

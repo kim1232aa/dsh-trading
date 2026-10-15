@@ -12,6 +12,8 @@ import type { AuthorityCheckRequest, AuthorityVerdict } from './types.js'
 export type * from './types.js'
 export { AuthorityEngine, canonicalizePayload, signGrant, verifyGrantSignature } from './verifier.js'
 
+export const name = 'authority'
+
 
 export interface AuthorityConfig {
   grantPath?: string | undefined
