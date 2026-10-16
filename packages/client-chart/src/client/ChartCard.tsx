@@ -567,6 +567,26 @@ export function calcLsrRatioRows(
 const DERIV_HISTORY_INDICATORS = new Set(['OI_POSTURE', 'LSR_RATIO', 'REVPOINT'])
 
 
+/** Distinct, non-gray subplot palette (works on dark + light; up/down match candles). */
+export const SUBPLOT_COLORS = {
+  up: '#3ddc97', upFade: '#1f7a55', down: '#f47067', downFade: '#8f3f3a',
+  blue: '#58a6ff', orange: '#ffa726', purple: '#b083f0', yellow: '#e3b341', cyan: '#27C6DA',
+} as const
+
+/** TradingView-style 4-shade MACD histogram: bright when growing away from 0, dim when fading. */
+export function macdHistColor(cur: number | undefined, prev: number | undefined): string {
+  if (cur === undefined || !Number.isFinite(cur)) return SUBPLOT_COLORS.upFade
+  const growing = prev === undefined || !Number.isFinite(prev) || Math.abs(cur) >= Math.abs(prev)
+  if (cur >= 0) return growing ? SUBPLOT_COLORS.up : SUBPLOT_COLORS.upFade
+  return growing ? SUBPLOT_COLORS.down : SUBPLOT_COLORS.downFade
+}
+
+type HistNeighbor = { indicatorData?: { hist?: number } }
+export function macdHistStyles(data: { prev?: HistNeighbor; current?: HistNeighbor }): Record<string, unknown> {
+  const color = macdHistColor(data.current?.indicatorData?.hist, data.prev?.indicatorData?.hist)
+  return { color, borderColor: color, style: 'fill' }
+}
+
 function ensureRegistered(): void {
   if (registered) return
   registered = true
@@ -574,15 +594,15 @@ function ensureRegistered(): void {
   // the pane's tooltip title, which would render as "[object Object]" spam.
   const passthrough = (_dl: unknown[], ind: { extendData: unknown }): unknown[] =>
     ind.extendData as unknown[]
-  const line = (key: string, title: string): { key: string; title: string; type: string } =>
-    ({ key, title: `${title}: `, type: 'line' })
-  const defs: { name: string; shortName: string; calcParams: number[]; precision?: number; figures: { key: string; title: string; type: string; baseValue?: number }[] }[] = [
-    { name: 'TM_RSI', shortName: 'RSI', calcParams: [14], figures: [line('rsi', 'RSI')] },
-    { name: 'TM_STOCH', shortName: 'STOCH', calcParams: [14, 3, 3], figures: [line('k', 'K'), line('d', 'D')] },
-    { name: 'TM_ADX', shortName: 'ADX', calcParams: [14], figures: [line('adx', 'ADX'), line('pdi', '+DI'), line('mdi', '-DI')] },
-    { name: 'TM_MACD', shortName: 'MACD', calcParams: [12, 26, 9], precision: 4, figures: [{ key: 'hist', title: '柱: ', type: 'bar', baseValue: 0 }, line('macd', 'MACD'), line('signal', '信号')] },
-    { name: 'TM_MFI', shortName: 'MFI', calcParams: [14], figures: [line('mfi', 'MFI')] },
-    { name: 'TM_BB', shortName: '布林', calcParams: [20, 2], figures: [line('upper', '上'), line('middle', '中'), line('lower', '下')] },
+  const line = (key: string, title: string, color: string, size = 1.5): { key: string; title: string; type: string; styles: () => Record<string, unknown> } =>
+    ({ key, title: `${title}: `, type: 'line', styles: () => ({ color, size }) })
+  const defs: { name: string; shortName: string; calcParams: number[]; precision?: number; figures: { key: string; title: string; type: string; baseValue?: number; styles?: unknown }[] }[] = [
+    { name: 'TM_RSI', shortName: 'RSI', calcParams: [14], figures: [line('rsi', 'RSI', SUBPLOT_COLORS.purple)] },
+    { name: 'TM_STOCH', shortName: 'STOCH', calcParams: [14, 3, 3], figures: [line('k', 'K', SUBPLOT_COLORS.blue), line('d', 'D', SUBPLOT_COLORS.orange)] },
+    { name: 'TM_ADX', shortName: 'ADX', calcParams: [14], figures: [line('adx', 'ADX', SUBPLOT_COLORS.yellow, 2), line('pdi', '+DI', SUBPLOT_COLORS.up), line('mdi', '-DI', SUBPLOT_COLORS.down)] },
+    { name: 'TM_MACD', shortName: 'MACD', calcParams: [12, 26, 9], precision: 4, figures: [{ key: 'hist', title: '柱: ', type: 'bar', baseValue: 0, styles: macdHistStyles }, line('macd', 'MACD', SUBPLOT_COLORS.blue), line('signal', '信号', SUBPLOT_COLORS.orange)] },
+    { name: 'TM_MFI', shortName: 'MFI', calcParams: [14], figures: [line('mfi', 'MFI', SUBPLOT_COLORS.cyan)] },
+    { name: 'TM_BB', shortName: '布林', calcParams: [20, 2], figures: [line('upper', '上', SUBPLOT_COLORS.down, 1), line('middle', '中', SUBPLOT_COLORS.yellow, 1), line('lower', '下', SUBPLOT_COLORS.up, 1)] },
   ]
   for (const def of defs) {
     registerIndicator({ ...def, calc: passthrough } as never)
