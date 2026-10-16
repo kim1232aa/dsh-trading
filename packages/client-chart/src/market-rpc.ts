@@ -56,7 +56,8 @@ export const ENDPOINTS = {
 
 /** The `providers` answer: list of registered providers and their descriptions. */
 export interface ProvidersResponse {
-  providers: { id: string; description: string }[]
+  /** `timeframes`: union of what the provider advertises via listSymbols (omitted when unknown). */
+  providers: { id: string; description: string; timeframes?: string[] }[]
 }
 
 /** The `derivatives` answer: null when the provider has no futures data at all (spot/equity/CSV). */
@@ -127,6 +128,8 @@ export interface OhlcvRequest {
   timeframe: Timeframe
   limit: number
   providerId?: string | undefined
+  /** Inclusive upper bound (bar open time, ISO) for history paging; omit for latest. */
+  end?: string | undefined
 }
 
 /**
@@ -160,7 +163,17 @@ export function readOhlcvRequest(payload: unknown): OhlcvRequest | string {
   const providerId = body['providerId']
   if (providerId !== undefined && typeof providerId !== 'string') return 'providerId must be a string'
 
-  return { symbol: symbol.trim(), timeframe: timeframe as Timeframe, limit, providerId }
+  const rawEnd = body['end']
+  let end: string | undefined
+  if (rawEnd !== undefined) {
+    const ms = typeof rawEnd === 'number' ? rawEnd : typeof rawEnd === 'string' ? Date.parse(rawEnd) : NaN
+    if (!Number.isFinite(ms) || ms <= 0) return 'end must be a timestamp'
+    end = new Date(ms).toISOString()
+  }
+
+  return end === undefined
+    ? { symbol: symbol.trim(), timeframe: timeframe as Timeframe, limit, providerId }
+    : { symbol: symbol.trim(), timeframe: timeframe as Timeframe, limit, providerId, end }
 }
 
 /** The panel's view of one instrument. */
@@ -353,14 +366,20 @@ export async function serveMarketEndpoint(
 
   if (endpoint === ENDPOINTS.providers) {
     const ids = typeof marketData.list === 'function' ? marketData.list() : []
-    const providers = ids.map(id => {
+    const providers = await Promise.all(ids.map(async id => {
       try {
         const p = marketData.provider(id)
-        return { id: p.id, description: p.description }
+        let timeframes: string[] | undefined
+        try {
+          const seen = new Set<string>()
+          for (const inst of await Promise.race([p.listSymbols(), new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500))])) for (const tf of inst.timeframes ?? []) seen.add(tf)
+          if (seen.size > 0) timeframes = [...seen]
+        } catch { /* unknown: client shows the full set */ }
+        return timeframes ? { id: p.id, description: p.description, timeframes } : { id: p.id, description: p.description }
       } catch {
         return { id, description: id }
       }
-    })
+    }))
     return { providers }
   }
 
@@ -388,6 +407,7 @@ export async function serveMarketEndpoint(
       symbol: request.symbol,
       timeframe: request.timeframe,
       limit: request.limit,
+      ...request.end !== undefined ? { end: request.end } : {},
     })
     return { providerId: provider.id, symbol: request.symbol, timeframe: request.timeframe, candles }
   }

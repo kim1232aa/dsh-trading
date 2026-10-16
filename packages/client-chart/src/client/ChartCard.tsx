@@ -15,7 +15,7 @@
 import { Component, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, ErrorInfo, ReactNode } from 'react'
 import { ActionType, dispose, init, registerIndicator, registerOverlay, utils } from 'klinecharts'
-import type { Chart, YAxisType } from 'klinecharts'
+import type { Chart, KLineData, YAxisType } from 'klinecharts'
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 import { publishLatestChart } from './latest.js'
 import { annotationDigest, contentText, readChartPayload } from './payload.js'
@@ -392,10 +392,43 @@ export function subscribeAxisSettings(l: () => void): () => void {
  * Resolves the candle pane's Y-axis component from a klinecharts Chart instance.
  */
 export function getCandleYAxis(chart: Chart | null): any {
+  // klinecharts exposes no public Y-axis handle in 9.x; these are internals.
+  // Every hop is feature-detected and the whole lookup is fenced, so a library
+  // upgrade that renames them degrades Y-zoom/reset instead of white-screening.
   if (!chart) return null
-  const anyChart = chart as any
-  const pane = anyChart.getDrawPaneById?.('candle_pane') ?? anyChart._candlePane
-  return pane?.getAxisComponent?.() ?? null
+  try {
+    const anyChart = chart as any
+    const pane = typeof anyChart.getDrawPaneById === 'function'
+      ? anyChart.getDrawPaneById('candle_pane')
+      : anyChart._candlePane
+    const axis = typeof pane?.getAxisComponent === 'function' ? pane.getAxisComponent() : null
+    return axis ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Set the candle Y-axis auto-calc flag; false when the internal API is missing. */
+export function setCandleYAxisAutoCalc(chart: Chart | null, flag: boolean): boolean {
+  const yAxis = getCandleYAxis(chart)
+  if (yAxis === null || typeof yAxis.setAutoCalcTickFlag !== 'function') return false
+  try { yAxis.setAutoCalcTickFlag(flag); return true } catch { return false }
+}
+
+/** Read the candle Y-axis auto-calc flag; null when unknown. */
+export function getCandleYAxisAutoCalc(chart: Chart | null): boolean | null {
+  const yAxis = getCandleYAxis(chart)
+  if (yAxis === null || typeof yAxis.getAutoCalcTickFlag !== 'function') return null
+  try { return Boolean(yAxis.getAutoCalcTickFlag()) } catch { return null }
+}
+
+/** Ask the chart to re-layout its panes (internal); silently no-ops if absent. */
+export function adjustChartViewport(chart: Chart | null): void {
+  if (!chart) return
+  try {
+    const anyChart = chart as any
+    if (typeof anyChart.adjustPaneViewport === 'function') anyChart.adjustPaneViewport(false, true, true, true, true)
+  } catch { /* degrade */ }
 }
 
 /**
@@ -403,12 +436,8 @@ export function getCandleYAxis(chart: Chart | null): any {
  */
 export function resetCandleYAxisAuto(chart: Chart | null): void {
   if (!chart) return
-  const yAxis = getCandleYAxis(chart)
-  if (yAxis) {
-    yAxis.setAutoCalcTickFlag?.(true)
-  }
-  const anyChart = chart as any
-  anyChart.adjustPaneViewport?.(false, true, true, true, true)
+  setCandleYAxisAutoCalc(chart, true)
+  adjustChartViewport(chart)
 }
 
 /** Legend cog on the editable indicators; a click opens the param row (ActionType.OnTooltipIconClick). */
@@ -1070,8 +1099,13 @@ const LABEL_MIN_GAP = 0.06
  * @param high - highest price in the drawn window.
  * @returns one lane per input price, aligned by index; -1 means no label.
  */
-export function assignLabelLanes(prices: readonly number[], low: number, high: number): number[] {
-  const span = high - low
+export function assignLabelLanes(prices: readonly number[], low: number, high: number, coordType: CoordType = 'normal'): number[] {
+  // On a log axis the screen distance is proportional to ln(price), so measure
+  // collisions there; non-positive prices cannot be placed on it → linear.
+  const useLog = coordType === 'log' && low > 0 && prices.every(p => p > 0)
+  const tx = useLog ? Math.log : (v: number) => v
+  const top = tx(high)
+  const span = top - tx(low)
   const lanes = new Array<number>(prices.length).fill(0)
   if (!Number.isFinite(span) || span <= 0) return lanes
 
@@ -1084,7 +1118,7 @@ export function assignLabelLanes(prices: readonly number[], low: number, high: n
   const occupied = new Array<number>(LABEL_LANES).fill(Number.NEGATIVE_INFINITY)
 
   for (const { price, index } of order) {
-    const y = (high - price) / span
+    const y = (top - tx(price)) / span
     let placed = -1
     for (let lane = 0; lane < LABEL_LANES; lane += 1) {
       if (y - occupied[lane]! >= LABEL_MIN_GAP) {
@@ -1125,8 +1159,35 @@ function drawPrimitive(chart: Pick<Chart, 'createOverlay'>, prim: DrawPrimitive,
   }
 }
 
-function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSettings, onEditParams, derivatives, largeWalls, onCrosshairHover, baseHeight = CHART_HEIGHT, fill = false }: {
+/** One payload candle as a klinecharts row. */
+function toKLine(c: { time: string; open: number; high: number; low: number; close: number; volume: number }): KLineData {
+  return { timestamp: Date.parse(c.time), open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }
+}
+
+/** Older-bar paging contract between the panel and the canvas. */
+export interface ChartHistory {
+  /** Fetch bars strictly older than `beforeMs`, ascending. */
+  load: (beforeMs: number) => Promise<ChartTimeframeData['candles']>
+  /** Merge the bars the canvas just prepended into the payload's series. */
+  commit: (older: ChartTimeframeData['candles']) => void
+}
+
+/**
+ * Diff the wanted chip set against what is mounted on the canvas.
+ * @param active - chip ids the user has on.
+ * @param mounted - chip ids currently on the canvas.
+ * @param mountable - whether a chip can be drawn right now (has series etc.).
+ */
+export function planChipSync(active: readonly string[], mounted: ReadonlyMap<string, string> | ReadonlySet<string>, mountable: (id: string) => boolean): { add: string[]; remove: string[] } {
+  const want = new Set(active.filter(mountable))
+  const have = new Set(mounted.keys())
+  return { add: [...want].filter(id => !have.has(id)), remove: [...have].filter(id => !want.has(id)) }
+}
+
+function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSettings, onEditParams, derivatives, largeWalls, onCrosshairHover, history, baseHeight = CHART_HEIGHT, fill = false }: {
   data: ChartTimeframeData
+  /** Older-bar paging for klinecharts loadMore; absent on agent cards. */
+  history?: ChartHistory | undefined
   settings: IndicatorSettings
   axisSettings: AxisSettings
   onEditParams: () => void
@@ -1167,6 +1228,11 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   const onHoverRef = useRef(onCrosshairHover)
   onHoverRef.current = onCrosshairHover
   const wallOverlayIds = useRef<string[]>([])
+  const annotationOverlayIds = useRef<string[]>([])
+  /** Chip indicators currently mounted on the canvas: chip id → pane id. */
+  const mountedChips = useRef(new Map<string, string>())
+  const historyRef = useRef(history)
+  historyRef.current = history
   // 默认只收起主图指标行，副图名称和数值保持可见。
   const foldRef = useRef(true)
   const paneCount = active.filter(id => CHIP_DEFS.find(d => d.id === id)?.indicator?.overlay !== true).length
@@ -1234,25 +1300,58 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       if (d?.data?.timestamp) onHoverRef.current?.(d.data.timestamp)
     })
 
-    for (const id of active) {
-      const def = CHIP_DEFS.find(d => d.id === id)
-      if (!def?.indicator) continue
-      if (def.indicator.builtIn === true) {
-        // RSI_GRID is owned by EDITABLE (指标参数) so params stay in sync; skip here.
-        if (def.indicator.name === 'RSI_GRID') continue
-        chart.createIndicator(def.indicator.name, false, { id: `pane_${def.id}`, height: PANE_HEIGHT })
-        continue
-      }
-      if (!hasSeries(data, def.indicator.figures)) continue
-      const create = { name: def.indicator.name, extendData: seriesRows(data, def.indicator.figures) }
-      if (def.indicator.overlay === true) {
-        chart.createIndicator(create, true, { id: 'candle_pane' })
-      } else {
-        const paneId = `pane_${id}`
-        chart.createIndicator(create, false, { id: paneId, height: PANE_HEIGHT })
-      }
+    // History paging: klinecharts fires this when the user drags to the left edge.
+    if (typeof (chart as any).loadMore === 'function') {
+      chart.loadMore((timestamp) => {
+        const h = historyRef.current
+        if (h === undefined || timestamp == null) { chart.applyMoreData([], false); return }
+        h.load(timestamp).then(
+          (older) => {
+            if (chartRef.current !== chart) return
+            const rows = older.filter(c => Date.parse(c.time) < timestamp)
+            if (rows.length === 0) { chart.applyMoreData([], false); return }
+            chart.applyMoreData(rows.map(toKLine), true)
+            h.commit(rows)
+          },
+          () => { if (chartRef.current === chart) chart.applyMoreData([], false) },
+        )
+      })
     }
     applyFold(foldRef.current)
+    const observer = new ResizeObserver(() => chart.resize())
+    observer.observe(container)
+    return () => {
+      observer.disconnect()
+      chartRef.current = null
+      mountedChips.current = new Map()
+      annotationOverlayIds.current = []
+      ohlcParkCleanup.current?.()
+      dispose(container)
+    }
+    // Deliberately NOT keyed on `data`: see `seriesKey`. Annotation and
+    // scenario identity are folded into the key by the caller, so a redraw
+    // still happens when the model marks the chart up.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seriesKey, dark])
+
+  // Agent marks + scenario lines. Own effect so a coordType change can re-run
+  // label placement without tearing the canvas (and the viewport) down.
+  useEffect(() => {
+    const chart = chartRef.current
+    if (chart === null) return
+    for (const id of annotationOverlayIds.current) {
+      try { chart.removeOverlay({ id }) } catch { /* gone */ }
+    }
+    annotationOverlayIds.current = []
+    const data = latest.current
+    if (data.candles.length === 0) return
+    const palette = dark ? DARK : LIGHT
+    const created: string[] = []
+    const sink = { createOverlay: (o: Parameters<Chart['createOverlay']>[0]) => {
+      const id = chart.createOverlay(o)
+      if (typeof id === 'string' && id) created.push(id)
+      return id
+    } } as Pick<Chart, 'createOverlay'>
     const close = data.candles[data.candles.length - 1]!.close
     const ctx: AnnotationRendererContext = { contractVersion: 1, timeframe: data.timeframe, close, palette }
     // Collect every primitive before drawing any: label placement is the one
@@ -1298,22 +1397,12 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       if (a > highest) highest = a
     }
     const anchored = anchors.flatMap((a, i) => (a === undefined ? [] : [{ a, i }]))
-    const lanes = assignLabelLanes(anchored.map(x => x.a), lowest, highest)
+    const lanes = assignLabelLanes(anchored.map(x => x.a), lowest, highest, axisSettings.coordType)
     const laneByIndex = new Map(anchored.map((x, k) => [x.i, lanes[k]!]))
-    primitives.forEach((prim, i) => drawPrimitive(chart, prim, laneByIndex.get(i) ?? 0))
-    const observer = new ResizeObserver(() => chart.resize())
-    observer.observe(container)
-    return () => {
-      observer.disconnect()
-      chartRef.current = null
-      ohlcParkCleanup.current?.()
-      dispose(container)
-    }
-    // Deliberately NOT keyed on `data`: see `seriesKey`. Annotation and
-    // scenario identity are folded into the key by the caller, so a redraw
-    // still happens when the model marks the chart up.
+    primitives.forEach((prim, i) => drawPrimitive(sink, prim, laneByIndex.get(i) ?? 0))
+    annotationOverlayIds.current = created
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seriesKey, dark, active])
+  }, [seriesKey, dark, axisSettings.coordType])
 
   // Param edits or derivatives update: re-run calc in place; no canvas rebuild.
   useEffect(() => {
@@ -1387,23 +1476,47 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   // Live tail: push the newest bar into the existing plot. klinecharts updates
   // the last bar in place, or appends when the timestamp has moved on, so the
   // same call covers "the current candle ticked" and "a new candle opened".
+  // Chip panes are mounted/unmounted incrementally on the live canvas, so a
+  // toggle keeps zoom and scroll (no dispose/init).
   useEffect(() => {
     const chart = chartRef.current
     const last = data.candles[data.candles.length - 1]
     if (chart === null || last === undefined) return
-    chart.updateData({
-      timestamp: Date.parse(last.time),
-      open: last.open, high: last.high, low: last.low, close: last.close, volume: last.volume,
+    chart.updateData(toKLine(last))
+    const plan = planChipSync(active, mountedChips.current, id => {
+      const def = CHIP_DEFS.find(d => d.id === id)
+      if (!def?.indicator) return false
+      if (def.indicator.builtIn === true) return def.indicator.name !== 'RSI_GRID'
+      return hasSeries(data, def.indicator.figures)
     })
-    for (const id of active) {
+    for (const id of plan.remove) {
+      const def = CHIP_DEFS.find(d => d.id === id)
+      const paneId = mountedChips.current.get(id)
+      mountedChips.current.delete(id)
+      if (!def?.indicator || paneId === undefined) continue
+      try { chart.removeIndicator(paneId, def.indicator.name) } catch { /* already gone */ }
+    }
+    for (const id of plan.add) {
+      const def = CHIP_DEFS.find(d => d.id === id)!
+      const ind = def.indicator!
+      if (ind.builtIn === true) {
+        const paneId = `pane_${def.id}`
+        chart.createIndicator(ind.name, false, { id: paneId, height: PANE_HEIGHT })
+        mountedChips.current.set(id, paneId)
+        continue
+      }
+      const create = { name: ind.name, extendData: seriesRows(data, ind.figures) }
+      const paneId = ind.overlay === true ? 'candle_pane' : `pane_${id}`
+      chart.createIndicator(create, ind.overlay === true, { id: paneId, height: PANE_HEIGHT })
+      mountedChips.current.set(id, paneId)
+    }
+    for (const [id, paneId] of mountedChips.current) {
+      if (plan.add.includes(id)) continue
       const def = CHIP_DEFS.find(d => d.id === id)
       if (!def?.indicator || def.indicator.builtIn === true || !hasSeries(data, def.indicator.figures)) continue
-      chart.overrideIndicator({
-        name: def.indicator.name,
-        extendData: seriesRows(data, def.indicator.figures),
-      })
+      chart.overrideIndicator({ name: def.indicator.name, extendData: seriesRows(data, def.indicator.figures) }, paneId)
     }
-  }, [data, active])
+  }, [data, active, seriesKey, dark])
 
   useEffect(() => {
     const chart = chartRef.current
@@ -1413,14 +1526,10 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       id: 'candle_pane',
       gap: axisSettings.autoScale.candle ? { top: 0.08, bottom: 0.05 } : { top: 0.2, bottom: 0.1 },
     })
-    const yAxis = getCandleYAxis(chart)
-    if (yAxis) {
-      if (axisSettings.autoScale.candle) {
-        yAxis.setAutoCalcTickFlag?.(true)
-        ;(chart as any).adjustPaneViewport?.(false, true, true, true, true)
-      } else {
-        yAxis.setAutoCalcTickFlag?.(false)
-      }
+    if (axisSettings.autoScale.candle) {
+      if (setCandleYAxisAutoCalc(chart, true)) adjustChartViewport(chart)
+    } else {
+      setCandleYAxisAutoCalc(chart, false)
     }
   }, [axisSettings])
 
@@ -1446,10 +1555,9 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       const dy = e.clientY - startY
       if (!isVerticalUnlocked && Math.abs(dy) >= 3) {
         const chart = chartRef.current
-        const yAxis = getCandleYAxis(chart)
-        if (yAxis && yAxis.getAutoCalcTickFlag?.()) {
+        if (getCandleYAxisAutoCalc(chart) === true) {
           isVerticalUnlocked = true
-          yAxis.setAutoCalcTickFlag?.(false)
+          setCandleYAxisAutoCalc(chart, false)
           const current = getAxisSettings()
           if (current.autoScale.candle) {
             setAxisSettings({
@@ -1465,8 +1573,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       if (isPointerDown) {
         isPointerDown = false
         const chart = chartRef.current
-        const yAxis = getCandleYAxis(chart)
-        if (yAxis && yAxis.getAutoCalcTickFlag?.() === false) {
+        if (getCandleYAxisAutoCalc(chart) === false) {
           const current = getAxisSettings()
           if (current.autoScale.candle) {
             setAxisSettings({
@@ -1500,8 +1607,9 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
         e.preventDefault()
         e.stopPropagation()
         const yAxis = getCandleYAxis(chart)
-        if (!yAxis) return
-        const range = yAxis.getRange?.()
+        if (!yAxis || typeof yAxis.getRange !== 'function' || typeof yAxis.setRange !== 'function') return
+        try {
+        const range = yAxis.getRange()
         if (!range || range.range <= 0) return
         const zoomFactor = e.deltaY > 0 ? 1.15 : 0.85
         const newRange = range.range * zoomFactor
@@ -1516,7 +1624,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
         const newTo = newFrom + newRange
         const realFrom = typeof yAxis.convertToRealValue === 'function' ? yAxis.convertToRealValue(newFrom) : newFrom
         const realTo = typeof yAxis.convertToRealValue === 'function' ? yAxis.convertToRealValue(newTo) : newTo
-        yAxis.setRange?.({
+        yAxis.setRange({
           from: newFrom,
           to: newTo,
           range: newRange,
@@ -1524,7 +1632,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
           realTo,
           realRange: realTo - realFrom,
         })
-        ;(chart as any).adjustPaneViewport?.(false, true, true, true, true)
+        adjustChartViewport(chart)
+        } catch { return /* internal axis API changed: Y-wheel zoom degrades to a no-op */ }
         const current = getAxisSettings()
         if (current.autoScale.candle) {
           setAxisSettings({
@@ -1949,8 +2058,9 @@ function getInitialActiveChips(): string[] {
   return ['vol']
 }
 
-export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, fill = false, prose = true, derivatives, largeWalls, onCrosshairHover }: {
+export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, fill = false, prose = true, derivatives, largeWalls, onCrosshairHover, history }: {
   payload: ChartPayload
+  history?: ChartHistory | undefined
   chartHeight?: number
   shell?: CSSProperties
   fill?: boolean
@@ -1966,6 +2076,20 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
   const [editing, setEditing] = useState(false)
   const axisSettings = useSyncExternalStore(subscribeAxisSettings, getAxisSettings, () => DEFAULT_AXIS_SETTINGS)
   const [showAxisMenu, setShowAxisMenu] = useState(false)
+  // Left edge the rebuild key keeps while loadMore prepends history: `prepended`
+  // is the first bar time the canvas itself produced, `edge` the original one.
+  const historyEdge = useRef<{ prepended: string; edge: string } | null>(null)
+  const historyForKline = useMemo<ChartHistory | undefined>(() => history === undefined ? undefined : {
+    load: history.load,
+    commit: (older) => {
+      const first = older[0]?.time
+      const cur = historyEdge.current
+      const edge = cur?.edge ?? rawTfEdge.current
+      if (first !== undefined && edge !== undefined) historyEdge.current = { prepended: first, edge }
+      history.commit(older)
+    },
+  }, [history])
+  const rawTfEdge = useRef<string | undefined>(undefined)
 
   const rawTf = payload.timeframes[Math.min(activeTf, payload.timeframes.length - 1)]
   const tf = useMemo(() => {
@@ -2027,7 +2151,12 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
   // never re-runs, applyNewData is never called, and the canvas keeps the old
   // candles under the new caption. A live tail cannot change this value:
   // mergeTail only replaces the forming bar or appends a new one.
-  const seriesKey = `${payload.provider}|${payload.symbol}|${tf.timeframe}|${tf.candles[0]?.time ?? ''}|${annotationDigest(tf.annotations, scenarios)}`
+  const firstTime = tf.candles[0]?.time ?? ''
+  const he = historyEdge.current
+  const keyEdge = he !== null && he.prepended === firstTime ? he.edge : firstTime
+  if (he !== null && he.prepended !== firstTime) historyEdge.current = null
+  rawTfEdge.current = keyEdge
+  const seriesKey = `${payload.provider}|${payload.symbol}|${tf.timeframe}|${keyEdge}|${annotationDigest(tf.annotations, scenarios)}`
 
   const root: CSSProperties = fill
     ? { ...shell, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }
@@ -2103,6 +2232,7 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
         derivatives={derivatives}
         largeWalls={largeWalls}
         onCrosshairHover={onCrosshairHover}
+        history={historyForKline}
         onEditParams={() => setEditing(true)}
         baseHeight={chartHeight}
         fill={fill}

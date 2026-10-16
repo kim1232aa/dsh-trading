@@ -37,7 +37,12 @@ export interface PanelInstrument {
 
 /** What the panel needs from the host; the whole surface the UI may touch. */
 export interface MarketClient {
-  listProviders?(signal?: AbortSignal): Promise<{ id: string; description: string }[]>
+  listProviders?(signal?: AbortSignal): Promise<{ id: string; description: string; timeframes?: string[] }[]>
+  /**
+   * Bars strictly older than `beforeMs` (history paging for loadMore). Providers
+   * that ignore `end` return the latest window; {@link olderThan} drops those.
+   */
+  getBefore?(symbol: string, timeframe: string, beforeMs: number, bars: number, providerId?: string, signal?: AbortSignal): Promise<Candle[]>
   listSymbols(signal?: AbortSignal): Promise<{ providerId: string; description: string; symbols: PanelInstrument[] }>
   getPayload(symbol: string, timeframe: string, providerId?: string, signal?: AbortSignal): Promise<ChartPayload>
   /** The last few bars only — what a live refresh needs, without refetching the series. */
@@ -235,6 +240,49 @@ export function mergeTail(series: readonly Candle[], tail: readonly Candle[]): C
   }
   if (!changed) return series as Candle[]
   return [...byTime.values()].sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
+}
+
+/**
+ * Keep only bars that open strictly before `beforeMs`, ascending, de-duplicated.
+ * A provider that ignores the `end` bound hands back the latest window; this
+ * turns that into "nothing older", which stops paging instead of corrupting it.
+ */
+export function olderThan(candles: readonly Candle[], beforeMs: number): Candle[] {
+  const seen = new Set<string>()
+  return candles
+    .filter(c => { const t = Date.parse(c.time); return Number.isFinite(t) && t < beforeMs && !seen.has(c.time) && (seen.add(c.time), true) })
+    .sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
+}
+
+/** Every period the panel toolbar can offer, in display order. */
+export const PANEL_TIMEFRAMES = [
+  '1m', '3m', '5m', '15m', '30m',
+  '1h', '2h', '4h', '6h', '8h', '12h',
+  '1d', '3d', '1w', '1M',
+] as const
+
+/** Known gaps when the host does not report a provider's timeframes. */
+const FALLBACK_TIMEFRAMES: Record<string, readonly string[]> = {
+  // Mirrors provider-cn ALL_CN_TIMEFRAMES; the RPC answer overrides it.
+  cn: ['1m', '5m', '15m', '30m', '1h', '1d', '1w'],
+  okx: ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d', '3d', '1w', '1M'],
+}
+
+/**
+ * Toolbar periods for the active data source. The provider's own advertised
+ * list (from the `providers` RPC, i.e. listSymbols) is the source of truth;
+ * the static fallback only covers hosts that did not report one.
+ */
+export function timeframesForSource(
+  source: string,
+  providers: readonly { id: string; timeframes?: readonly string[] | undefined }[],
+): string[] {
+  const reported = providers.find(p => p.id === source)?.timeframes
+  const allow = reported !== undefined && reported.length > 0 ? reported : FALLBACK_TIMEFRAMES[source]
+  if (allow === undefined) return [...PANEL_TIMEFRAMES]
+  const set = new Set(allow)
+  const out = PANEL_TIMEFRAMES.filter(tf => set.has(tf))
+  return out.length > 0 ? out : [...PANEL_TIMEFRAMES]
 }
 
 /**
@@ -500,7 +548,7 @@ export function createMarketClient(rpc: RpcCaller): MarketClient {
     async listProviders(signal) {
       try {
         const value = await unwrap(rpc.call(CHANNEL, 'providers', {}, signal)) as {
-          providers: { id: string; description: string }[]
+          providers: { id: string; description: string; timeframes?: string[] }[]
         }
         return value.providers ?? []
       } catch {
@@ -541,6 +589,13 @@ export function createMarketClient(rpc: RpcCaller): MarketClient {
         candles: Candle[]
       }
       return value.candles
+    },
+
+    async getBefore(symbol, timeframe, beforeMs, bars, providerId, signal) {
+      const body: Record<string, unknown> = { symbol, timeframe, limit: bars, end: beforeMs - 1 }
+      if (providerId) body['providerId'] = providerId
+      const value = await unwrap(rpc.call(CHANNEL, 'ohlcv', body, signal)) as { candles: Candle[] }
+      return olderThan(value.candles ?? [], beforeMs)
     },
 
     async getDerivatives(symbol, providerId, signal) {

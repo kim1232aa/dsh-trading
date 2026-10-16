@@ -20,23 +20,20 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { CSSProperties, FormEvent } from 'react'
 import type { ChartOwnerProps } from '@dsh-trading/client-frame/client'
 import { ChartBody, ChartErrorBoundary, matchDerivativeHistory, peekSettings, subscribeSettings } from './ChartCard.js'
+import type { ChartHistory } from './ChartCard.js'
 import { derivativesAtBar } from './market-client.js'
 import { getLatestChart, subscribeLatestChart } from './latest.js'
 import { decideFollow } from './follow.js'
-import { mergeMarks, mergeTail, postureColor, readMarks, recallMarks, rememberMarks, withCandles } from './market-client.js'
+import { mergeMarks, mergeTail, PANEL_TIMEFRAMES, postureColor, readMarks, recallMarks, rememberMarks, timeframesForSource, withCandles } from './market-client.js'
 import type { ChartMarks, MarketClient, PanelDerivatives, PanelLargeOrders, PanelMoneyFlow } from './market-client.js'
 import type { ChartPayload } from './payload.js'
 import type { FundamentalsPackage, Orderbook } from '@dsh-trading/market-data'
 
-/** Timeframes the panel offers; the provider may serve a subset and will say so. */
-const TIMEFRAMES = [
-  '1m', '3m', '5m', '15m', '30m',
-  '1h', '2h', '4h', '6h', '8h', '12h',
-  '1d', '3d', '1w', '1M',
-] as const
+/** Timeframes the panel offers; filtered per provider by {@link timeframesForSource}. */
+const TIMEFRAMES = PANEL_TIMEFRAMES
 
-/** OKX has no 8h candle; hide that button when the active source is OKX. */
-const OKX_HIDDEN_TFS = new Set<string>(['8h'])
+/** Bars per loadMore page. */
+const HISTORY_PAGE_BARS = 500
 
 const TF_MS: Record<string, number> = {
   '1m': 60_000, '3m': 180_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
@@ -722,7 +719,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
   const [dismissed, setDismissed] = useState<string | null>(null)
   const [pinned, setPinned] = useState(false)
   const [stalled, setStalled] = useState(false)
-  const [availableProviders, setAvailableProviders] = useState<{ id: string; description: string }[]>([
+  const [availableProviders, setAvailableProviders] = useState<{ id: string; description: string; timeframes?: string[] }[]>([
     { id: 'binance', description: 'Binance' },
     { id: 'cn', description: '东财/新浪 A股' },
   ])
@@ -810,6 +807,25 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
   // are welcome on top of it, which is what `merged` carries; when they are
   // about a different chart, mergeMarks hands the payload straight back.
   const payload = merged?.payload ?? own ?? fromAgent
+
+  // History paging (klinecharts loadMore): only on a series the panel fetched
+  // itself. Older bars are merged into `own`, so payload candles == chart data
+  // and per-bar indicator series stay index-aligned after the prepend.
+  const ownSymbol = own?.symbol
+  const ownTf = own?.timeframes[0]?.timeframe
+  const ownProvider = own?.provider
+  const history = useMemo<ChartHistory | undefined>(() => {
+    if (ownSymbol === undefined || ownTf === undefined || market.getBefore === undefined) return undefined
+    const pId = manualProvider === 'auto' ? ownProvider : manualProvider
+    return {
+      load: (beforeMs: number) => market.getBefore!(ownSymbol, ownTf, beforeMs, HISTORY_PAGE_BARS, pId),
+      commit: (older) => setOwn(cur => {
+        const tf0 = cur?.timeframes[0]
+        if (cur == null || tf0 === undefined || cur.symbol !== ownSymbol || tf0.timeframe !== ownTf) return cur
+        return withCandles(cur, mergeTail(tf0.candles, older))
+      }),
+    }
+  }, [ownSymbol, ownTf, ownProvider, manualProvider, market])
 
   // Poll CoinGlass large walls only while the overlay is enabled.
   useEffect(() => {
@@ -1074,9 +1090,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
   const shownSymbol = (payload?.symbol ?? '').trim()
   const shownTimeframe = payload?.timeframes[0]?.timeframe
   const chartSource = manualProvider !== 'auto' ? manualProvider : (own?.provider ?? payload?.provider ?? 'auto')
-  const visibleTimeframes = chartSource === 'okx'
-    ? TIMEFRAMES.filter(tf => !OKX_HIDDEN_TFS.has(tf))
-    : TIMEFRAMES
+  const visibleTimeframes = timeframesForSource(chartSource, availableProviders)
   // A period the user just clicked wins until its data lands. Reading the
   // highlight off the payload alone meant a click gave no feedback while the
   // fetch was in flight, and was silently discarded if the fetch failed — the
@@ -1452,7 +1466,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
             : payload !== null
               ? (
                 <ChartErrorBoundary>
-                  <ChartBody payload={payload} shell={PANEL_SHELL} fill prose={false} derivatives={panelDerivatives} largeWalls={panelLargeWalls} onCrosshairHover={setHoveredTime} />
+                  <ChartBody payload={payload} history={payload === own || payload === merged?.payload ? history : undefined} shell={PANEL_SHELL} fill prose={false} derivatives={panelDerivatives} largeWalls={panelLargeWalls} onCrosshairHover={setHoveredTime} />
                 </ChartErrorBoundary>
               )
               : (

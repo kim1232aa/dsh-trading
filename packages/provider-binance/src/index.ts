@@ -243,7 +243,7 @@ export class BinanceProvider implements MarketDataProvider {
     }
     if (okxOk) {
       try {
-        return await okxSpotCandles(query.symbol, query.timeframe, query.limit)
+        return await okxSpotCandles(query.symbol, query.timeframe, query.limit, query.end)
       } catch (err) {
         fallbackErr = err as Error
         if (fallbackErr.message.includes('unsupported timeframe')) {
@@ -888,14 +888,18 @@ export const GATE_TIMEFRAMES: Timeframe[] = Object.keys(GATE_SPOT_TF) as Timefra
 /** Full Binance spot interval set. */
 export const BINANCE_TIMEFRAMES: Timeframe[] = [...ALL_TIMEFRAMES]
 
-async function okxSpotCandles(rawSymbol: string, timeframe: Timeframe, limit = 200): Promise<Candle[]> {
+async function okxSpotCandles(rawSymbol: string, timeframe: Timeframe, limit = 200, end?: string): Promise<Candle[]> {
   const symbol = normalizeSymbol(rawSymbol)
   const base = symbol.replace(/(USDT|USDC)$/, '')
   const quote = symbol.endsWith('USDC') ? 'USDC' : 'USDT'
   const instId = `${base}-${quote}`
   const bar = OKX_SPOT_TF[timeframe]
   if (!bar) throw new Error(`OKX spot: unsupported timeframe ${timeframe} (available: ${OKX_TIMEFRAMES.join(', ')})`)
-  const data = await okxGet('/api/v5/market/candles', { instId, bar, limit: String(Math.min(limit, 300)) }) as unknown[][]
+  // History paging: OKX `after` = bars strictly older than ts; history-candles reaches past the recent window.
+  const endMs = end !== undefined ? Date.parse(end) : NaN
+  const data = (Number.isFinite(endMs)
+    ? await okxGet('/api/v5/market/history-candles', { instId, bar, limit: String(Math.min(limit, 100)), after: String(endMs + 1) })
+    : await okxGet('/api/v5/market/candles', { instId, bar, limit: String(Math.min(limit, 300)) })) as unknown[][]
   if (!Array.isArray(data) || data.length === 0) throw new Error(`OKX spot: no bars for ${instId}`)
   return data.slice().reverse().map(r => ({
     time: new Date(Number(r[0])).toISOString(),
@@ -1395,7 +1399,7 @@ export class OkxMarketProvider implements MarketDataProvider {
         `OKX spot: unsupported timeframe ${query.timeframe} (available: ${OKX_TIMEFRAMES.join(', ')})`,
       )
     }
-    return okxSpotCandles(query.symbol, query.timeframe, query.limit ?? 200)
+    return okxSpotCandles(query.symbol, query.timeframe, query.limit ?? 200, query.end)
   }
 
   async getDerivatives(rawSymbol: string): Promise<Derivatives> {

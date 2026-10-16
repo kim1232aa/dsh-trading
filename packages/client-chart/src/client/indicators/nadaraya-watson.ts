@@ -63,6 +63,27 @@ export interface NadarayaWatsonBarResult {
   price?: number | undefined
 }
 
+/** Consecutive bars sharing one trend direction, [start, end] inclusive. */
+export interface NwTrendRun { start: number; end: number; bullish: boolean }
+
+/**
+ * Split the visible range into same-direction runs so draw() can batch fills.
+ * Missing bars break a run.
+ */
+export function nwTrendRuns(results: readonly (NadarayaWatsonBarResult | undefined)[], from: number, to: number): NwTrendRun[] {
+  const runs: NwTrendRun[] = []
+  let cur: NwTrendRun | null = null
+  for (let i = from; i <= to; i++) {
+    const r = results[i]
+    if (!r) { cur = null; continue }
+    const bullish = r.isBullish === true
+    if (cur !== null && cur.bullish === bullish && cur.end === i - 1) { cur.end = i; continue }
+    cur = { start: i, end: i, bullish }
+    runs.push(cur)
+  }
+  return runs
+}
+
 export const NW_PRESETS: Record<PresetType, { lookback: number; bandwidth: number; multiplier: number }> = {
   Default: { lookback: 50, bandwidth: 8, multiplier: 2.0 },
   'Fast Response': { lookback: 25, bandwidth: 5, multiplier: 1.5 },
@@ -357,45 +378,47 @@ export const nadarayaWatsonIndicator = {
 
     ctx.save()
 
-    // 1. Subtle background wash matching trend (as in TradingView show_bgcolor)
-    for (let i = from; i <= to; i++) {
-      const r = results[i]
-      if (!r) continue
-      const x1 = Math.max(0, xAxis.convertToPixel(i - 0.5))
-      const x2 = Math.min(bounding.width, xAxis.convertToPixel(i + 0.5))
+    // 1+2. Background wash and gradient cloud, batched per same-trend run:
+    // one fillRect + one gradient + one fill per run instead of per bar.
+    for (const run of nwTrendRuns(results, from, to)) {
+      const c = run.bullish ? '0, 255, 170' : '242, 54, 69'
+      const x1 = Math.max(0, xAxis.convertToPixel(run.start - 0.5))
+      const x2 = Math.min(bounding.width, xAxis.convertToPixel(run.end + 0.5))
       if (x2 > x1) {
-        ctx.fillStyle = r.isBullish ? 'rgba(0, 255, 170, 0.035)' : 'rgba(242, 54, 69, 0.035)'
+        ctx.fillStyle = `rgba(${c}, 0.035)`
         ctx.fillRect(x1, 0, x2 - x1, bounding.height)
       }
-    }
-
-    // 2. 6-step gradient cloud fill between source price and the NW line
-    for (let i = from; i < to; i++) {
-      const rA = results[i]
-      const rB = results[i + 1]
-      if (!rA || !rB || rA.price === undefined || rB.price === undefined) continue
-      const xA = xAxis.convertToPixel(i)
-      const xB = xAxis.convertToPixel(i + 1)
-      const yPriceA = yAxis.convertToPixel(rA.price)
-      const yNwA = yAxis.convertToPixel(rA.value)
-      const yPriceB = yAxis.convertToPixel(rB.price)
-      const yNwB = yAxis.convertToPixel(rB.value)
-
       ctx.beginPath()
-      ctx.moveTo(xA, yNwA)
-      ctx.lineTo(xB, yNwB)
-      ctx.lineTo(xB, yPriceB)
-      ctx.lineTo(xA, yPriceA)
-      ctx.closePath()
-
-      const yTop = Math.min(yNwA, yPriceA, yNwB, yPriceB)
-      const yBottom = Math.max(yNwA, yPriceA, yNwB, yPriceB)
-      const grad = ctx.createLinearGradient(0, yTop, 0, yBottom)
-      const c = rB.isBullish ? '0, 255, 170' : '242, 54, 69'
-      grad.addColorStop(0, `rgba(${c}, 0.28)`)
-      grad.addColorStop(1, `rgba(${c}, 0.03)`)
-      ctx.fillStyle = grad
-      ctx.fill()
+      let yTop = Infinity
+      let yBottom = -Infinity
+      let any = false
+      for (let i = Math.max(from, run.start - 1); i < run.end && i < to; i++) {
+        const rA = results[i]
+        const rB = results[i + 1]
+        // Segment i→i+1 belongs to the run that owns bar i+1 (rB colours it).
+        if (i + 1 < run.start || !rA || !rB || rA.price === undefined || rB.price === undefined) continue
+        const xA = xAxis.convertToPixel(i)
+        const xB = xAxis.convertToPixel(i + 1)
+        const yPriceA = yAxis.convertToPixel(rA.price)
+        const yNwA = yAxis.convertToPixel(rA.value)
+        const yPriceB = yAxis.convertToPixel(rB.price)
+        const yNwB = yAxis.convertToPixel(rB.value)
+        ctx.moveTo(xA, yNwA)
+        ctx.lineTo(xB, yNwB)
+        ctx.lineTo(xB, yPriceB)
+        ctx.lineTo(xA, yPriceA)
+        ctx.closePath()
+        yTop = Math.min(yTop, yNwA, yPriceA, yNwB, yPriceB)
+        yBottom = Math.max(yBottom, yNwA, yPriceA, yNwB, yPriceB)
+        any = true
+      }
+      if (any && Number.isFinite(yTop) && Number.isFinite(yBottom)) {
+        const grad = ctx.createLinearGradient(0, yTop, 0, yBottom > yTop ? yBottom : yTop + 1)
+        grad.addColorStop(0, `rgba(${c}, 0.28)`)
+        grad.addColorStop(1, `rgba(${c}, 0.03)`)
+        ctx.fillStyle = grad
+        ctx.fill()
+      }
     }
 
     // 3. Outer residual envelope cloud (between upper and lower bands)
