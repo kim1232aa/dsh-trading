@@ -30,6 +30,7 @@ import { evasiveSuperTrend, evasiveSuperTrendIndicator } from './indicators/evas
 import { nadarayaWatsonTrend, nadarayaWatsonIndicator } from './indicators/nadaraya-watson.js'
 import { orderBlockBreaker, orderBlockIndicator } from './indicators/order-blocks.js'
 import { calculateVbProRead, enabledVbAlerts, intToHex, VB_ALERTS, VB_DEFAULTS, vbProReadIndicator } from './indicators/vb-pro-read.js'
+import { dualViewHtfIndicator, DV_DEFAULTS, PATTERN_KEYS, PATTERN_CN, HTF_TF_LABELS, PATTERN_FILTER_OPTS, SIZE_OPTS, TREND_OPTS, dvAlertEvents } from './indicators/dual-view-htf-patterns.js'
 import { mtfSRZones, mtfSRIndicator, mtfSourceTimeframeSeconds } from './indicators/mtf-sr.js'
 import { entrySignalIndicator } from './indicators/entry-signal.js'
 import { rsiGridIndicator, rsiGridCumIndicator, rsiGridMarksIndicator } from './indicators/rsi-grid.js'
@@ -270,6 +271,28 @@ export const EDITABLE: {
     { label: '走带回看', min: 2, max: 500, step: 1 }, { label: '走带最少收盘', min: 1, max: 500, step: 1 }, { label: '外区位置', min: 0.5, max: 1, step: 0.05 }, { label: 'ADX周期', min: 2, max: 500, step: 1 }, { label: 'ADX趋势阈值', min: 1, max: 100, step: 0.5 },
     boolP('显示挤压'), boolP('标均值回归'), colorP('走带上/多'), colorP('走带下/空'), colorP('中性'),
     ...VB_ALERTS.map(a => boolP(`提醒:${a.cn}`)),
+  ] },
+  { name: 'DUAL_VIEW_HTF', title: '双视HTF形态(theUltimator5)', defaults: [...DV_DEFAULTS], defaultVisible: false, params: [
+    { label: '高周期', min: 0, max: 5, step: 1, kind: 'select', options: [...HTF_TF_LABELS] },
+    { label: '浮动K数量', min: 1, max: 10, step: 1 }, { label: 'K宽度(bars)', min: 1, max: 100, step: 1 },
+    { label: 'K间距', min: 0, max: 50, step: 1 }, { label: '右缘偏移', min: 0, max: 200, step: 1 },
+    { label: '历史回看(HTF)', min: 10, max: 300, step: 1 },
+    boolP('显示浮动HTF'), boolP('历史形态画到图上'),
+    colorP('多实体'), colorP('多边框'), colorP('空实体'), colorP('空边框'),
+    { label: '实体透明度', min: 0, max: 100, step: 1 }, { label: '线宽', min: 1, max: 10, step: 1 },
+    boolP('显示趋势线'), colorP('MA颜色'), { label: 'MA线宽', min: 1, max: 5, step: 1 },
+    { label: '趋势算法', min: 0, max: 1, step: 1, kind: 'select', options: [...TREND_OPTS] },
+    { label: 'MA周期', min: 1, max: 200, step: 1 },
+    { label: '形态筛选', min: 0, max: 2, step: 1, kind: 'select', options: [...PATTERN_FILTER_OPTS] },
+    ...PATTERN_KEYS.map(k => boolP(PATTERN_CN[k])),
+    { label: '文字大小', min: 0, max: 3, step: 1, kind: 'select', options: [...SIZE_OPTS] },
+    boolP('显示ⓘ说明'), colorP('多标签色'), colorP('空标签色'),
+    { label: 'Doji敏感度(Pine未用)', min: 0.01, max: 0.5, step: 0.01 },
+    boolP('中心周期标签'), colorP('中心标签色'),
+    { label: '中心标签大小', min: 0, max: 3, step: 1, kind: 'select', options: [...SIZE_OPTS] },
+    { label: '标签下偏移', min: 0, max: 20, step: 1 },
+    boolP('水平参考线'), colorP('参考线色'), { label: '参考线宽', min: 1, max: 5, step: 1 },
+    boolP('提醒:HTF形态'),
   ] },
   { name: 'MTF_SR', title: '多周期支撑阻力(Syndicate)', defaults: [5], defaultVisible: false, params: [period('Pivot周期')] },
   { name: 'RSI_GRID', title: 'RSI网格（多空）', pane: 'pane_rsi_grid', defaults: [7, 30, 60, 10], params: [period('RSI周期'), period('多入阈值'), period('多平阈值'), period('累计阈值')] },
@@ -912,6 +935,7 @@ function ensureRegistered(): void {
   registerIndicator(nadarayaWatsonIndicator as never)
   registerIndicator(orderBlockIndicator as never)
   registerIndicator(vbProReadIndicator as never)
+  registerIndicator(dualViewHtfIndicator as never)
   registerIndicator(mtfSRIndicator as never)
   registerIndicator(entrySignalIndicator as never)
   registerIndicator(rsiGridIndicator as never)
@@ -1293,7 +1317,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       if (def.name === 'LARGE_WALLS') continue // overlay drawn from CoinGlass RPC, not a klinecharts indicator
       const s = settingsRef.current[def.name]!
       const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivativesRef.current?.history
-        : def.name === 'MTF_SR' ? { sourceTimeframe: data.timeframe, sourceTimeframeSeconds: mtfSourceTimeframeSeconds(data.timeframe) } : undefined
+        : def.name === 'MTF_SR' || def.name === 'DUAL_VIEW_HTF' ? { sourceTimeframe: data.timeframe, sourceTimeframeSeconds: mtfSourceTimeframeSeconds(data.timeframe) } : undefined
       if (def.pane !== undefined) {
         // Own pane: created only when shown, so a hidden one doesn't leave a blank strip.
         if (s.visible) {
@@ -1434,7 +1458,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       if (def.name === 'LARGE_WALLS') continue
       const s = settings[def.name]!
       const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivatives?.history
-        : def.name === 'MTF_SR' ? { sourceTimeframe: data.timeframe, sourceTimeframeSeconds: mtfSourceTimeframeSeconds(data.timeframe) } : undefined
+        : def.name === 'MTF_SR' || def.name === 'DUAL_VIEW_HTF' ? { sourceTimeframe: data.timeframe, sourceTimeframeSeconds: mtfSourceTimeframeSeconds(data.timeframe) } : undefined
       if (def.pane !== undefined) {
         const exists = chart.getIndicatorByPaneId(def.pane, def.name) != null
         if (!s.visible) {
@@ -1539,14 +1563,19 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     }
   }, [data, active, seriesKey, dark])
 
-  // VB Pro-Read alertconditions: evaluated on the latest CLOSED bar on each
-  // data update; fire once per (bar, alert). First evaluation only seeds.
+  // Indicator alertconditions (VB + Dual View HTF): fire once per id; first eval seeds.
   const vbSeen = useRef<Set<string> | null>(null)
   const [vbToasts, setVbToasts] = useState<{ id: string; text: string }[]>([])
   useEffect(() => {
-    const s = settings['VB_PRO_READ']
-    if (s === undefined || !s.visible) { vbSeen.current = null; return }
-    const fired = vbAlertEvents(data.candles, s.params)
+    const fired: { id: string; text: string }[] = []
+    const vb = settings['VB_PRO_READ']
+    if (vb?.visible) fired.push(...vbAlertEvents(data.candles, vb.params))
+    const dv = settings['DUAL_VIEW_HTF']
+    if (dv?.visible) {
+      const rows = data.candles.map(c => ({ ...c, timestamp: Date.parse(c.time) }))
+      fired.push(...dvAlertEvents(rows, dv.params, data.timeframe))
+    }
+    if (fired.length === 0 && !(vb?.visible || dv?.visible)) { vbSeen.current = null; return }
     if (vbSeen.current === null) { vbSeen.current = new Set(fired.map(f => f.id)); return }
     const fresh = fired.filter(f => !vbSeen.current!.has(f.id))
     if (fresh.length === 0) return
@@ -1704,7 +1733,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     <div style={{ position: 'relative', width: '100%', ...(fill ? { flex: '1 1 auto', minHeight: 240 } : { height: baseHeight + paneCount * PANE_HEIGHT }) }}>
       <div ref={el} style={{ width: '100%', height: '100%' }} />
       {vbToasts.length > 0 && (
-        <div role="status" aria-label="波动带提醒" style={{ position: 'absolute', right: 70, top: 8, zIndex: 5, display: 'flex', flexDirection: 'column', gap: 4, pointerEvents: 'auto' }}>
+        <div role="status" aria-label="指标提醒" style={{ position: 'absolute', right: 70, top: 8, zIndex: 5, display: 'flex', flexDirection: 'column', gap: 4, pointerEvents: 'auto' }}>
           {vbToasts.map(t => (
             <div key={t.id} onClick={() => setVbToasts(x => x.filter(y => y.id !== t.id))} title="点击关闭"
               style={{ background: 'rgba(255,167,38,0.92)', color: '#111', fontSize: 12, padding: '4px 8px', borderRadius: 4, cursor: 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.3)' }}>

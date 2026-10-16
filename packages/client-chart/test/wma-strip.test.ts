@@ -8,6 +8,7 @@ import {
   supertrend,
   wmaAt,
 } from '../src/client/ChartCard.js'
+import { DV_DEFAULTS } from '../src/client/indicators/dual-view-htf-patterns.js'
 
 describe('supertrend', () => {
   // Independent reference: TradingView's published ta.supertrend pseudo-code, line by line.
@@ -67,6 +68,7 @@ describe('sanitizeSettings', () => {
       NW_TREND: { params: [50, 8, 2.0, 1.5], visible: false },
       OB_BB: { params: [5, 5, 20], visible: false },
       VB_PRO_READ: { params: [0, 20, 2.0, 1.5, 5, 3, 0.8, 14, 20, 1, 1, 0x1B5E40, 0xC0412F, 0x8A8A8A, 0, 0, 0, 0, 0], visible: false },
+      DUAL_VIEW_HTF: { params: [...DV_DEFAULTS], visible: false },
       MTF_SR: { params: [5], visible: false },
       OI_POSTURE: { params: [], visible: true },
       RSI_GRID: { params: [7, 30, 60, 10], visible: true },
