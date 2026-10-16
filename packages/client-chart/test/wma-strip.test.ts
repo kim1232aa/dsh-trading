@@ -66,7 +66,7 @@ describe('sanitizeSettings', () => {
       EVASIVE_ST: { params: [10, 3.0, 1.0, 0.5], visible: false },
       NW_TREND: { params: [50, 8, 2.0, 1.5], visible: false },
       OB_BB: { params: [5, 5, 20], visible: false },
-      VB_PRO_READ: { params: [0, 20, 2.0, 1.5, 5, 3, 0.8, 14, 20, 1, 1], visible: false },
+      VB_PRO_READ: { params: [0, 20, 2.0, 1.5, 5, 3, 0.8, 14, 20, 1, 1, 0x1B5E40, 0xC0412F, 0x8A8A8A, 0, 0, 0, 0, 0], visible: false },
       MTF_SR: { params: [5], visible: false },
       OI_POSTURE: { params: [], visible: true },
       RSI_GRID: { params: [7, 30, 60, 10], visible: true },

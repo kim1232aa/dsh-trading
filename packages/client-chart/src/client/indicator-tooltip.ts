@@ -12,13 +12,14 @@ export const SUBPLOT_TOOLTIP = {
 const hiddenTooltip = (): IndicatorTooltipData => ({ name: '', calcParamsText: '', values: [], icons: [] })
 
 /** klinecharts gates every pane with one global showRule. Fold only candle-pane data. */
-export function createMainPaneTooltipFold(chart: Pick<Chart, 'getIndicatorByPaneId' | 'overrideIndicator'>): (fold: boolean) => void {
+/** `exempt`: indicators whose legend stays visible while folded (state legends like 波动带Pro). */
+export function createMainPaneTooltipFold(chart: Pick<Chart, 'getIndicatorByPaneId' | 'overrideIndicator'>, exempt: ReadonlySet<string> = new Set()): (fold: boolean) => void {
   const originals = new Map<string, Indicator['createTooltipDataSource']>()
   return (fold) => {
     const indicators = chart.getIndicatorByPaneId('candle_pane')
     if (!(indicators instanceof Map)) return
     for (const [name, indicator] of indicators) {
-      if (indicator instanceof Map) continue
+      if (indicator instanceof Map || exempt.has(name)) continue
       if (!originals.has(name)) originals.set(name, indicator.createTooltipDataSource)
       chart.overrideIndicator({
         name,

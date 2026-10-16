@@ -29,7 +29,7 @@ import { regimeSeries } from '../../../tool-market/src/chart-payload.js'
 import { evasiveSuperTrend, evasiveSuperTrendIndicator } from './indicators/evasive-st.js'
 import { nadarayaWatsonTrend, nadarayaWatsonIndicator } from './indicators/nadaraya-watson.js'
 import { orderBlockBreaker, orderBlockIndicator } from './indicators/order-blocks.js'
-import { vbProReadIndicator } from './indicators/vb-pro-read.js'
+import { calculateVbProRead, enabledVbAlerts, intToHex, VB_ALERTS, VB_DEFAULTS, vbProReadIndicator } from './indicators/vb-pro-read.js'
 import { mtfSRZones, mtfSRIndicator, mtfSourceTimeframeSeconds } from './indicators/mtf-sr.js'
 import { entrySignalIndicator } from './indicators/entry-signal.js'
 import { rsiGridIndicator, rsiGridCumIndicator, rsiGridMarksIndicator } from './indicators/rsi-grid.js'
@@ -245,7 +245,10 @@ export function supertrend(
 /* page, persisted in localStorage.                                    */
 /* ------------------------------------------------------------------ */
 
-type ParamSpec = { label: string; min: number; max: number; step: number }
+/** kind: number (default) | select (options[i] ↔ value i) | bool (0/1 checkbox) | color (0xRRGGBB int). */
+type ParamSpec = { label: string; min: number; max: number; step: number; kind?: 'number' | 'select' | 'bool' | 'color'; options?: string[] }
+const boolP = (label: string): ParamSpec => ({ label, min: 0, max: 1, step: 1, kind: 'bool' })
+const colorP = (label: string): ParamSpec => ({ label, min: 0, max: 0xFFFFFF, step: 1, kind: 'color' })
 const period = (label: string): ParamSpec => ({ label, min: 1, max: 500, step: 1 })
 
 export const EDITABLE: {
@@ -262,7 +265,12 @@ export const EDITABLE: {
   { name: 'EVASIVE_ST', title: '避险超级趋势(LuxAlgo)', defaults: [10, 3.0, 1.0, 0.5], defaultVisible: false, params: [period('ATR周期'), { label: '倍数', min: 0.1, max: 20, step: 0.1 }, { label: '噪音阈值', min: 0.1, max: 10, step: 0.1 }, { label: '避险Alpha', min: 0, max: 5, step: 0.1 }] },
   { name: 'NW_TREND', title: '核回归趋势(QuantAlgo)', defaults: [50, 8, 2.0, 1.5], defaultVisible: false, params: [period('回溯周期'), { label: '带宽', min: 1, max: 50, step: 1 }, { label: '倍数(h)', min: 0.5, max: 10, step: 0.1 }, { label: '通道倍数', min: 0.5, max: 10, step: 0.1 }] },
   { name: 'OB_BB', title: '订单块/破坏块(RWB)', defaults: [5, 5, 20], defaultVisible: false, params: [period('Swing左'), period('Swing右'), period('等待K线')] },
-  { name: 'VB_PRO_READ', title: '波动带Pro-Read(Indicatr)', defaults: [0, 20, 2.0, 1.5, 5, 3, 0.8, 14, 20, 1, 1], defaultVisible: false, params: [{ label: '带类型(0布林1肯特纳2唐奇安)', min: 0, max: 2, step: 1 }, { label: '周期', min: 2, max: 500, step: 1 }, { label: '布林倍数', min: 0.1, max: 20, step: 0.1 }, { label: '肯特纳ATR倍数', min: 0.1, max: 20, step: 0.1 }, { label: '走带回看', min: 2, max: 500, step: 1 }, { label: '走带最少收盘', min: 1, max: 500, step: 1 }, { label: '外区位置', min: 0.5, max: 1, step: 0.05 }, { label: 'ADX周期', min: 2, max: 500, step: 1 }, { label: 'ADX趋势阈值', min: 1, max: 100, step: 0.5 }, { label: '显示挤压(0/1)', min: 0, max: 1, step: 1 }, { label: '标均值回归(0/1)', min: 0, max: 1, step: 1 }] },
+  { name: 'VB_PRO_READ', title: '波动带Pro-Read(Indicatr)', defaults: [...VB_DEFAULTS], defaultVisible: false, params: [
+    { label: '带类型', min: 0, max: 2, step: 1, kind: 'select', options: ['布林', '肯特纳', '唐奇安'] }, { label: '周期', min: 2, max: 500, step: 1 }, { label: '布林倍数', min: 0.1, max: 20, step: 0.1 }, { label: '肯特纳ATR倍数', min: 0.1, max: 20, step: 0.1 },
+    { label: '走带回看', min: 2, max: 500, step: 1 }, { label: '走带最少收盘', min: 1, max: 500, step: 1 }, { label: '外区位置', min: 0.5, max: 1, step: 0.05 }, { label: 'ADX周期', min: 2, max: 500, step: 1 }, { label: 'ADX趋势阈值', min: 1, max: 100, step: 0.5 },
+    boolP('显示挤压'), boolP('标均值回归'), colorP('走带上/多'), colorP('走带下/空'), colorP('中性'),
+    ...VB_ALERTS.map(a => boolP(`提醒:${a.cn}`)),
+  ] },
   { name: 'MTF_SR', title: '多周期支撑阻力(Syndicate)', defaults: [5], defaultVisible: false, params: [period('Pivot周期')] },
   { name: 'RSI_GRID', title: 'RSI网格（多空）', pane: 'pane_rsi_grid', defaults: [7, 30, 60, 10], params: [period('RSI周期'), period('多入阈值'), period('多平阈值'), period('累计阈值')] },
   { name: 'REVPOINT', title: '反转点标注 RevPoint', defaults: [0.7, 2.0, 3, 0, 0, 1, 0, 1, 0], params: [{ label: '细档确认阈值%', min: 0.1, max: 10, step: 0.1 }, { label: '粗档(大周期)阈值%', min: 0.5, max: 20, step: 0.1 }, { label: '多周期pivot左右bar数', min: 1, max: 10, step: 1 }, { label: '15m(0/1)', min: 0, max: 1, step: 1 }, { label: '30m(0/1)', min: 0, max: 1, step: 1 }, { label: '1H(0/1)', min: 0, max: 1, step: 1 }, { label: '2H(0/1)', min: 0, max: 1, step: 1 }, { label: '4H(0/1)', min: 0, max: 1, step: 1 }, { label: '细档最少★数', min: 0, max: 4, step: 1 }] },
@@ -450,6 +458,16 @@ const GEAR = {
 }
 
 /** 折叠十字线浮窗里的指标行，只留 时间/开高低收，点一下在“收起/展开”之间切换。 */
+/** Enabled VB alerts on the latest closed bar (second to last; last is forming). */
+export function vbAlertEvents(candles: readonly { time: string; high: number; low: number; close: number }[], params: readonly number[]): { id: string; text: string }[] {
+  if (candles.length < 2) return []
+  const rows = calculateVbProRead(candles, params)
+  const i = candles.length - 2
+  return enabledVbAlerts(rows[i], params).map(a => ({ id: `${candles[i]!.time}|${a.key}`, text: `${a.cn} · ${a.msg} (${candles[i]!.time})` }))
+}
+
+export const FOLD_EXEMPT: ReadonlySet<string> = new Set(["VB_PRO_READ"])
+
 const FOLD = {
   id: 'fold', position: 'right', icon: '▤', size: 12, fontFamily: 'Segoe UI Symbol, Apple Symbols, sans-serif',
   color: '#8b949e', activeColor: '#c9d1d9', backgroundColor: 'transparent', activeBackgroundColor: 'rgba(139,148,158,0.2)',
@@ -1252,7 +1270,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     const chart = init(container, { locale: 'zh-CN' })
     if (chart === null) return
     chartRef.current = chart
-    const applyFold = createMainPaneTooltipFold(chart)
+    const applyFold = createMainPaneTooltipFold(chart, FOLD_EXEMPT)
     const data = latest.current
     chart.setStyles(klineStyles(palette, axisSettings.coordType))
     const applyOhlcPark = () => chart.setStyles(ohlcTooltipAvoidTable(settingsRef.current['REVPOINT']?.visible ?? false, chart.getSize('candle_pane', 'main' as never)?.width ?? 0))
@@ -1521,6 +1539,22 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     }
   }, [data, active, seriesKey, dark])
 
+  // VB Pro-Read alertconditions: evaluated on the latest CLOSED bar on each
+  // data update; fire once per (bar, alert). First evaluation only seeds.
+  const vbSeen = useRef<Set<string> | null>(null)
+  const [vbToasts, setVbToasts] = useState<{ id: string; text: string }[]>([])
+  useEffect(() => {
+    const s = settings['VB_PRO_READ']
+    if (s === undefined || !s.visible) { vbSeen.current = null; return }
+    const fired = vbAlertEvents(data.candles, s.params)
+    if (vbSeen.current === null) { vbSeen.current = new Set(fired.map(f => f.id)); return }
+    const fresh = fired.filter(f => !vbSeen.current!.has(f.id))
+    if (fresh.length === 0) return
+    for (const f of fresh) vbSeen.current.add(f.id)
+    setVbToasts(t => [...t, ...fresh].slice(-4))
+    for (const f of fresh) setTimeout(() => setVbToasts(t => t.filter(x => x.id !== f.id)), 15000)
+  }, [data, settings])
+
   useEffect(() => {
     const chart = chartRef.current
     if (chart === null) return
@@ -1669,6 +1703,16 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   return (
     <div style={{ position: 'relative', width: '100%', ...(fill ? { flex: '1 1 auto', minHeight: 240 } : { height: baseHeight + paneCount * PANE_HEIGHT }) }}>
       <div ref={el} style={{ width: '100%', height: '100%' }} />
+      {vbToasts.length > 0 && (
+        <div role="status" aria-label="波动带提醒" style={{ position: 'absolute', right: 70, top: 8, zIndex: 5, display: 'flex', flexDirection: 'column', gap: 4, pointerEvents: 'auto' }}>
+          {vbToasts.map(t => (
+            <div key={t.id} onClick={() => setVbToasts(x => x.filter(y => y.id !== t.id))} title="点击关闭"
+              style={{ background: 'rgba(255,167,38,0.92)', color: '#111', fontSize: 12, padding: '4px 8px', borderRadius: 4, cursor: 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.3)' }}>
+              🔔 {t.text}
+            </div>
+          ))}
+        </div>
+      )}
       {!axisSettings.autoScale.candle && (
         <button
           type="button"
@@ -2015,12 +2059,34 @@ function ParamEditor({ settings, palette, onClose }: {
               />
               {def.title}
             </label>
-            {def.params.map((spec, i) => (
-              <label key={`${def.name}-${i}-${s.params[i]}`} style={{ display: 'flex', alignItems: 'center', gap: 4, color: palette.faint }}>
+            {def.params.map((spec, i) => {
+              const val = s.params[i]!
+              const set = (v: number): void => {
+                const params = [...s.params]; params[i] = v
+                setSettings(sanitizeSettings({ ...settings, [def.name]: { ...s, params } }))
+              }
+              const lab = { display: 'flex', alignItems: 'center', gap: 4, color: palette.faint } as const
+              if (spec.kind === 'select') return (
+                <label key={`${def.name}-${i}`} style={lab}>{spec.label}
+                  <select value={val} onChange={e => set(Number(e.target.value))} style={{ ...input, width: 'auto' }}>
+                    {(spec.options ?? []).map((o, k) => <option key={k} value={k}>{o}</option>)}
+                  </select>
+                </label>)
+              if (spec.kind === 'bool') return (
+                <label key={`${def.name}-${i}`} style={lab}>
+                  <input type="checkbox" checked={val === 1} onChange={e => set(e.target.checked ? 1 : 0)} />{spec.label}
+                </label>)
+              if (spec.kind === 'color') return (
+                <label key={`${def.name}-${i}`} style={lab}>{spec.label}
+                  <input type="color" value={intToHex(val).toLowerCase()} onChange={e => set(parseInt(e.target.value.slice(1), 16))}
+                    style={{ width: 28, height: 18, padding: 0, border: `1px solid ${palette.line}`, background: 'transparent' }} />
+                </label>)
+              return (
+              <label key={`${def.name}-${i}-${val}`} style={lab}>
                 {spec.label}
                 <input
                   type="number"
-                  defaultValue={s.params[i]}
+                  defaultValue={val}
                   min={spec.min}
                   max={spec.max}
                   step={spec.step}
@@ -2028,8 +2094,8 @@ function ParamEditor({ settings, palette, onClose }: {
                   onBlur={e => commit(def.name, i, e.target.value, e.target)}
                   onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
                 />
-              </label>
-            ))}
+              </label>)
+            })}
           </div>
         )
       })}

@@ -1,7 +1,8 @@
 /**
  * Volatility Bands Pro-Read [Indicatr] — TypeScript port of the Pine v6 source
  * (pine/vb-pro-read.pine). Bar-by-bar, no look-ahead: every value at bar i uses
- * bars <= i only. Alerts (alertcondition) are not ported; the tooltip shows state.
+ * bars <= i only. The 5 alertconditions are computed per bar (VbRow.alerts) and
+ * fired in-chart by ChartCard when the user enables them (default off).
  */
 import { formatPrice } from '../precision.js'
 
@@ -19,12 +20,31 @@ export interface VbParams {
   adxThr: number
   showSqz: boolean
   showMR: boolean
+  colUp: string
+  colDn: string
+  colN: string
+  /** alert toggles, order = VB_ALERTS */
+  alertOn: boolean[]
 }
 
-export const VB_DEFAULTS = [0, 20, 2.0, 1.5, 5, 3, 0.8, 14, 20, 1, 1]
-export const VB_COLORS = {
-  up: '#1B5E40', upBright: '#2E9E6A', dn: '#C0412F', neutral: '#8A8A8A',
-}
+/** Pine input.color defaults, stored in calcParams as 0xRRGGBB integers. */
+export const VB_COLORS = { up: '#1B5E40', dn: '#C0412F', neutral: '#8A8A8A' }
+export const hexToInt = (hex: string): number => parseInt(hex.replace('#', ''), 16)
+export const intToHex = (n: number): string => '#' + Math.max(0, Math.min(0xFFFFFF, Math.round(n))).toString(16).padStart(6, '0').toUpperCase()
+/** Pine alertcondition titles/messages, in param order 14..18. */
+export const VB_ALERTS = [
+  { key: 'walkUpStart', title: 'Band walk up started', cn: '走带上开始', msg: 'Volatility Bands: band walk up (trend) started' },
+  { key: 'walkDnStart', title: 'Band walk down started', cn: '走带下开始', msg: 'Volatility Bands: band walk down (trend) started' },
+  { key: 'fireUp', title: 'Squeeze fired up', cn: '挤压向上释放', msg: 'Volatility Bands: squeeze released above basis' },
+  { key: 'fireDn', title: 'Squeeze fired down', cn: '挤压向下释放', msg: 'Volatility Bands: squeeze released below basis' },
+  { key: 'mr', title: 'Mean-reversion candidate', cn: '均值回归候选', msg: 'Volatility Bands: close back inside band, no trend' },
+] as const
+export type VbAlertKey = typeof VB_ALERTS[number]['key']
+/** Number of calc-relevant params shown in the legend (colors/alert toggles hidden). */
+export const VB_CALC_PARAMS = 11
+export const VB_DEFAULTS = [0, 20, 2.0, 1.5, 5, 3, 0.8, 14, 20, 1, 1,
+  hexToInt(VB_COLORS.up), hexToInt(VB_COLORS.dn), hexToInt(VB_COLORS.neutral),
+  0, 0, 0, 0, 0]
 
 export interface VbRow {
   upper?: number | undefined
@@ -42,6 +62,8 @@ export interface VbRow {
   mrLong: boolean
   /** plotshape gating (showSqz applied) */
   showSqz: boolean
+  /** alertconditions true on this bar (regardless of user toggles) */
+  alerts: VbAlertKey[]
 }
 
 const intIn = (v: unknown, d: number, lo: number, hi: number) =>
@@ -63,6 +85,10 @@ export function sanitizeVbParams(p: readonly unknown[] = []): VbParams {
     adxThr: numIn(p[8], D[8]!, 1, 100),
     showSqz: intIn(p[9], 1, 0, 1) === 1,
     showMR: intIn(p[10], 1, 0, 1) === 1,
+    colUp: intToHex(intIn(p[11], D[11]!, 0, 0xFFFFFF)),
+    colDn: intToHex(intIn(p[12], D[12]!, 0, 0xFFFFFF)),
+    colN: intToHex(intIn(p[13], D[13]!, 0, 0xFFFFFF)),
+    alertOn: VB_ALERTS.map((_, k) => intIn(p[14 + k], 0, 0, 1) === 1),
   }
 }
 
@@ -190,10 +216,16 @@ export function calculateVbProRead(candles: readonly VbCandle[], params: readonl
     const fired = (prev?.sqz ?? false) && !sqz
     const fireUp = fired && basis !== undefined && c > basis
     const fireDn = fired && basis !== undefined && c < basis
+    const alerts: VbAlertKey[] = []
+    if (walkUp && !(prev?.walkUp ?? false)) alerts.push('walkUpStart')
+    if (walkDn && !(prev?.walkDn ?? false)) alerts.push('walkDnStart')
+    if (fireUp) alerts.push('fireUp')
+    if (fireDn) alerts.push('fireDn')
+    if (mrLong || mrShort) alerts.push('mr')
     rows.push({
       upper, lower, basis, pos, adx: a,
       state: walkUp ? 1 : walkDn ? -1 : 0,
-      walkUp, walkDn, sqz, fireUp, fireDn, mrShort, mrLong, showSqz: p.showSqz,
+      walkUp, walkDn, sqz, fireUp, fireDn, mrShort, mrLong, showSqz: p.showSqz, alerts,
     })
   }
   return rows
@@ -208,9 +240,17 @@ const rgba = (hex: string, alpha: number) => {
   const h = hex.replace('#', '')
   return `rgba(${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)}, ${alpha})`
 }
-const stateColor = (s: number) => s === 1 ? VB_COLORS.upBright : s === -1 ? VB_COLORS.dn : VB_COLORS.neutral
+type Pal = { colUp: string; colDn: string; colN: string }
+const stateColor = (c: Pal, s: number) => s === 1 ? c.colUp : s === -1 ? c.colDn : c.colN
 // Pine transparency 88/94 → alpha 0.12/0.06
-const fillColor = (s: number) => s === 1 ? rgba(VB_COLORS.upBright, 0.12) : s === -1 ? rgba(VB_COLORS.dn, 0.12) : rgba(VB_COLORS.neutral, 0.06)
+const fillColor = (c: Pal, s: number) => s === 1 ? rgba(c.colUp, 0.12) : s === -1 ? rgba(c.colDn, 0.12) : rgba(c.colN, 0.06)
+
+/** Alerts the user enabled that fire on `row`. */
+export function enabledVbAlerts(row: VbRow | undefined, params: readonly unknown[]): typeof VB_ALERTS[number][] {
+  if (row === undefined) return []
+  const on = sanitizeVbParams(params).alertOn
+  return VB_ALERTS.filter((a, k) => on[k] && row.alerts.includes(a.key))
+}
 
 /** Consecutive same-state runs with defined bands (for batched fills/lines). */
 export function vbRuns(rows: readonly VbRow[], from: number, to: number): { state: number; start: number; end: number }[] {
@@ -239,24 +279,29 @@ export const vbProReadIndicator = {
     crosshair: { dataIndex?: number }
   }) => {
     const r = indicator.result[crosshair.dataIndex ?? indicator.result.length - 1]
-    const name = ['布林', '肯特纳', '唐奇安'][sanitizeVbParams(indicator.calcParams).bandType]
-    const v = (title: string, x: number | undefined, color: string) => ({ title, value: { text: x === undefined ? '--' : formatPrice(x), color } })
-    const values = r === undefined || r.upper === undefined ? [] : [
-      v('上轨: ', r.upper, stateColor(r.state)),
-      v('中轨: ', r.basis, VB_COLORS.neutral),
-      v('下轨: ', r.lower, stateColor(r.state)),
-      { title: '', value: { text: r.state === 1 ? '走带上' : r.state === -1 ? '走带下' : '中性', color: stateColor(r.state) } },
-      ...(r.sqz ? [{ title: '', value: { text: '挤压中', color: '#ffa726' } }] : []),
-      ...(r.fireUp ? [{ title: '', value: { text: '▲挤压释放', color: VB_COLORS.upBright } }] : []),
-      ...(r.fireDn ? [{ title: '', value: { text: '▼挤压释放', color: VB_COLORS.dn } }] : []),
-      ...(r.mrLong ? [{ title: '', value: { text: '×均值回归多', color: VB_COLORS.upBright } }] : []),
-      ...(r.mrShort ? [{ title: '', value: { text: '×均值回归空', color: VB_COLORS.dn } }] : []),
+    const P = sanitizeVbParams(indicator.calcParams)
+    const name = ['布林', '肯特纳', '唐奇安'][P.bandType]
+    const sc = (st: number) => stateColor(P, st)
+    const v = (title: string, x: number | undefined, color: string) => ({ title: { text: title, color }, value: { text: x === undefined ? '--' : formatPrice(x), color } })
+    const tag = (text: string, color: string) => ({ title: { text: '', color }, value: { text, color } })
+    const values = r === undefined || r.upper === undefined ? [tag('数据不足', P.colN)] : [
+      v('上轨: ', r.upper, sc(r.state)),
+      v('中轨: ', r.basis, P.colN),
+      v('下轨: ', r.lower, sc(r.state)),
+      tag(r.state === 1 ? '走带上' : r.state === -1 ? '走带下' : '中性', sc(r.state)),
+      ...(r.adx !== undefined ? [{ title: { text: 'ADX: ', color: P.colN }, value: { text: r.adx.toFixed(1), color: P.colN } }] : []),
+      ...(r.sqz ? [tag('挤压中', '#ffa726')] : []),
+      ...(r.fireUp ? [tag('▲挤压释放', P.colUp)] : []),
+      ...(r.fireDn ? [tag('▼挤压释放', P.colDn)] : []),
+      ...(r.mrLong ? [tag('×均值回归多', P.colUp)] : []),
+      ...(r.mrShort ? [tag('×均值回归空', P.colDn)] : []),
+      ...VB_ALERTS.filter((a, k) => P.alertOn[k] && r.alerts.includes(a.key)).map(a => tag(`🔔${a.cn}`, '#ffa726')),
     ]
-    return { name: `波动带Pro·${name}`, calcParamsText: `(${indicator.calcParams.join(', ')})`, values, icons: [] }
+    return { name: `波动带Pro·${name}`, calcParamsText: `(${indicator.calcParams.slice(0, VB_CALC_PARAMS).join(', ')})`, values }
   },
   draw: ({ ctx, indicator, xAxis, yAxis, visibleRange, bounding, kLineDataList }: {
     ctx: CanvasRenderingContext2D
-    indicator: { result: VbRow[] }
+    indicator: { result: VbRow[]; calcParams: number[] }
     xAxis: { convertToPixel: (v: number) => number }
     yAxis: { convertToPixel: (v: number) => number }
     visibleRange: { from: number; to: number }
@@ -268,6 +313,7 @@ export const vbProReadIndicator = {
     const from = Math.max(0, visibleRange.from - 1)
     const to = Math.min(rows.length - 1, visibleRange.to)
     if (from > to) return false
+    const P = sanitizeVbParams(indicator.calcParams)
     const X = (i: number) => xAxis.convertToPixel(i), Y = (v: number) => yAxis.convertToPixel(v)
     ctx.save()
     // Fill + band lines: one path per same-state run; each run extends back one
@@ -279,9 +325,9 @@ export const vbProReadIndicator = {
       for (let i = s; i <= run.end; i++) i === s ? ctx.moveTo(X(i), Y(rows[i]!.upper!)) : ctx.lineTo(X(i), Y(rows[i]!.upper!))
       for (let i = run.end; i >= s; i--) ctx.lineTo(X(i), Y(rows[i]!.lower!))
       ctx.closePath()
-      ctx.fillStyle = fillColor(run.state)
+      ctx.fillStyle = fillColor(P, run.state)
       ctx.fill()
-      ctx.strokeStyle = stateColor(run.state)
+      ctx.strokeStyle = stateColor(P, run.state)
       ctx.lineWidth = 1.2
       for (const k of ['upper', 'lower'] as const) {
         ctx.beginPath()
@@ -297,7 +343,7 @@ export const vbProReadIndicator = {
       if (b === undefined) { pen = false; continue }
       pen ? ctx.lineTo(X(i), Y(b)) : ctx.moveTo(X(i), Y(b)); pen = true
     }
-    ctx.strokeStyle = rgba(VB_COLORS.neutral, 0.6)
+    ctx.strokeStyle = rgba(P.colN, 0.6)
     ctx.lineWidth = 1
     ctx.stroke()
     // Shapes
@@ -305,24 +351,24 @@ export const vbProReadIndicator = {
       const r = rows[i]!, k = kLineDataList[i], x = X(i)
       if (r.showSqz && r.sqz) {
         ctx.beginPath(); ctx.arc(x, bounding.height - 6, 2.2, 0, Math.PI * 2)
-        ctx.fillStyle = VB_COLORS.neutral; ctx.fill()
+        ctx.fillStyle = P.colN; ctx.fill()
       }
       const yl = k?.low !== undefined ? Y(k.low) : undefined
       const yh = k?.high !== undefined ? Y(k.high) : undefined
       if (r.showSqz && r.fireUp && yl !== undefined) {
         ctx.beginPath(); ctx.moveTo(x, yl + 6); ctx.lineTo(x - 5, yl + 14); ctx.lineTo(x + 5, yl + 14); ctx.closePath()
-        ctx.fillStyle = VB_COLORS.upBright; ctx.fill()
+        ctx.fillStyle = P.colUp; ctx.fill()
       }
       if (r.showSqz && r.fireDn && yh !== undefined) {
         ctx.beginPath(); ctx.moveTo(x, yh - 6); ctx.lineTo(x - 5, yh - 14); ctx.lineTo(x + 5, yh - 14); ctx.closePath()
-        ctx.fillStyle = VB_COLORS.dn; ctx.fill()
+        ctx.fillStyle = P.colDn; ctx.fill()
       }
       const cross = (cy: number, color: string) => {
         ctx.beginPath(); ctx.moveTo(x - 3, cy - 3); ctx.lineTo(x + 3, cy + 3); ctx.moveTo(x + 3, cy - 3); ctx.lineTo(x - 3, cy + 3)
         ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.stroke()
       }
-      if (r.mrShort && yh !== undefined) cross(yh - (r.fireDn ? 20 : 8), rgba(VB_COLORS.dn, 0.8))
-      if (r.mrLong && yl !== undefined) cross(yl + (r.fireUp ? 20 : 8), rgba(VB_COLORS.upBright, 0.8))
+      if (r.mrShort && yh !== undefined) cross(yh - (r.fireDn ? 20 : 8), rgba(P.colDn, 0.8))
+      if (r.mrLong && yl !== undefined) cross(yl + (r.fireUp ? 20 : 8), rgba(P.colUp, 0.8))
     }
     ctx.restore()
     return false

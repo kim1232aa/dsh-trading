@@ -123,9 +123,91 @@ describe('VB params', () => {
     expect(def.title).toBe('波动带Pro-Read(Indicatr)')
     expect(def.defaultVisible).toBe(false)
     expect(def.pane).toBeUndefined()
-    expect(def.params).toHaveLength(11)
+    expect(def.params).toHaveLength(19)
     expect(def.defaults).toEqual(vbProReadIndicator.calcParams)
     const s = sanitizeSettings({ VB_PRO_READ: { params: [1, 30, 2, 1.5, 5, 3, 0.4, 14, 22.5, 0, 1], visible: true } })
-    expect(s['VB_PRO_READ']).toEqual({ params: [1, 30, 2, 1.5, 5, 3, 0.8, 14, 22.5, 0, 1], visible: true })
+    expect(s['VB_PRO_READ']).toEqual({ params: [1, 30, 2, 1.5, 5, 3, 0.8, 14, 22.5, 0, 1, 0x1B5E40, 0xC0412F, 0x8A8A8A, 0, 0, 0, 0, 0], visible: true })
   })
 })
+
+describe('VB Pro-Read parity additions', () => {
+  const trend = (n: number, step: number): VbCandle[] => Array.from({ length: n }, (_, i) => {
+    const c = 100 + i * step + (i % 3 === 0 ? 0.3 : -0.2)
+    return { high: c + 0.5, low: c - 0.5, close: c }
+  })
+  it('defaults: Pine colors, alerts off, 19 params', async () => {
+    const { VB_DEFAULTS, intToHex } = await import('../src/client/indicators/vb-pro-read.js')
+    expect(VB_DEFAULTS).toHaveLength(19)
+    expect(VB_DEFAULTS.slice(11, 14).map(intToHex)).toEqual(['#1B5E40', '#C0412F', '#8A8A8A'])
+    expect(VB_DEFAULTS.slice(14)).toEqual([0, 0, 0, 0, 0])
+    const p = sanitizeVbParams([])
+    expect(p.colUp).toBe('#1B5E40'); expect(p.alertOn).toEqual([false, false, false, false, false])
+    expect(sanitizeVbParams([0, 20, 2, 1.5, 5, 3, 0.8, 14, 20, 1, 1, 0xFF0000, -5, 'x']).colUp).toBe('#FF0000')
+    expect(sanitizeVbParams([0, 20, 2, 1.5, 5, 3, 0.8, 14, 20, 1, 1, 0xFF0000, -5]).colDn).toBe('#C0412F')
+  })
+  it('old 11-param storage upgrades; colors/alerts sanitized', () => {
+    const s = sanitizeSettings({ VB_PRO_READ: { visible: true, params: [2, 30, 2, 1.5, 5, 3, 0.8, 14, 20, 0, 1] } })
+    expect(s['VB_PRO_READ']!.params).toHaveLength(19)
+    expect(s['VB_PRO_READ']!.params[0]).toBe(2)
+    expect(s['VB_PRO_READ']!.params[11]).toBe(0x1B5E40)
+    const bad = sanitizeSettings({ VB_PRO_READ: { visible: true, params: [5, 30, 2, 1.5, 5, 3, 0.8, 14, 20, 0, 1, 0x1000000, 1.5, 3, 2] } })
+    expect(bad['VB_PRO_READ']!.params[0]).toBe(0)
+    expect(bad['VB_PRO_READ']!.params[11]).toBe(0x1B5E40)
+    expect(bad['VB_PRO_READ']!.params[14]).toBe(0)
+    const def = EDITABLE.find(d => d.name === 'VB_PRO_READ')! as { params: { kind?: string; options?: string[] }[] }
+    expect(def.params[0]!.kind).toBe('select'); expect(def.params[0]!.options).toEqual(['布林', '肯特纳', '唐奇安'])
+    expect(def.params.slice(9, 11).every(p => p.kind === 'bool')).toBe(true)
+    expect(def.params.slice(11, 14).every(p => p.kind === 'color')).toBe(true)
+    expect(def.params.slice(14).every(p => p.kind === 'bool')).toBe(true)
+  })
+  it('alertconditions match Pine definitions bar by bar', () => {
+    const c = [...trend(40, 0), ...trend(40, 1.5).map(b => ({ ...b, high: b.high + 40, low: b.low + 40, close: b.close + 40 }))]
+    const rows = calculateVbProRead(c, [0, 20, 2, 1.5, 5, 3, 0.8, 14, 20, 1, 1])
+    rows.forEach((r, i) => {
+      const prev = rows[i - 1]
+      expect(r.alerts.includes('walkUpStart')).toBe(r.walkUp && !(prev?.walkUp ?? false))
+      expect(r.alerts.includes('walkDnStart')).toBe(r.walkDn && !(prev?.walkDn ?? false))
+      expect(r.alerts.includes('fireUp')).toBe(r.fireUp)
+      expect(r.alerts.includes('fireDn')).toBe(r.fireDn)
+      expect(r.alerts.includes('mr')).toBe(r.mrLong || r.mrShort)
+    })
+    expect(rows.some(r => r.alerts.includes('walkUpStart'))).toBe(true)
+  })
+  it('enabled alerts gated by toggles (default off)', async () => {
+    const { enabledVbAlerts } = await import('../src/client/indicators/vb-pro-read.js')
+    const row = { alerts: ['fireUp', 'mr'] } as never
+    expect(enabledVbAlerts(row, [])).toEqual([])
+    const on = [0, 20, 2, 1.5, 5, 3, 0.8, 14, 20, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1]
+    expect(enabledVbAlerts(row, on).map(a => a.key)).toEqual(['fireUp', 'mr'])
+  })
+  it('vbAlertEvents uses the latest closed bar and stable ids', async () => {
+    const { vbAlertEvents } = await import('../src/client/ChartCard.js')
+    const c = [...trend(40, 0), ...trend(40, 1.5).map(b => ({ ...b, high: b.high + 40, low: b.low + 40, close: b.close + 40 }))]
+      .map((b, i) => ({ ...b, time: new Date(Date.UTC(2026, 0, 1) + i * 60000).toISOString() }))
+    const rows = calculateVbProRead(c, [])
+    const k = rows.findIndex(r => r.alerts.includes('walkUpStart'))
+    const ev = vbAlertEvents(c.slice(0, k + 2), [0, 20, 2, 1.5, 5, 3, 0.8, 14, 20, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0])
+    expect(ev.map(e => e.id)).toEqual([`${c[k]!.time}|walkUpStart`])
+    expect(vbAlertEvents(c.slice(0, k + 1), [0, 20, 2, 1.5, 5, 3, 0.8, 14, 20, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0]).some(e => e.id.startsWith(c[k]!.time))).toBe(false)
+  })
+  it('tooltip: 上/中/下轨 + state with object titles; legend params exclude colors', () => {
+    const rows = calculateVbProRead(trend(60, 1), [])
+    const tt = vbProReadIndicator.createTooltipDataSource({ indicator: { calcParams: [...(VB_DEF())], result: rows }, crosshair: { dataIndex: 59 } })
+    const texts = tt.values.map(v => v.title.text + v.value.text)
+    expect(texts[0]).toMatch(/^上轨: /); expect(texts[1]).toMatch(/^中轨: /); expect(texts[2]).toMatch(/^下轨: /)
+    expect(['走带上', '走带下', '中性']).toContain(texts[3])
+    expect(tt.calcParamsText).toBe('(0, 20, 2, 1.5, 5, 3, 0.8, 14, 20, 1, 1)')
+  })
+  it('fold keeps VB legend (exempt)', async () => {
+    const { FOLD_EXEMPT } = await import('../src/client/ChartCard.js')
+    const { createMainPaneTooltipFold } = await import('../src/client/indicator-tooltip.js')
+    expect(FOLD_EXEMPT.has('VB_PRO_READ')).toBe(true)
+    const calls: string[] = []
+    const orig = () => ({}) as never
+    const chart = { getIndicatorByPaneId: () => new Map([['VB_PRO_READ', { createTooltipDataSource: orig }], ['WMA', { createTooltipDataSource: orig }]]), overrideIndicator: (o: { name: string }) => { calls.push(o.name); return true } }
+    createMainPaneTooltipFold(chart as never, FOLD_EXEMPT)(true)
+    expect(calls).toEqual(['WMA'])
+  })
+})
+import { VB_DEFAULTS as VBD } from '../src/client/indicators/vb-pro-read.js'
+function VB_DEF() { return VBD }
