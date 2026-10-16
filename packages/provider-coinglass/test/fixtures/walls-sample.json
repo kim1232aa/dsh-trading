@@ -1,0 +1,173 @@
+[
+  {
+    "instrument": {
+      "exName": "Binance",
+      "baseAsset": "BTC",
+      "contractType": "PERPETUAL"
+    },
+    "list": [
+      {
+        "count": 0,
+        "currentAmount": 255.532,
+        "currentTime": 1792083231864,
+        "currentUsd": 1987272.36,
+        "id": 10241506027,
+        "name": "6:BTC:USDT:1",
+        "price": 7777.0,
+        "side": 2,
+        "startAmount": 261.351,
+        "startTime": 1791964576000,
+        "startUsd": 2032526.73,
+        "state": 1,
+        "vol": 0.0,
+        "volUsd": 0.0
+      },
+      {
+        "count": 0,
+        "currentAmount": 32.46,
+        "currentTime": 1792079535387,
+        "currentUsd": 1460700.0,
+        "id": 10243577468,
+        "name": "6:BTC:USDT:1",
+        "price": 45000.0,
+        "side": 2,
+        "startAmount": 37.944,
+        "startTime": 1791969273000,
+        "startUsd": 1707480.0,
+        "state": 1,
+        "vol": 0.0,
+        "volUsd": 0.0
+      },
+      {
+        "count": 0,
+        "currentAmount": 58.567,
+        "currentTime": 1792090053528,
+        "currentUsd": 2928350.0,
+        "id": 10243396741,
+        "name": "6:BTC:USDT:1",
+        "price": 50000.0,
+        "side": 2,
+        "startAmount": 63.5,
+        "startTime": 1791968888000,
+        "startUsd": 3175000.0,
+        "state": 1,
+        "vol": 0.0,
+        "volUsd": 0.0
+      }
+    ]
+  },
+  {
+    "instrument": {
+      "exName": "OKX",
+      "baseAsset": "BTC",
+      "contractType": null
+    },
+    "list": [
+      {
+        "count": 0,
+        "currentAmount": 13.46167472,
+        "currentTime": 1792094571684,
+        "currentUsd": 1106365.24,
+        "id": 10310076291,
+        "name": "138:BTC:USDT",
+        "price": 82186.3,
+        "side": 2,
+        "startAmount": 13.46167472,
+        "startTime": 1792094572000,
+        "startUsd": 1106365.24,
+        "state": 1,
+        "vol": 0.0,
+        "volUsd": 0.0
+      },
+      {
+        "count": 0,
+        "currentAmount": 37.9808969,
+        "currentTime": 1792094060874,
+        "currentUsd": 3152414.44,
+        "id": 10301397879,
+        "name": "138:BTC:USDT",
+        "price": 83000.0,
+        "side": 1,
+        "startAmount": 12.33585733,
+        "startTime": 1792078694000,
+        "startUsd": 1023876.16,
+        "state": 1,
+        "vol": 0.0,
+        "volUsd": 0.0
+      },
+      {
+        "count": 0,
+        "currentAmount": 30.06038683,
+        "currentTime": 1792091375497,
+        "currentUsd": 2502527.2,
+        "id": 10308071067,
+        "name": "138:BTC:USDT",
+        "price": 83250.0,
+        "side": 1,
+        "startAmount": 30.06025093,
+        "startTime": 1792090820000,
+        "startUsd": 2502515.89,
+        "state": 1,
+        "vol": 0.0,
+        "volUsd": 0.0
+      }
+    ]
+  },
+  {
+    "instrument": {
+      "exName": "OKX",
+      "baseAsset": "BTC",
+      "contractType": ""
+    },
+    "list": [
+      {
+        "count": 0,
+        "currentAmount": 30.0,
+        "currentTime": 1792092638520,
+        "currentUsd": 2452680.0,
+        "id": 10309019549,
+        "name": "138:BTC:USDT:1",
+        "price": 81756.0,
+        "side": 2,
+        "startAmount": 30.0,
+        "startTime": 1792092639000,
+        "startUsd": 2452680.0,
+        "state": 1,
+        "vol": 0.0,
+        "volUsd": 0.0
+      },
+      {
+        "count": 0,
+        "currentAmount": 45.4357,
+        "currentTime": 1792094578783,
+        "currentUsd": 3716458.52,
+        "id": 10310076936,
+        "name": "138:BTC:USDT:1",
+        "price": 81796.0,
+        "side": 2,
+        "startAmount": 45.4357,
+        "startTime": 1792094579000,
+        "startUsd": 3716458.52,
+        "state": 1,
+        "vol": 0.0,
+        "volUsd": 0.0
+      },
+      {
+        "count": 0,
+        "currentAmount": 36.6046,
+        "currentTime": 1792094578783,
+        "currentUsd": 3000113.02,
+        "id": 10310076934,
+        "name": "138:BTC:USDT:1",
+        "price": 81960.0,
+        "side": 2,
+        "startAmount": 36.6046,
+        "startTime": 1792094579000,
+        "startUsd": 3000113.02,
+        "state": 1,
+        "vol": 0.0,
+        "volUsd": 0.0
+      }
+    ]
+  }
+]

@@ -28,6 +28,7 @@ const LAYERS = {
   '@dsh-trading/provider-cn': 1,
   '@dsh-trading/provider-csv': 1,
   '@dsh-trading/provider-futu': 1,
+  '@dsh-trading/provider-coinglass': 1,
   '@dsh-trading/risk-guard': 1,
   '@dsh-trading/holdings': 1,
   '@dsh-trading/watchlist': 1,

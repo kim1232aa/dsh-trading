@@ -72,6 +72,7 @@ describe('sanitizeSettings', () => {
       REVPOINT: { params: [0.7, 2, 3, 0, 0, 1, 0, 1, 0], visible: true },
       LSR_RATIO: { params: [], visible: true },
       ENTRY_SIGNAL: { params: [60, 4], visible: false },
+      LARGE_WALLS: { params: [], visible: false },
     })
     expect(sanitizeSettings('x')).toEqual(sanitizeSettings(null))
   })

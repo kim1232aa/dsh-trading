@@ -38,7 +38,8 @@
     "react": "^18.2.0",
     "@dsh-trading/client-frame": "^0.2.0",
     "@dsh-trading/market-data": "workspace:^",
-    "@deepseek-ai/dsh-tools": "0.2.0-rc.2"
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "@dsh-trading/provider-coinglass": "workspace:^"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
@@ -55,7 +56,8 @@
     "@types/react": "^18.3.0",
     "esbuild": "^0.24.0",
     "react": "^18.3.1",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "@dsh-trading/provider-coinglass": "workspace:^"
   },
   "repository": {
     "type": "git",

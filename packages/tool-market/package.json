@@ -24,7 +24,8 @@
     "@deepseek-ai/cordis": "^4.0.4",
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
     "@deepseek-ai/schemastery": "^3.18.1",
-    "@dsh-trading/market-data": "workspace:^"
+    "@dsh-trading/market-data": "workspace:^",
+    "@dsh-trading/provider-coinglass": "workspace:^"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
@@ -32,7 +33,8 @@
     "@deepseek-ai/schemastery": "^3.18.1",
     "@dsh-trading/market-data": "workspace:^",
     "@types/node": "^22.10.0",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "@dsh-trading/provider-coinglass": "workspace:^"
   },
   "repository": {
     "type": "git",

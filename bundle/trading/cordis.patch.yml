@@ -68,10 +68,11 @@
         tasksFilePath: ./data/tasks.json
         logsFilePath: ./data/task-logs.json
 
-# Not inserted here on purpose: provider-cn and provider-binance call live
-# public endpoints, and like provider-futu they are opt-in. ctx.marketData
-# holds several providers, so add them BESIDE market-data-provider from your
-# own profile patch — see README "Design" for the rows.
+# Not inserted here on purpose: provider-cn, provider-binance, and
+# provider-coinglass call live public endpoints, and like provider-futu they
+# are opt-in. ctx.marketData holds several providers, so add them BESIDE
+# market-data-provider from your own profile patch — see README "Design".
+# provider-coinglass exposes ctx.coinglass for large_orders + 大单墙 overlay.
 
 # Agent presets (shipped with the bundle — selectable in the session picker).
 # Official path: @deepseek-ai/dsh-agent-preset declaration rows. Directory-based
@@ -156,6 +157,7 @@
 
                 ## 数据获取规范
                 - 快速诊断：优先调用 `market_snapshot` 获取全周期指标状态（MACD、RSI差值、Stoch、ADX、SuperTrend、趋势线与衍生品/资金流）。
+                - 大额挂单墙：调用 `large_orders`（CoinGlass 聚合墙，映射 BTCUSDT→Binance_BTCUSDT）；图表「指标参数」里可开关「大单墙」。
                 - 深度结构：需要高低点、形态、缺口、精确K线时调用 `get_ohlcv`；摆动点与市场结构调用 `find_swing_points`。
                 - 选股扫描：`screen_market` 默认同时扫描多空六种形态（多头排列/放量突破/超卖反弹 与 空头排列/放量跌破/超买反转）。
                 - 策略回测：`run_backtest` 的 `direction` 可选 long / short / both，空头行情需用 short 或 both 验证。

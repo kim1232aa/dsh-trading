@@ -55,6 +55,7 @@ describe('channel identity', () => {
     expect(Object.values(ENDPOINTS).sort()).toEqual([
       'derivatives',
       'fundamentals',
+      'largeOrders',
       'moneyflow',
       'ohlcv',
       'orderbook',

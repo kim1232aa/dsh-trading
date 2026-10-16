@@ -51,6 +51,7 @@ export const ENDPOINTS = {
   watchlist: 'watchlist',
   watchlistAdd: 'watchlistAdd',
   watchlistRemove: 'watchlistRemove',
+  largeOrders: 'largeOrders',
 } as const
 
 /** The `providers` answer: list of registered providers and their descriptions. */
@@ -77,6 +78,25 @@ export interface OrderbookResponse {
   providerId: string
   symbol: string
   orderbook: Orderbook | null
+}
+
+/** The `largeOrders` answer: CoinGlass large resting walls (null when disabled / failed). */
+export interface LargeOrdersResponse {
+  symbol: string
+  cgSymbol: string
+  pair: string
+  orderCount: number
+  walls: {
+    id: string | number
+    exchange: string
+    side: 'buy' | 'sell'
+    price: number
+    currentUsd: number
+    startUsd: number
+    startTime: number
+    currentTime: number
+    state: number
+  }[]
 }
 
 /** The `fundamentals` answer: null when the provider has no financial valuation data. */
@@ -318,6 +338,7 @@ export async function serveMarketEndpoint(
   | DerivativesResponse
   | MoneyFlowResponse
   | OrderbookResponse
+  | LargeOrdersResponse
   | FundamentalsResponse
   | ProvidersResponse
   | WatchlistResponse

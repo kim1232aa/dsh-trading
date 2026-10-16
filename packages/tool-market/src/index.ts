@@ -39,6 +39,7 @@ import { runCustomIndicator, detectSwingPoints, classifySwingStructure } from '.
 import type { CustomIndicatorOptions, CustomIndicatorResult } from './indicator-sandbox.js'
 import { trendlineCandidate } from './trendlines.js'
 import { registerSupplyDemandTool } from './supply-demand-tool.js'
+import { registerLargeOrdersTool } from './large-orders-tool.js'
 export { trendlineCandidate } from './trendlines.js'
 
 export { runCustomIndicator, detectSwingPoints, classifySwingStructure } from './indicator-sandbox.js'
@@ -119,6 +120,7 @@ function renderCsv(candles: Candle[], indicators: Record<string, (number | null)
 
 export function apply(ctx: Context, config: Config): void {
   registerSupplyDemandTool(ctx, TIMEFRAMES)
+  registerLargeOrdersTool(ctx)
   ctx.tools.register(defineTool({
     name: 'list_symbols',
     description: 'List the instruments available from the mounted market-data providers, with the timeframes each one can serve. Call this before get_ohlcv when unsure which symbols exist.',

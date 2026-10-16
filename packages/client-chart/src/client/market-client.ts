@@ -66,6 +66,8 @@ export interface MarketClient {
   getMoneyFlow(symbol: string, providerId?: string, signal?: AbortSignal): Promise<PanelMoneyFlow | null>
   /** Level 2 orderbook (5-10 levels depth). null when not supported. */
   getOrderbook(symbol: string, providerId?: string, signal?: AbortSignal): Promise<Orderbook | null>
+  /** CoinGlass large resting walls. null/empty when unavailable. */
+  getLargeOrders?(symbol: string, opts?: { hours?: number; top?: number; venue?: string }, signal?: AbortSignal): Promise<PanelLargeOrders | null>
   /** Financial valuation & fundamentals (PE, PB, Market Cap). null when not supported. */
   getFundamentals(symbol: string, providerId?: string, signal?: AbortSignal): Promise<FundamentalsPackage | null>
   /** User custom watchlist items & groups from @dsh-trading/watchlist. */
@@ -87,6 +89,26 @@ export interface PanelMoneyFlow {
   smallInflow?: number | null
   mainRatioPct?: number | null
   summary?: string
+}
+
+export interface PanelLargeOrderWall {
+  id: string | number
+  exchange: string
+  side: 'buy' | 'sell'
+  price: number
+  currentUsd: number
+  startUsd: number
+  startTime: number
+  currentTime: number
+  state: number
+}
+
+export interface PanelLargeOrders {
+  symbol: string
+  cgSymbol: string
+  pair: string
+  orderCount: number
+  walls: PanelLargeOrderWall[]
 }
 
 export interface PanelPositionReading {
@@ -541,6 +563,15 @@ export function createMarketClient(rpc: RpcCaller): MarketClient {
         orderbook: Orderbook | null
       }
       return value.orderbook
+    },
+
+    async getLargeOrders(symbol, opts, signal) {
+      const body: Record<string, unknown> = { symbol }
+      if (opts?.hours !== undefined) body['hours'] = opts.hours
+      if (opts?.top !== undefined) body['top'] = opts.top
+      if (opts?.venue !== undefined) body['venue'] = opts.venue
+      const value = await unwrap(rpc.call(CHANNEL, 'largeOrders', body, signal)) as PanelLargeOrders
+      return value
     },
 
     async getFundamentals(symbol, providerId, signal) {

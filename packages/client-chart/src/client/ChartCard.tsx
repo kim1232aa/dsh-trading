@@ -20,7 +20,7 @@ import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 import { publishLatestChart } from './latest.js'
 import { annotationDigest, contentText, readChartPayload } from './payload.js'
 import type { ChartAnnotation, ChartPayload, ChartScenario, ChartTimeframeData } from './payload.js'
-import type { PanelDerivativeBar, PanelDerivatives } from './market-client.js'
+import type { PanelDerivativeBar, PanelDerivatives, PanelLargeOrders } from './market-client.js'
 import { contractOpenInterest, postureColor } from './market-client.js'
 import { regimeSnapshot } from '../../../tool-market/src/regime.js'
 import { rsiGridStateText } from '../../../tool-market/src/rsi-grid.js'
@@ -267,6 +267,7 @@ export const EDITABLE: {
   { name: 'OI_POSTURE', title: '合约OI', pane: 'pane_oi_posture', defaults: [], params: [] },
   { name: 'LSR_RATIO', title: '多空比', pane: 'pane_lsr', defaults: [], params: [] },
   { name: 'ENTRY_SIGNAL', title: '多空观察信号(未验证)', defaults: [60, 4], defaultVisible: false, params: [period('ST周期'), { label: 'ST倍数', min: 0.1, max: 20, step: 0.1 }] },
+  { name: 'LARGE_WALLS', title: '大单墙(CoinGlass)', defaults: [], defaultVisible: false, params: [] },
 ]
 
 export type IndicatorSettings = Record<string, { params: number[]; visible: boolean }>
@@ -293,6 +294,17 @@ const SETTINGS_KEY = 'dsh-trading.chart-indicators.v1'
 let settingsCache: IndicatorSettings | undefined
 const settingsListeners = new Set<() => void>()
 
+/** Read current indicator visibility/params (for panel features like 大单墙). */
+export function peekSettings(): IndicatorSettings {
+  return getSettings()
+}
+
+/** Subscribe to indicator settings changes. */
+export function subscribeSettings(fn: () => void): () => void {
+  settingsListeners.add(fn)
+  return () => { settingsListeners.delete(fn) }
+}
+
 function getSettings(): IndicatorSettings {
   if (settingsCache === undefined) {
     let raw: unknown = null
@@ -306,11 +318,6 @@ function setSettings(next: IndicatorSettings): void {
   settingsCache = sanitizeSettings(next)
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settingsCache)) } catch { /* storage off: this session only */ }
   for (const l of settingsListeners) l()
-}
-
-function subscribeSettings(l: () => void): () => void {
-  settingsListeners.add(l)
-  return () => { settingsListeners.delete(l) }
 }
 
 export type CoordType = 'normal' | 'percentage' | 'log'
@@ -1078,12 +1085,13 @@ function drawPrimitive(chart: Pick<Chart, 'createOverlay'>, prim: DrawPrimitive,
   }
 }
 
-function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSettings, onEditParams, derivatives, onCrosshairHover, baseHeight = CHART_HEIGHT, fill = false }: {
+function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSettings, onEditParams, derivatives, largeWalls, onCrosshairHover, baseHeight = CHART_HEIGHT, fill = false }: {
   data: ChartTimeframeData
   settings: IndicatorSettings
   axisSettings: AxisSettings
   onEditParams: () => void
   derivatives?: PanelDerivatives | null | undefined
+  largeWalls?: PanelLargeOrders | null | undefined
   onCrosshairHover?: ((timestamp: number | null) => void) | undefined
   scenarios: ChartScenario[]
   dark: boolean
@@ -1118,6 +1126,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   onEditRef.current = onEditParams
   const onHoverRef = useRef(onCrosshairHover)
   onHoverRef.current = onCrosshairHover
+  const wallOverlayIds = useRef<string[]>([])
   // 默认只收起主图指标行，副图名称和数值保持可见。
   const foldRef = useRef(true)
   const paneCount = active.filter(id => CHIP_DEFS.find(d => d.id === id)?.indicator?.overlay !== true).length
@@ -1154,6 +1163,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
     })))
     for (const def of EDITABLE) {
+      if (def.name === 'LARGE_WALLS') continue // overlay drawn from CoinGlass RPC, not a klinecharts indicator
       const s = settingsRef.current[def.name]!
       const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivativesRef.current?.history
         : def.name === 'MTF_SR' ? { sourceTimeframe: data.timeframe, sourceTimeframeSeconds: mtfSourceTimeframeSeconds(data.timeframe) } : undefined
@@ -1271,6 +1281,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     if (chart === null) return
     chart.setStyles(ohlcTooltipAvoidTable(settings['REVPOINT']?.visible ?? false, chart.getSize('candle_pane', 'main' as never)?.width ?? 0))
     for (const def of EDITABLE) {
+      if (def.name === 'LARGE_WALLS') continue
       const s = settings[def.name]!
       const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivatives?.history
         : def.name === 'MTF_SR' ? { sourceTimeframe: data.timeframe, sourceTimeframeSeconds: mtfSourceTimeframeSeconds(data.timeframe) } : undefined
@@ -1300,6 +1311,35 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       chart.overrideIndicator({ name: def.name, calcParams: s.params, visible: s.visible, extendData: ext }, 'candle_pane')
     }
   }, [settings, derivatives, data.timeframe])
+
+  // CoinGlass 大单墙: horizontal lines, toggled via 指标参数 → 大单墙.
+  useEffect(() => {
+    const chart = chartRef.current
+    if (chart === null) return
+    for (const id of wallOverlayIds.current) {
+      try { chart.removeOverlay({ id }) } catch { /* already gone */ }
+    }
+    wallOverlayIds.current = []
+    if (!(settings['LARGE_WALLS']?.visible) || !largeWalls?.walls?.length) return
+    const fmt = (n: number): string => {
+      const abs = Math.abs(n)
+      if (abs >= 1e8) return `${(abs / 1e8).toFixed(2)}亿`
+      if (abs >= 1e4) return `${(abs / 1e4).toFixed(1)}万`
+      return `${abs.toFixed(0)}`
+    }
+    // Cap labels to keep the pane readable; biggest walls first (API already sorts).
+    for (const w of largeWalls.walls.slice(0, 20)) {
+      const color = w.side === 'buy' ? '#3ddc97' : '#f47067'
+      const label = `${w.exchange} ${w.side === 'buy' ? '买墙' : '卖墙'} $${fmt(w.currentUsd)}`
+      const id = chart.createOverlay({
+        name: 'tm_hline',
+        lock: true,
+        points: [{ value: w.price }],
+        extendData: { color, dashed: false, label, lane: 0 },
+      })
+      if (typeof id === 'string' && id) wallOverlayIds.current.push(id)
+    }
+  }, [settings, largeWalls, seriesKey])
 
   // Live tail: push the newest bar into the existing plot. klinecharts updates
   // the last bar in place, or appends when the timestamp has moved on, so the
@@ -1866,13 +1906,14 @@ function getInitialActiveChips(): string[] {
   return ['vol']
 }
 
-export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, fill = false, prose = true, derivatives, onCrosshairHover }: {
+export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, fill = false, prose = true, derivatives, largeWalls, onCrosshairHover }: {
   payload: ChartPayload
   chartHeight?: number
   shell?: CSSProperties
   fill?: boolean
   prose?: boolean
   derivatives?: PanelDerivatives | null
+  largeWalls?: PanelLargeOrders | null
   onCrosshairHover?: (timestamp: number | null) => void
 }): JSX.Element {
   const dark = useDark()
@@ -2026,6 +2067,7 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
         settings={settings}
         axisSettings={axisSettings}
         derivatives={derivatives}
+        largeWalls={largeWalls}
         onCrosshairHover={onCrosshairHover}
         onEditParams={() => setEditing(true)}
         baseHeight={chartHeight}

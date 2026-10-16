@@ -19,12 +19,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
 import type { ChartOwnerProps } from '@dsh-trading/client-frame/client'
-import { ChartBody, ChartErrorBoundary, matchDerivativeHistory } from './ChartCard.js'
+import { ChartBody, ChartErrorBoundary, matchDerivativeHistory, peekSettings, subscribeSettings } from './ChartCard.js'
 import { derivativesAtBar } from './market-client.js'
 import { getLatestChart, subscribeLatestChart } from './latest.js'
 import { decideFollow } from './follow.js'
 import { mergeMarks, mergeTail, postureColor, readMarks, recallMarks, rememberMarks, withCandles } from './market-client.js'
-import type { ChartMarks, MarketClient, PanelDerivatives, PanelMoneyFlow } from './market-client.js'
+import type { ChartMarks, MarketClient, PanelDerivatives, PanelLargeOrders, PanelMoneyFlow } from './market-client.js'
 import type { ChartPayload } from './payload.js'
 import type { FundamentalsPackage, Orderbook } from '@dsh-trading/market-data'
 
@@ -736,6 +736,8 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
   const [watchlist, setWatchlist] = useState<{ items: { symbol: string; group: string; notes?: string }[]; groups: string[] } | null>(null)
   const [activeGroup, setActiveGroup] = useState<string>('全部')
   const [panelDerivatives, setPanelDerivatives] = useState<PanelDerivatives | null>(null)
+  const [panelLargeWalls, setPanelLargeWalls] = useState<PanelLargeOrders | null>(null)
+  const [largeWallsOn, setLargeWallsOn] = useState(() => peekSettings()['LARGE_WALLS']?.visible ?? false)
   const [hoveredTime, setHoveredTime] = useState<number | null>(null)
   const followTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const inflight = useRef<AbortController | null>(null)
@@ -773,6 +775,11 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
     return () => { active = false }
   }, [market])
 
+  // 大单墙 toggle lives in 指标参数; mirror it here so we only poll when on.
+  useEffect(() => subscribeSettings(() => {
+    setLargeWallsOn(peekSettings()['LARGE_WALLS']?.visible ?? false)
+  }), [])
+
   // Adopt whatever the agent last DREW, separately from what it last fetched.
   // Keyed on content, not identity: `latest` republishes the same payload
   // whenever an old card scrolls back into view, and an identical republish
@@ -803,6 +810,35 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
   // are welcome on top of it, which is what `merged` carries; when they are
   // about a different chart, mergeMarks hands the payload straight back.
   const payload = merged?.payload ?? own ?? fromAgent
+
+  // Poll CoinGlass large walls only while the overlay is enabled.
+  useEffect(() => {
+    if (!largeWallsOn || payload === null) {
+      setPanelLargeWalls(null)
+      return
+    }
+    const symbol = payload.symbol
+    if (!symbol || !market.getLargeOrders) {
+      setPanelLargeWalls(null)
+      return
+    }
+    let active = true
+    const controller = new AbortController()
+    const pull = (): void => {
+      market.getLargeOrders!(symbol, { hours: 72, top: 24 }, controller.signal).then(
+        snap => { if (active) setPanelLargeWalls(snap) },
+        () => { if (active && !controller.signal.aborted) setPanelLargeWalls(null) },
+      )
+    }
+    pull()
+    const timer = setInterval(pull, 8_000)
+    return () => {
+      active = false
+      controller.abort()
+      clearInterval(timer)
+    }
+  }, [largeWallsOn, market, payload?.symbol])
+
 
   const load = useCallback(async (
     symbol: string,
@@ -1416,7 +1452,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
             : payload !== null
               ? (
                 <ChartErrorBoundary>
-                  <ChartBody payload={payload} shell={PANEL_SHELL} fill prose={false} derivatives={panelDerivatives} onCrosshairHover={setHoveredTime} />
+                  <ChartBody payload={payload} shell={PANEL_SHELL} fill prose={false} derivatives={panelDerivatives} largeWalls={panelLargeWalls} onCrosshairHover={setHoveredTime} />
                 </ChartErrorBoundary>
               )
               : (
