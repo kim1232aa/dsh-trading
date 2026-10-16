@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   aggregateHtf, attachHtfMa, calculateDualViewHtf, detectPatternAtIndex, DV_DEFAULTS,
-  getTimeframeLabel, htfBucketStart, patternCandleCount, sanitizeDvParams, PATTERN_KEYS,
+  getTimeframeLabel, htfBucketStart, patternCandleCount, sanitizeDvParams, PATTERN_KEYS, HTF_TF_OPTIONS,
   type DvCandle,
 } from '../src/client/indicators/dual-view-htf-patterns.js'
 import { EDITABLE, sanitizeSettings } from '../src/client/ChartCard.js'
@@ -119,7 +119,15 @@ describe('calculateDualViewHtf + EDITABLE wiring', () => {
     expect(PATTERN_KEYS.length).toBe(19)
     const s = sanitizeSettings({})
     expect(s['DUAL_VIEW_HTF']!.visible).toBe(false)
-    expect(s['DUAL_VIEW_HTF']!.params[0]).toBe(3) // Daily
+    expect(s['DUAL_VIEW_HTF']!.params[0]).toBe(7) // Daily
     expect(s['DUAL_VIEW_HTF']!.params[43]).toBeCloseTo(0.05, 8) // doji exposed
+  })
+
+  it('HTF options cover Pine get_timeframe_label set; floating labels use center size default', () => {
+    expect(HTF_TF_OPTIONS).toEqual(['60', '120', '180', '240', '360', '480', '720', 'D', 'W', 'M'])
+    const P = sanitizeDvParams(DV_DEFAULTS)
+    expect(P.htfTf).toBe('D')
+    expect(P.centerSize).toBe(2) // normal — Pine floating pattern label size
+    expect(P.textSize).toBe(1) // small — Pine historical pattern_text_size
   })
 })

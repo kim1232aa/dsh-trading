@@ -273,7 +273,7 @@ export const EDITABLE: {
     ...VB_ALERTS.map(a => boolP(`提醒:${a.cn}`)),
   ] },
   { name: 'DUAL_VIEW_HTF', title: '双视HTF形态(theUltimator5)', defaults: [...DV_DEFAULTS], defaultVisible: false, params: [
-    { label: '高周期', min: 0, max: 5, step: 1, kind: 'select', options: [...HTF_TF_LABELS] },
+    { label: '高周期', min: 0, max: 9, step: 1, kind: 'select', options: [...HTF_TF_LABELS] },
     { label: '浮动K数量', min: 1, max: 10, step: 1 }, { label: 'K宽度(bars)', min: 1, max: 100, step: 1 },
     { label: 'K间距', min: 0, max: 50, step: 1 }, { label: '右缘偏移', min: 0, max: 200, step: 1 },
     { label: '历史回看(HTF)', min: 10, max: 300, step: 1 },

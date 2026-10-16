@@ -13,8 +13,8 @@ export interface DvCandle {
   timestamp?: number
 }
 
-export const HTF_TF_OPTIONS = ['60', '120', '240', 'D', 'W', 'M'] as const
-export const HTF_TF_LABELS = ['1H', '2H', '4H', '日线', '周线', '月线'] as const
+export const HTF_TF_OPTIONS = ['60', '120', '180', '240', '360', '480', '720', 'D', 'W', 'M'] as const
+export const HTF_TF_LABELS = ['1H', '2H', '3H', '4H', '6H', '8H', '12H', '日线', '周线', '月线'] as const
 export const PATTERN_FILTER_OPTS = ['全部', '仅2K', '仅3K'] as const
 export const SIZE_OPTS = ['tiny', 'small', 'normal', 'large'] as const
 export const TREND_OPTS = ['SMA', 'EMA'] as const
@@ -90,7 +90,7 @@ const COL = {
 
 /** Param indices — keep in sync with EDITABLE in ChartCard. */
 export const DV_DEFAULTS = [
-  3, 7, 10, 3, 20, 200, 1, 1, // 0-7 tf,num,w,sp,off,lookback,float,hist
+  7, 7, 10, 3, 20, 200, 1, 1, // 0-7 tf(D),num,w,sp,off,lookback,float,hist
   hexToInt(COL.lime), hexToInt(COL.lime), hexToInt(COL.red), hexToInt(COL.bearLine), // 8-11 fills/lines
   98, 2, // 12-13 transp, thick
   0, hexToInt(COL.yellow), 2, 1, 12, // 14-18 trend, maColor, maW, method EMA, len
@@ -146,7 +146,7 @@ export function sanitizeDvParams(p: readonly unknown[] = []): DvParams {
   const D = DV_DEFAULTS
   const show = {} as Record<PatternKey, boolean>
   PATTERN_KEYS.forEach((k, i) => { show[k] = intIn(p[20 + i], PATTERN_DEFAULT_ON[i]!, 0, 1) === 1 })
-  const tfIdx = intIn(p[0], 3, 0, HTF_TF_OPTIONS.length - 1)
+  const tfIdx = intIn(p[0], 7, 0, HTF_TF_OPTIONS.length - 1)
   return {
     htfTf: HTF_TF_OPTIONS[tfIdx]!,
     numCandles: intIn(p[1], 7, 1, 10),
@@ -789,16 +789,18 @@ export const dualViewHtfIndicator = {
           const pCenter = pLeft + P.candleWidth / 2
           const fc = last.float.find(f => f.arrayIndex === candleIdx)
           const candleHigh = fc && Number.isFinite(fc.h) ? fc.h : highest
+          // Pine floating pattern labels use center_label_size (not pattern_text_size)
           const col = isBullishPatternText(pat.text) ? P.labelBull : isBearishPatternText(pat.text) ? P.labelBear : P.centerColor
+          const floatLblPx = fontSize(P.centerSize)
           ctx.fillStyle = col
-          ctx.font = `${fontSize(P.textSize)}px sans-serif`
+          ctx.font = `${floatLblPx}px sans-serif`
           ctx.textAlign = 'center'
           const lines = pat.text.split('\n')
-          lines.forEach((ln, li) => ctx.fillText(ln, X(pCenter), Y(candleHigh + offsetPrice) - li * (fontSize(P.textSize) + 2)))
+          lines.forEach((ln, li) => ctx.fillText(ln, X(pCenter), Y(candleHigh + offsetPrice) - li * (floatLblPx + 2)))
           if (P.showInfo) {
             ctx.fillStyle = rgba('#808080', 0.7)
             ctx.font = '10px sans-serif'
-            ctx.fillText('ⓘ', X(pCenter), Y(candleHigh + offsetPrice) - lines.length * (fontSize(P.textSize) + 2) - 2)
+            ctx.fillText('ⓘ', X(pCenter), Y(candleHigh + offsetPrice) - lines.length * (floatLblPx + 2) - 2)
           }
         }
       }
