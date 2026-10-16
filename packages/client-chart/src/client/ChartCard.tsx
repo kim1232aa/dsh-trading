@@ -267,7 +267,7 @@ export const EDITABLE: {
   { name: 'OI_POSTURE', title: '合约OI', pane: 'pane_oi_posture', defaults: [], params: [] },
   { name: 'LSR_RATIO', title: '多空比', pane: 'pane_lsr', defaults: [], params: [] },
   { name: 'ENTRY_SIGNAL', title: '多空观察信号(未验证)', defaults: [60, 4], defaultVisible: false, params: [period('ST周期'), { label: 'ST倍数', min: 0.1, max: 20, step: 0.1 }] },
-  { name: 'LARGE_WALLS', title: '大单墙(CoinGlass)', defaults: [], defaultVisible: false, params: [] },
+  { name: 'LARGE_WALLS', title: '大单墙(CoinGlass)', defaults: [100], defaultVisible: false, params: [{ label: '最低金额(万)', min: 0, max: 3000, step: 1 }] },
 ]
 
 export type IndicatorSettings = Record<string, { params: number[]; visible: boolean }>
@@ -1321,6 +1321,9 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     }
     wallOverlayIds.current = []
     if (!(settings['LARGE_WALLS']?.visible) || !largeWalls?.walls?.length) return
+    const minWan = settings['LARGE_WALLS']?.params?.[0] ?? 100
+    const minUsd = minWan * 10_000
+    const walls = largeWalls.walls.filter(w => w.currentUsd >= minUsd).slice(0, 20)
     const fmt = (n: number): string => {
       const abs = Math.abs(n)
       if (abs >= 1e8) return `${(abs / 1e8).toFixed(2)}亿`
@@ -1328,7 +1331,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       return `${abs.toFixed(0)}`
     }
     // Cap labels to keep the pane readable; biggest walls first (API already sorts).
-    for (const w of largeWalls.walls.slice(0, 20)) {
+    for (const w of walls) {
       const color = w.side === 'buy' ? '#3ddc97' : '#f47067'
       const label = `${w.exchange} ${w.side === 'buy' ? '买墙' : '卖墙'} $${fmt(w.currentUsd)}`
       const id = chart.createOverlay({

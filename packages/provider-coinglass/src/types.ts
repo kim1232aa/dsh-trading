@@ -51,6 +51,8 @@ export interface FetchLargeOrdersOptions {
   top?: number
   /** Filter to one venue after flatten (e.g. Binance). */
   venue?: string
+  /** Drop walls whose currentUsd is below this (e.g. 1_000_000 for $100万). */
+  minUsd?: number
   /** Optional price band for statistics. */
   minPrice?: number
   maxPrice?: number

@@ -30,3 +30,32 @@ describe('flattenWalls + render', () => {
     expect(text).toMatch(/买墙|卖墙/)
   })
 })
+
+describe('minUsd wall filter via getLargeOrders', () => {
+  it('drops walls below minUsd; orderCount is post-filter pre-slice length', async () => {
+    const groups = JSON.parse(readFileSync(join(here, 'fixtures/walls-sample.json'), 'utf8'))
+    const { CoinglassCapi } = await import('../src/client.js')
+    class Stub extends CoinglassCapi {
+      async largeTakerOrder(): Promise<unknown> {
+        return groups
+      }
+      async largeTakerOrderStatistics(): Promise<unknown> {
+        return []
+      }
+    }
+    const client = new Stub()
+    const all = flattenWalls(groups)
+    const minUsd = 3_000_000
+    const expectedKept = all.filter(w => w.currentUsd >= minUsd).length
+    expect(expectedKept).toBeGreaterThan(0)
+    expect(expectedKept).toBeLessThan(all.length)
+
+    const snap = await client.getLargeOrders('BTCUSDT', { minUsd, top: 5, hours: 1 })
+    expect(snap.walls.every(w => w.currentUsd >= minUsd)).toBe(true)
+    expect(snap.walls.length).toBe(Math.min(5, expectedKept))
+    expect(snap.orderCount).toBe(expectedKept)
+
+    const unfiltered = await client.getLargeOrders('BTCUSDT', { top: 500, hours: 1 })
+    expect(unfiltered.orderCount).toBe(all.length)
+  })
+})

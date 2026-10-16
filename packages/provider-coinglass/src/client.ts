@@ -240,6 +240,9 @@ export class CoinglassCapi {
       const v = opts.venue.toLowerCase()
       walls = walls.filter(w => w.exchange.toLowerCase() === v)
     }
+    if (opts.minUsd !== undefined && opts.minUsd > 0) {
+      walls = walls.filter(w => w.currentUsd >= opts.minUsd!)
+    }
     walls.sort((a, b) => b.currentUsd - a.currentUsd)
 
     let statistics: LargeOrderStatistics[] = []
