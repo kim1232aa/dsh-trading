@@ -29,6 +29,7 @@ import { regimeSeries } from '../../../tool-market/src/chart-payload.js'
 import { evasiveSuperTrend, evasiveSuperTrendIndicator } from './indicators/evasive-st.js'
 import { nadarayaWatsonTrend, nadarayaWatsonIndicator } from './indicators/nadaraya-watson.js'
 import { orderBlockBreaker, orderBlockIndicator } from './indicators/order-blocks.js'
+import { vbProReadIndicator } from './indicators/vb-pro-read.js'
 import { mtfSRZones, mtfSRIndicator, mtfSourceTimeframeSeconds } from './indicators/mtf-sr.js'
 import { entrySignalIndicator } from './indicators/entry-signal.js'
 import { rsiGridIndicator, rsiGridCumIndicator, rsiGridMarksIndicator } from './indicators/rsi-grid.js'
@@ -261,6 +262,7 @@ export const EDITABLE: {
   { name: 'EVASIVE_ST', title: '避险超级趋势(LuxAlgo)', defaults: [10, 3.0, 1.0, 0.5], defaultVisible: false, params: [period('ATR周期'), { label: '倍数', min: 0.1, max: 20, step: 0.1 }, { label: '噪音阈值', min: 0.1, max: 10, step: 0.1 }, { label: '避险Alpha', min: 0, max: 5, step: 0.1 }] },
   { name: 'NW_TREND', title: '核回归趋势(QuantAlgo)', defaults: [50, 8, 2.0, 1.5], defaultVisible: false, params: [period('回溯周期'), { label: '带宽', min: 1, max: 50, step: 1 }, { label: '倍数(h)', min: 0.5, max: 10, step: 0.1 }, { label: '通道倍数', min: 0.5, max: 10, step: 0.1 }] },
   { name: 'OB_BB', title: '订单块/破坏块(RWB)', defaults: [5, 5, 20], defaultVisible: false, params: [period('Swing左'), period('Swing右'), period('等待K线')] },
+  { name: 'VB_PRO_READ', title: '波动带Pro-Read(Indicatr)', defaults: [0, 20, 2.0, 1.5, 5, 3, 0.8, 14, 20, 1, 1], defaultVisible: false, params: [{ label: '带类型(0布林1肯特纳2唐奇安)', min: 0, max: 2, step: 1 }, { label: '周期', min: 2, max: 500, step: 1 }, { label: '布林倍数', min: 0.1, max: 20, step: 0.1 }, { label: '肯特纳ATR倍数', min: 0.1, max: 20, step: 0.1 }, { label: '走带回看', min: 2, max: 500, step: 1 }, { label: '走带最少收盘', min: 1, max: 500, step: 1 }, { label: '外区位置', min: 0.5, max: 1, step: 0.05 }, { label: 'ADX周期', min: 2, max: 500, step: 1 }, { label: 'ADX趋势阈值', min: 1, max: 100, step: 0.5 }, { label: '显示挤压(0/1)', min: 0, max: 1, step: 1 }, { label: '标均值回归(0/1)', min: 0, max: 1, step: 1 }] },
   { name: 'MTF_SR', title: '多周期支撑阻力(Syndicate)', defaults: [5], defaultVisible: false, params: [period('Pivot周期')] },
   { name: 'RSI_GRID', title: 'RSI网格（多空）', pane: 'pane_rsi_grid', defaults: [7, 30, 60, 10], params: [period('RSI周期'), period('多入阈值'), period('多平阈值'), period('累计阈值')] },
   { name: 'REVPOINT', title: '反转点标注 RevPoint', defaults: [0.7, 2.0, 3, 0, 0, 1, 0, 1, 0], params: [{ label: '细档确认阈值%', min: 0.1, max: 10, step: 0.1 }, { label: '粗档(大周期)阈值%', min: 0.5, max: 20, step: 0.1 }, { label: '多周期pivot左右bar数', min: 1, max: 10, step: 1 }, { label: '15m(0/1)', min: 0, max: 1, step: 1 }, { label: '30m(0/1)', min: 0, max: 1, step: 1 }, { label: '1H(0/1)', min: 0, max: 1, step: 1 }, { label: '2H(0/1)', min: 0, max: 1, step: 1 }, { label: '4H(0/1)', min: 0, max: 1, step: 1 }, { label: '细档最少★数', min: 0, max: 4, step: 1 }] },
@@ -891,6 +893,7 @@ function ensureRegistered(): void {
   registerIndicator(evasiveSuperTrendIndicator as never)
   registerIndicator(nadarayaWatsonIndicator as never)
   registerIndicator(orderBlockIndicator as never)
+  registerIndicator(vbProReadIndicator as never)
   registerIndicator(mtfSRIndicator as never)
   registerIndicator(entrySignalIndicator as never)
   registerIndicator(rsiGridIndicator as never)
