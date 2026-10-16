@@ -366,6 +366,8 @@ PATH or without `lib/`). It is what catches a stray `export default`.
 
 - [x] Profile template + docs for stacking onto `dsh --profile web`
 - [x] Chart cards in `dsh web` (`@dsh-trading/client-chart`): `market_snapshot` / `get_ohlcv` render as interactive candlesticks with chip-toggled indicator panes
+- [x] Live panel chips: client `enrichChartTimeframe` computes regime series locally (MACD/Stoch/ADX/MFI/BB) when the payload has no agent series
+- [ ] `ENTRY_SIGNAL`（多空观察信号）is **experimental / 未验证** — SuperTrend observer only; off by default in 指标参数
 - [x] `annotate_chart`: model-authored levels/zones/paths with mandatory provenance and a hard price-range gate, plus base/alternative scenarios — rendered on the card with a levels table
 - [x] Open contracts for ecosystem builders ([CONTRACTS.md](./CONTRACTS.md)): chart payload, open annotation envelope, pure-renderer registry
 - [x] Chart-first shell (`@dsh-trading/client-frame`) and a persistent live column the user drives, with the agent's drawings landing on it

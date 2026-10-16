@@ -3,6 +3,10 @@
  * each signal bar, and the latest signal's levels extended to the right edge.
  * The rules live in tool-market/src/signal.ts and are imported, not copied, so
  * the chart draws exactly the signals market_snapshot reports to the model.
+ *
+ * EXPERIMENTAL / 未验证: SuperTrend-based observer only — not a validated
+ * entry system. Kept in 指标参数 with defaultVisible:false and title
+ * 「多空观察信号(未验证)」; do not treat markers as trade advice.
  * ponytail: cross-package relative import of a pure file; publish a subpath export if a third package needs it.
  */
 import { advanceSignal, confirmedBarCount, entrySignals, signalStatus } from '../../../../tool-market/src/signal.js'

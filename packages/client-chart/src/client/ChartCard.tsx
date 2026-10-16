@@ -259,8 +259,8 @@ export const EDITABLE: {
   { name: 'WMA', title: 'WMA', defaults: WMA_PERIODS, params: [period('周期1'), period('周期2'), period('周期3')] },
   { name: 'SUPERTREND', title: '超级趋势', defaults: [60, 4], params: [period('ATR周期'), { label: '倍数', min: 0.1, max: 20, step: 0.1 }] },
   { name: 'EVASIVE_ST', title: '避险超级趋势(LuxAlgo)', defaults: [10, 3.0, 1.0, 0.5], defaultVisible: false, params: [period('ATR周期'), { label: '倍数', min: 0.1, max: 20, step: 0.1 }, { label: '噪音阈值', min: 0.1, max: 10, step: 0.1 }, { label: '避险Alpha', min: 0, max: 5, step: 0.1 }] },
-  { name: 'NW_TREND', title: '核回归趋势(QuantAlgo)', defaults: [50, 8, 2.0, 1.8], defaultVisible: false, params: [period('回溯周期'), { label: '带宽', min: 1, max: 50, step: 1 }, { label: '倍数', min: 0.5, max: 10, step: 0.1 }, { label: '通道倍数', min: 0.5, max: 10, step: 0.1 }] },
-  { name: 'OB_BB', title: '订单块/破坏块(RWB)', defaults: [], defaultVisible: false, params: [] },
+  { name: 'NW_TREND', title: '核回归趋势(QuantAlgo)', defaults: [50, 8, 2.0, 1.5], defaultVisible: false, params: [period('回溯周期'), { label: '带宽', min: 1, max: 50, step: 1 }, { label: '倍数(h)', min: 0.5, max: 10, step: 0.1 }, { label: '通道倍数', min: 0.5, max: 10, step: 0.1 }] },
+  { name: 'OB_BB', title: '订单块/破坏块(RWB)', defaults: [5, 5, 20], defaultVisible: false, params: [period('Swing左'), period('Swing右'), period('等待K线')] },
   { name: 'MTF_SR', title: '多周期支撑阻力(Syndicate)', defaults: [5], defaultVisible: false, params: [period('Pivot周期')] },
   { name: 'RSI_GRID', title: 'RSI网格（多空）', pane: 'pane_rsi_grid', defaults: [7, 30, 60, 10], params: [period('RSI周期'), period('多入阈值'), period('多平阈值'), period('累计阈值')] },
   { name: 'REVPOINT', title: '反转点标注 RevPoint', defaults: [0.7, 2.0, 3, 0, 0, 1, 0, 1, 0], params: [{ label: '细档确认阈值%', min: 0.1, max: 10, step: 0.1 }, { label: '粗档(大周期)阈值%', min: 0.5, max: 20, step: 0.1 }, { label: '多周期pivot左右bar数', min: 1, max: 10, step: 1 }, { label: '15m(0/1)', min: 0, max: 1, step: 1 }, { label: '30m(0/1)', min: 0, max: 1, step: 1 }, { label: '1H(0/1)', min: 0, max: 1, step: 1 }, { label: '2H(0/1)', min: 0, max: 1, step: 1 }, { label: '4H(0/1)', min: 0, max: 1, step: 1 }, { label: '细档最少★数', min: 0, max: 4, step: 1 }] },
@@ -920,6 +920,26 @@ export function klineStyles(p: Palette, coordType: CoordType = 'normal'): Record
       horizontal: { line: { color: p.faint }, text: { backgroundColor: p.faint, family: FONT_FAMILY } },
       vertical: { line: { color: p.faint }, text: { backgroundColor: p.faint, family: FONT_FAMILY } },
     },
+  }
+}
+
+/**
+ * Fill missing regime snapshot + per-bar series on a timeframe (live panel path).
+ * Agent cards already ship both; live `candlesToPayload` leaves them empty on
+ * purpose so the model is not blamed for client-invented numbers — the card
+ * still needs series for MACD/Stoch/ADX/MFI/BB chips, so we compute locally.
+ */
+export function enrichChartTimeframe(tf: ChartTimeframeData): ChartTimeframeData {
+  if (tf.candles.length === 0) return tf
+  const seriesOk = tf.series !== undefined
+    && tf.series['rsi14']?.length === tf.candles.length
+  if (tf.indicators !== null && seriesOk) return tf
+  try {
+    const indicators = tf.indicators ?? regimeSnapshot(tf.candles)
+    const series = seriesOk ? tf.series : regimeSeries(tf.candles)
+    return { ...tf, indicators, series }
+  } catch {
+    return tf
   }
 }
 
@@ -1930,16 +1950,7 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
   const rawTf = payload.timeframes[Math.min(activeTf, payload.timeframes.length - 1)]
   const tf = useMemo(() => {
     if (!rawTf) return undefined
-    if (rawTf.indicators !== null && rawTf.series !== undefined && rawTf.series['rsi14']?.length === rawTf.candles.length) {
-      return rawTf
-    }
-    try {
-      const indicators = rawTf.indicators ?? (rawTf.candles.length > 0 ? regimeSnapshot(rawTf.candles) : null)
-      const series = rawTf.series ?? (rawTf.candles.length > 0 ? regimeSeries(rawTf.candles) : undefined)
-      return { ...rawTf, indicators, series }
-    } catch {
-      return rawTf
-    }
+    return enrichChartTimeframe(rawTf)
   }, [rawTf])
   const activeKey = useMemo(() => [...activeChips].sort().join(','), [activeChips])
   const activeList = useMemo(() => activeKey === '' ? [] : activeKey.split(','), [activeKey])

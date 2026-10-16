@@ -463,9 +463,11 @@ async function unwrap(promise: ReturnType<RpcCaller['call']>): Promise<unknown> 
 }
 
 /**
- * Wrap raw candles as a chart payload. Indicators are `null` on purpose: these
- * bars came straight from the provider, so there is no model-computed regime
- * to show, and the card renders no indicator chips rather than inventing any.
+ * Wrap raw candles as a chart payload. Indicators/series stay empty here on
+ * purpose: these bars came straight from the provider, so there is no
+ * *model-computed* regime to attribute to the agent. `ChartBody` fills them
+ * client-side via `enrichChartTimeframe` so live-panel chips (MACD/Stoch/…)
+ * still work without an agent snapshot.
  * @param providerId - the provider that served the bars.
  * @param symbol - the instrument.
  * @param timeframe - the bar interval.

@@ -64,8 +64,8 @@ describe('sanitizeSettings', () => {
       WMA: { params: [60, 100, 200], visible: true },
       SUPERTREND: { params: [60, 4], visible: true },
       EVASIVE_ST: { params: [10, 3.0, 1.0, 0.5], visible: false },
-      NW_TREND: { params: [50, 8, 2.0, 1.8], visible: false },
-      OB_BB: { params: [], visible: false },
+      NW_TREND: { params: [50, 8, 2.0, 1.5], visible: false },
+      OB_BB: { params: [5, 5, 20], visible: false },
       MTF_SR: { params: [5], visible: false },
       OI_POSTURE: { params: [], visible: true },
       RSI_GRID: { params: [7, 30, 60, 10], visible: true },
@@ -81,7 +81,7 @@ describe('sanitizeSettings', () => {
     expect(s['WMA']).toEqual({ params: [20, 100, 200], visible: false })
     expect(s['SUPERTREND']).toEqual({ params: [10, 2.5], visible: true })
     expect(s['EVASIVE_ST']).toEqual({ params: [10, 3.0, 1.0, 0.5], visible: false })
-    expect(s['NW_TREND']).toEqual({ params: [50, 8, 2.0, 1.8], visible: false })
+    expect(s['NW_TREND']).toEqual({ params: [50, 8, 2.0, 1.5], visible: false })
     expect(s['OI_POSTURE']).toEqual({ params: [], visible: true })
     expect(s['LSR_RATIO']).toEqual({ params: [], visible: true })
   })

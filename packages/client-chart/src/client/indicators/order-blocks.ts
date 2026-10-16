@@ -549,12 +549,13 @@ export const orderBlockIndicator = {
     })
   },
   createTooltipDataSource: ({ indicator, crosshair }: {
-    indicator: { result: OrderBlockBarResult[] }
+    indicator: { calcParams?: number[]; result: OrderBlockBarResult[] }
     crosshair: { dataIndex?: number }
   }) => {
     const row = indicator.result[crosshair.dataIndex ?? indicator.result.length - 1]
+    const params = indicator.calcParams ?? []
     return {
-      calcParamsText: '',
+      calcParamsText: params.length ? `(${params.join(', ')})` : '',
       values: [
         row?.bullOB ? { title: '买单块: ', value: { text: formatPrice(row.bullOB), color: '#22c55e' } } : null,
         row?.bearOB ? { title: '卖单块: ', value: { text: formatPrice(row.bearOB), color: '#ef4444' } } : null,

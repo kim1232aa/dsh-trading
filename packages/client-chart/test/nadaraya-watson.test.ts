@@ -233,24 +233,41 @@ describe('Klinecharts Indicator Configuration', () => {
 
   it('executes indicator calc function correctly', () => {
     const bars = [{ close: 100 }, { close: 102 }, { close: 104 }, { close: 103 }]
-    const result = nadarayaWatsonIndicator.calc(bars, { calcParams: [50, 8, 2.0, 1.8] })
+    const result = nadarayaWatsonIndicator.calc(bars, { calcParams: [50, 8, 2.0, 1.5] })
     expect(result.length).toBe(4)
     expect(result[3]!.value).toBeDefined()
   })
 
   it('creates tooltip data source with colored legend and parameters', () => {
     const bars = [{ close: 100 }, { close: 105 }]
-    const result = nadarayaWatsonIndicator.calc(bars, { calcParams: [50, 8, 2.0, 1.8] })
+    const result = nadarayaWatsonIndicator.calc(bars, { calcParams: [50, 8, 2.0, 1.5] })
     const tooltip = createNadarayaWatsonTooltipDataSource({
-      indicator: { calcParams: [50, 8, 2.0, 1.8], result },
+      indicator: { calcParams: [50, 8, 2.0, 1.5], result },
       crosshair: { dataIndex: 1 },
     })
 
     expect(tooltip.name).toBe('核回归')
-    expect(tooltip.calcParamsText).toBe('(50, 8, 2, 1.8)')
+    expect(tooltip.calcParamsText).toBe('(50, 8, 2, 1.5)')
     expect(tooltip.values.length).toBe(3) // 中轨, 上轨, 下轨
     expect(tooltip.values[0]!.title).toBe('中轨: ')
     expect(tooltip.values[1]!.title).toBe('上轨: ')
     expect(tooltip.values[2]!.title).toBe('下轨: ')
+  })
+
+  it('defaults to QuantAlgo Gaussian+close and wires 4th param as bandMultiplier', () => {
+    expect(nadarayaWatsonIndicator.calcParams).toEqual([50, 8, 2.0, 1.5])
+    const noisy = Array.from({ length: 60 }, (_, i) => {
+      const base = 100 + Math.sin(i / 5) * 10
+      return { open: base, high: base + 3, low: base - 3, close: base + (i % 2 === 0 ? 1.5 : -1.5) }
+    })
+    const narrow = nadarayaWatsonIndicator.calc(noisy, { calcParams: [50, 8, 2.0, 1.0] })
+    const wide = nadarayaWatsonIndicator.calc(noisy, { calcParams: [50, 8, 2.0, 3.0] })
+    const mid = 40
+    const narrowWidth = narrow[mid]!.upper - narrow[mid]!.lower
+    const wideWidth = wide[mid]!.upper - wide[mid]!.lower
+    expect(wideWidth).toBeGreaterThan(narrowWidth * 2.5)
+    // 4th param must NOT act as RQ relativeWeight: Gaussian path ignores rq,
+    // so swapping only the 4th while keeping center identical proves band wiring.
+    expect(narrow[mid]!.value).toBeCloseTo(wide[mid]!.value, 8)
   })
 })

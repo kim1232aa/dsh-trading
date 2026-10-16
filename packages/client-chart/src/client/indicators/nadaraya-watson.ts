@@ -264,13 +264,14 @@ export function nadarayaWatsonTrend(
   lookback = 50,
   bandwidth = 8,
   mult = 2.0,
-  bandMult = 1.8,
+  bandMult = 1.5,
 ): NadarayaWatsonBarResult[] {
   return calculateNadarayaWatson(bars, {
     lookback,
     bandwidth,
     multiplier: mult,
     bandMultiplier: bandMult,
+    // QuantAlgo Default: Gaussian + close (see nadarayaWatsonIndicator).
   })
 }
 
@@ -323,19 +324,19 @@ export const nadarayaWatsonIndicator = {
   shortName: '核回归',
   series: 'price' as const,
   precision: 2,
-  calcParams: [50, 8, 2.0, 8.0, 2.5],
+  // QuantAlgo Default: lookback/bandwidth/h_mult/band_mult. RQ relativeWeight stays internal (default 8).
+  calcParams: [50, 8, 2.0, 1.5],
   figures: nadarayaWatsonFigures,
   styles: nadarayaWatsonStyles,
   calc: (dataList: readonly CandleInput[], ind: { calcParams: number[] }) => {
     const params = ind.calcParams ?? []
     return calculateNadarayaWatson(dataList, {
-      source: 'hlc3',
-      kernelType: 'Rational Quadratic',
+      source: 'close',
+      kernelType: 'Gaussian',
       lookback: params[0] ?? 50,
       bandwidth: params[1] ?? 8,
       multiplier: params[2] ?? 2.0,
-      relativeWeight: params[3] ?? 8.0,
-      bandMultiplier: params[4] ?? 2.5,
+      bandMultiplier: params[3] ?? 1.5,
     })
   },
   createTooltipDataSource: createNadarayaWatsonTooltipDataSource,
@@ -368,7 +369,7 @@ export const nadarayaWatsonIndicator = {
       }
     }
 
-    // 2. 6-step gradient cloud fill between source price (hlc3) and the NW line
+    // 2. 6-step gradient cloud fill between source price and the NW line
     for (let i = from; i < to; i++) {
       const rA = results[i]
       const rB = results[i + 1]
