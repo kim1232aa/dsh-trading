@@ -82,6 +82,13 @@ const VIEW_HEARTBEAT_MS = 10_000
 /** Settle time before following the conversation, so a burst of calls costs one fetch. */
 const FOLLOW_SETTLE_MS = 400
 
+/**
+ * CoinGlass large walls refresh cadence. The capi endpoint is a private
+ * third-party API whose data shifts every few tens of seconds, so polling at the
+ * live-tape rate only adds requests; 20 s keeps the overlay current without that.
+ */
+const LARGE_WALLS_MS = 20_000
+
 /** Consecutive failed refreshes before the badge stops claiming the chart is live. */
 const STALL_AFTER = 3
 
@@ -847,7 +854,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
       )
     }
     pull()
-    const timer = setInterval(pull, 8_000)
+    const timer = setInterval(pull, LARGE_WALLS_MS)
     return () => {
       active = false
       controller.abort()
