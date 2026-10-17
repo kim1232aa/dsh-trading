@@ -38,7 +38,7 @@
     "react": "^18.2.0",
     "@dsh-trading/client-frame": "^0.2.0",
     "@dsh-trading/market-data": "workspace:^",
-    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.2.0-rc.2",
     "@dsh-trading/provider-coinglass": "workspace:^"
   },
   "devDependencies": {
