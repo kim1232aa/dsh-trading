@@ -287,7 +287,7 @@ export const EDITABLE: {
     ...PATTERN_KEYS.map(k => boolP(PATTERN_CN[k])),
     { label: '文字大小', min: 0, max: 3, step: 1, kind: 'select', options: [...SIZE_OPTS] },
     boolP('显示ⓘ说明'), colorP('多标签色'), colorP('空标签色'),
-    { label: 'Doji敏感度(Pine未用)', min: 0.01, max: 0.5, step: 0.01 },
+    { label: 'Doji敏感度', min: 0.01, max: 0.5, step: 0.01 },
     boolP('中心周期标签'), colorP('中心标签色'),
     { label: '中心标签大小', min: 0, max: 3, step: 1, kind: 'select', options: [...SIZE_OPTS] },
     { label: '标签下偏移', min: 0, max: 20, step: 1 },
@@ -2049,96 +2049,338 @@ function AxisMenu({
  * Enter (not per keystroke, so typing "100" never computes WMA(1) and WMA(10)
  * on the way). Shared by every chart on the page and kept across restarts.
  */
+const CATEGORIES: { id: string; label: string; names?: string[] }[] = [
+  { id: 'all', label: '全部' },
+  { id: 'trend', label: '趋势与通道', names: ['WMA', 'SUPERTREND', 'EVASIVE_ST', 'NW_TREND', 'VB_PRO_READ'] },
+  { id: 'pattern', label: '形态与结构', names: ['DUAL_VIEW_HTF', 'OB_BB', 'MTF_SR'] },
+  { id: 'oscillator', label: '震荡与网格', names: ['RSI_GRID', 'REVPOINT', 'ENTRY_SIGNAL'] },
+  { id: 'deriv', label: '主力与衍生品', names: ['OI_POSTURE', 'LSR_RATIO', 'LARGE_WALLS'] },
+]
+
+const HTF_BULLISH_INDICES = [21, 23, 24, 27, 29, 30, 32, 34, 35, 37]
+const HTF_BEARISH_INDICES = [20, 22, 25, 26, 28, 31, 33, 36, 38]
+
+/**
+ * Modern grouped, collapsible indicator param editor with dual-direction
+ * symmetry, quick pattern batch toggles, and compact card layout.
+ */
 function ParamEditor({ settings, palette, onClose }: {
   settings: IndicatorSettings
   palette: Palette
   onClose: () => void
 }): JSX.Element {
+  const [activeCategory, setActiveCategory] = useState<string>('all')
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+
   const input: CSSProperties = {
     width: 56, background: 'transparent', color: 'inherit', fontSize: 11,
     border: `1px solid ${palette.line}`, borderRadius: 3, padding: '1px 4px',
   }
+
   const commit = (name: string, i: number, raw: string, el: HTMLInputElement): void => {
     const s = settings[name]!
     const params = [...s.params]
     params[i] = Number(raw)
     const next = sanitizeSettings({ ...settings, [name]: { ...s, params } })
-    // Out of range → snap the field back to the value actually in use.
     el.value = String(next[name]!.params[i])
     if (next[name]!.params[i] !== s.params[i]) setSettings(next)
   }
+
+  const toggleExpand = (name: string): void => {
+    setExpanded(prev => ({ ...prev, [name]: !(prev[name] ?? settings[name]?.visible ?? false) }))
+  }
+
+  const setAllExpanded = (val: boolean): void => {
+    const next: Record<string, boolean> = {}
+    for (const def of EDITABLE) next[def.name] = val
+    setExpanded(next)
+  }
+
+  const cat = CATEGORIES.find(c => c.id === activeCategory)
+  const visibleDefs = EDITABLE.filter(d => !cat?.names || cat.names.includes(d.name))
+
   return (
     <div
       role="group"
       aria-label="指标参数"
       style={{
-        display: 'flex', flexDirection: 'column', gap: 6, padding: 8, marginBottom: 8, fontSize: 11,
+        display: 'flex', flexDirection: 'column', gap: 8, padding: 10, marginBottom: 8, fontSize: 11,
         border: `1px solid ${palette.line}`, borderRadius: 6, flex: '0 0 auto',
+        maxHeight: '420px', overflowY: 'auto', background: 'rgba(15, 20, 25, 0.4)',
       }}
     >
-      {EDITABLE.map(def => {
-        const s = settings[def.name]!
-        return (
-          <div key={def.name} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 84 }}>
-              <input
-                type="checkbox"
-                checked={s.visible}
-                onChange={e => setSettings({ ...settings, [def.name]: { ...s, visible: e.target.checked } })}
-              />
-              {def.title}
-            </label>
-            {def.params.map((spec, i) => {
-              const val = s.params[i]!
-              const set = (v: number): void => {
-                const params = [...s.params]; params[i] = v
-                setSettings(sanitizeSettings({ ...settings, [def.name]: { ...s, params } }))
-              }
-              const lab = { display: 'flex', alignItems: 'center', gap: 4, color: palette.faint } as const
-              if (spec.kind === 'select') return (
-                <label key={`${def.name}-${i}`} style={lab}>{spec.label}
-                  <select value={val} onChange={e => set(Number(e.target.value))} style={{ ...input, width: 'auto' }}>
-                    {(spec.options ?? []).map((o, k) => <option key={k} value={k}>{o}</option>)}
-                  </select>
-                </label>)
-              if (spec.kind === 'bool') return (
-                <label key={`${def.name}-${i}`} style={lab}>
-                  <input type="checkbox" checked={val === 1} onChange={e => set(e.target.checked ? 1 : 0)} />{spec.label}
-                </label>)
-              if (spec.kind === 'color') return (
-                <label key={`${def.name}-${i}`} style={lab}>{spec.label}
-                  <input type="color" value={intToHex(val).toLowerCase()} onChange={e => set(parseInt(e.target.value.slice(1), 16))}
-                    style={{ width: 28, height: 18, padding: 0, border: `1px solid ${palette.line}`, background: 'transparent' }} />
-                </label>)
-              return (
-              <label key={`${def.name}-${i}-${val}`} style={lab}>
-                {spec.label}
-                <input
-                  type="number"
-                  defaultValue={val}
-                  min={spec.min}
-                  max={spec.max}
-                  step={spec.step}
-                  style={input}
-                  onBlur={e => commit(def.name, i, e.target.value, e.target)}
-                  onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
-                />
-              </label>)
-            })}
-          </div>
-        )
-      })}
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button
-          onClick={() => setSettings(sanitizeSettings(null))}
-          style={{ background: 'transparent', color: palette.faint, border: `1px solid ${palette.line}`, borderRadius: 4, fontSize: 11, cursor: 'pointer' }}
-        >恢复默认</button>
+      {/* Category Tabs */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, borderBottom: `1px solid ${palette.line}`, paddingBottom: 6 }}>
+        {CATEGORIES.map(c => {
+          const active = c.id === activeCategory
+          return (
+            <button
+              key={c.id}
+              onClick={() => setActiveCategory(c.id)}
+              style={{
+                background: active ? 'rgba(83, 155, 245, 0.15)' : 'transparent',
+                color: active ? '#539bf5' : palette.faint,
+                border: `1px solid ${active ? '#539bf5' : palette.line}`,
+                borderRadius: 4, padding: '2px 8px', fontSize: 11, cursor: 'pointer',
+                fontWeight: active ? 'bold' : 'normal',
+              }}
+            >
+              {c.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Indicator Cards */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {visibleDefs.map(def => {
+          const s = settings[def.name]!
+          const isExpanded = expanded[def.name] ?? s.visible
+          const hasParams = def.params.length > 0
+
+          return (
+            <div
+              key={def.name}
+              style={{
+                display: 'flex', flexDirection: 'column', gap: 6,
+                padding: '6px 8px', borderRadius: 4,
+                border: `1px solid ${s.visible ? 'rgba(83, 155, 245, 0.25)' : palette.line}`,
+                background: s.visible ? 'rgba(83, 155, 245, 0.03)' : 'transparent',
+              }}
+            >
+              {/* Header row */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontWeight: s.visible ? 'bold' : 'normal' }}>
+                  <input
+                    type="checkbox"
+                    checked={s.visible}
+                    onChange={e => {
+                      const willBeVisible = e.target.checked
+                      setSettings({ ...settings, [def.name]: { ...s, visible: willBeVisible } })
+                      if (willBeVisible && expanded[def.name] === undefined) {
+                        setExpanded(prev => ({ ...prev, [def.name]: true }))
+                      }
+                    }}
+                  />
+                  <span>{def.title}</span>
+                  <span style={{
+                    fontSize: 9, padding: '0 4px', borderRadius: 3,
+                    border: `1px solid ${s.visible ? 'rgba(61,220,151,0.4)' : palette.line}`,
+                    color: s.visible ? '#3ddc97' : palette.faint,
+                  }}>
+                    {s.visible ? '已开启' : '未开启'}
+                  </span>
+                </label>
+
+                {hasParams ? (
+                  <button
+                    onClick={() => toggleExpand(def.name)}
+                    style={{
+                      background: 'transparent', color: palette.faint, border: 'none',
+                      fontSize: 10, cursor: 'pointer', padding: '1px 6px',
+                    }}
+                  >
+                    ⚙ 参数 {isExpanded ? '▲ 收起' : '▼ 展开'}
+                  </button>
+                ) : null}
+              </div>
+
+              {/* Params sub-panel */}
+              {isExpanded && hasParams ? (
+                <div style={{
+                  padding: '6px 8px', marginTop: 2,
+                  borderLeft: `2px solid ${s.visible ? '#539bf5' : palette.line}`,
+                  background: 'rgba(0, 0, 0, 0.15)', borderRadius: '0 4px 4px 0',
+                }}>
+                  {def.name === 'DUAL_VIEW_HTF' ? (
+                    /* Custom Layout for Dual View HTF Patterns */
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {/* General settings (0..19) */}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+                        {def.params.slice(0, 20).map((spec, idx) => renderControl(def.name, spec, idx, s.params[idx]!, s.params, commit, setSettings, settings, palette, input))}
+                      </div>
+
+                      {/* Pattern filtering box (20..38) */}
+                      <div style={{
+                        display: 'flex', flexDirection: 'column', gap: 6, padding: 8,
+                        background: 'rgba(255, 255, 255, 0.02)', borderRadius: 4,
+                        border: `1px solid ${palette.line}`,
+                      }}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                          <span style={{ fontWeight: 'bold', color: palette.text }}>
+                            K线形态多空筛选 ({HTF_BULLISH_INDICES.filter(i => s.params[i] === 1).length + HTF_BEARISH_INDICES.filter(i => s.params[i] === 1).length}/19)
+                          </span>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <button
+                              onClick={() => {
+                                const nextP = [...s.params]
+                                for (const i of HTF_BULLISH_INDICES) nextP[i] = 1
+                                setSettings(sanitizeSettings({ ...settings, [def.name]: { ...s, params: nextP } }))
+                              }}
+                              style={{ background: 'rgba(61,220,151,0.1)', color: '#3ddc97', border: '1px solid rgba(61,220,151,0.3)', borderRadius: 3, fontSize: 10, cursor: 'pointer', padding: '1px 6px' }}
+                            >🟢 全选看涨 (10)</button>
+                            <button
+                              onClick={() => {
+                                const nextP = [...s.params]
+                                for (const i of HTF_BEARISH_INDICES) nextP[i] = 1
+                                setSettings(sanitizeSettings({ ...settings, [def.name]: { ...s, params: nextP } }))
+                              }}
+                              style={{ background: 'rgba(244,112,103,0.1)', color: '#f47067', border: '1px solid rgba(244,112,103,0.3)', borderRadius: 3, fontSize: 10, cursor: 'pointer', padding: '1px 6px' }}
+                            >🔴 全选看跌 (9)</button>
+                            <button
+                              onClick={() => {
+                                const nextP = [...s.params]
+                                for (let i = 20; i <= 38; i++) nextP[i] = 1
+                                setSettings(sanitizeSettings({ ...settings, [def.name]: { ...s, params: nextP } }))
+                              }}
+                              style={{ background: 'transparent', color: palette.faint, border: `1px solid ${palette.line}`, borderRadius: 3, fontSize: 10, cursor: 'pointer', padding: '1px 6px' }}
+                            >全部开启</button>
+                            <button
+                              onClick={() => {
+                                const nextP = [...s.params]
+                                for (let i = 20; i <= 38; i++) nextP[i] = 0
+                                setSettings(sanitizeSettings({ ...settings, [def.name]: { ...s, params: nextP } }))
+                              }}
+                              style={{ background: 'transparent', color: palette.faint, border: `1px solid ${palette.line}`, borderRadius: 3, fontSize: 10, cursor: 'pointer', padding: '1px 6px' }}
+                            >全部关闭</button>
+                          </div>
+                        </div>
+
+                        {/* Two columns: Bullish / Bearish */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 8 }}>
+                          {/* Bullish column */}
+                          <div style={{
+                            display: 'flex', flexDirection: 'column', gap: 4, padding: 6,
+                            background: 'rgba(61, 220, 151, 0.04)', borderRadius: 4,
+                            border: '1px solid rgba(61, 220, 151, 0.15)',
+                          }}>
+                            <span style={{ color: '#3ddc97', fontWeight: 'bold', fontSize: 10 }}>🟢 看涨形态 (10项)</span>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                              {HTF_BULLISH_INDICES.map(idx => renderControl(def.name, def.params[idx]!, idx, s.params[idx]!, s.params, commit, setSettings, settings, palette, input))}
+                            </div>
+                          </div>
+
+                          {/* Bearish column */}
+                          <div style={{
+                            display: 'flex', flexDirection: 'column', gap: 4, padding: 6,
+                            background: 'rgba(244, 112, 103, 0.04)', borderRadius: 4,
+                            border: '1px solid rgba(244, 112, 103, 0.15)',
+                          }}>
+                            <span style={{ color: '#f47067', fontWeight: 'bold', fontSize: 10 }}>🔴 看跌形态 (9项)</span>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                              {HTF_BEARISH_INDICES.map(idx => renderControl(def.name, def.params[idx]!, idx, s.params[idx]!, s.params, commit, setSettings, settings, palette, input))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Display & style settings (39..end) */}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+                        {def.params.slice(39).map((spec, relIdx) => {
+                          const idx = 39 + relIdx
+                          return renderControl(def.name, spec, idx, s.params[idx]!, s.params, commit, setSettings, settings, palette, input)
+                        })}
+                      </div>
+                    </div>
+                  ) : def.name === 'RSI_GRID' ? (
+                    /* Custom Layout for Dual-Direction RSI Grid */
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+                        {def.params.map((spec, i) => renderControl(def.name, spec, i, s.params[i]!, s.params, commit, setSettings, settings, palette, input))}
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 2, fontSize: 10 }}>
+                        <span style={{ color: '#3ddc97', background: 'rgba(61,220,151,0.08)', padding: '2px 6px', borderRadius: 3, border: '1px solid rgba(61,220,151,0.2)' }}>
+                          🟢 多头网格: RSI &lt; {s.params[1] ?? 30} 累计超卖 &gt; {s.params[3] ?? 10} 进多 | ≥ {s.params[2] ?? 60} 止盈
+                        </span>
+                        <span style={{ color: '#f47067', background: 'rgba(244,112,103,0.08)', padding: '2px 6px', borderRadius: 3, border: '1px solid rgba(244,112,103,0.2)' }}>
+                          🔴 空头网格: RSI &gt; {100 - (s.params[2] ?? 60)} 累计超买 &gt; {s.params[3] ?? 10} 进空 | ≤ {100 - (s.params[1] ?? 30)} 止盈
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Standard Indicator Params */
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+                      {def.params.map((spec, i) => renderControl(def.name, spec, i, s.params[i]!, s.params, commit, setSettings, settings, palette, input))}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Footer action bar */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: `1px solid ${palette.line}`, paddingTop: 6, marginTop: 4 }}>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button
+            onClick={() => setAllExpanded(true)}
+            style={{ background: 'transparent', color: palette.faint, border: `1px solid ${palette.line}`, borderRadius: 4, fontSize: 11, cursor: 'pointer', padding: '2px 8px' }}
+          >全部展开</button>
+          <button
+            onClick={() => setAllExpanded(false)}
+            style={{ background: 'transparent', color: palette.faint, border: `1px solid ${palette.line}`, borderRadius: 4, fontSize: 11, cursor: 'pointer', padding: '2px 8px' }}
+          >全部折叠</button>
+          <button
+            onClick={() => setSettings(sanitizeSettings(null))}
+            style={{ background: 'transparent', color: palette.faint, border: `1px solid ${palette.line}`, borderRadius: 4, fontSize: 11, cursor: 'pointer', padding: '2px 8px' }}
+          >恢复默认</button>
+        </div>
         <button
           onClick={onClose}
-          style={{ background: 'transparent', color: 'inherit', border: `1px solid ${palette.line}`, borderRadius: 4, fontSize: 11, cursor: 'pointer' }}
-        >收起</button>
+          style={{ background: 'rgba(83, 155, 245, 0.1)', color: '#539bf5', border: '1px solid rgba(83, 155, 245, 0.3)', borderRadius: 4, fontSize: 11, cursor: 'pointer', padding: '2px 12px', fontWeight: 'bold' }}
+        >完成并收起</button>
       </div>
     </div>
+  )
+}
+
+function renderControl(
+  defName: string,
+  spec: ParamSpec,
+  i: number,
+  val: number,
+  params: number[],
+  commit: (name: string, i: number, raw: string, el: HTMLInputElement) => void,
+  setSettings: (s: IndicatorSettings) => void,
+  settings: IndicatorSettings,
+  palette: Palette,
+  input: CSSProperties
+): JSX.Element {
+  const set = (v: number): void => {
+    const next = [...params]; next[i] = v
+    setSettings(sanitizeSettings({ ...settings, [defName]: { ...settings[defName]!, params: next } }))
+  }
+  const lab = { display: 'flex', alignItems: 'center', gap: 4, color: palette.faint } as const
+  if (spec.kind === 'select') return (
+    <label key={`${defName}-${i}`} style={lab}>{spec.label}
+      <select value={val} onChange={e => set(Number(e.target.value))} style={{ ...input, width: 'auto' }}>
+        {(spec.options ?? []).map((o, k) => <option key={k} value={k}>{o}</option>)}
+      </select>
+    </label>)
+  if (spec.kind === 'bool') return (
+    <label key={`${defName}-${i}`} style={lab}>
+      <input type="checkbox" checked={val === 1} onChange={e => set(e.target.checked ? 1 : 0)} />{spec.label}
+    </label>)
+  if (spec.kind === 'color') return (
+    <label key={`${defName}-${i}`} style={lab}>{spec.label}
+      <input type="color" value={intToHex(val).toLowerCase()} onChange={e => set(parseInt(e.target.value.slice(1), 16))}
+        style={{ width: 28, height: 18, padding: 0, border: `1px solid ${palette.line}`, background: 'transparent' }} />
+    </label>)
+  return (
+    <label key={`${defName}-${i}-${val}`} style={lab}>
+      {spec.label}
+      <input
+        type="number"
+        defaultValue={val}
+        min={spec.min}
+        max={spec.max}
+        step={spec.step}
+        style={input}
+        onBlur={e => commit(defName, i, e.target.value, e.target)}
+        onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
+      />
+    </label>
   )
 }
 
