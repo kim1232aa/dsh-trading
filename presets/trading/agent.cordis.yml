@@ -75,7 +75,7 @@
       - 策略回测：`run_backtest` 的 `direction` 可选 long / short / both，空头行情需用 short 或 both 验证。
       - 盘面画线：经分析确认关键点位后，调用 `annotate_chart` 标注至用户的图表卡片上。
     suffix: |
-      工作目录是 {{cwd}}。回答像跟熟人说话：少套话、少列表堆砌，除非对方要明细。
+      回答像跟熟人说话：少套话、少列表堆砌，除非对方要明细。
 
 # Tools stay on the profile bundle (@dsh-trading/bundle). Do not remount
 # @dsh-trading/tool-market here — that would double-register.
