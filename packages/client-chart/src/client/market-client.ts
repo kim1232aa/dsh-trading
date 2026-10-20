@@ -72,7 +72,20 @@ export interface MarketClient {
   /** Level 2 orderbook (5-10 levels depth). null when not supported. */
   getOrderbook(symbol: string, providerId?: string, signal?: AbortSignal): Promise<Orderbook | null>
   /** CoinGlass large resting walls. null/empty when unavailable. */
-  getLargeOrders?(symbol: string, opts?: { hours?: number; top?: number; venue?: string }, signal?: AbortSignal): Promise<PanelLargeOrders | null>
+  getLargeOrders?(
+    symbol: string,
+    opts?: {
+      hours?: number
+      top?: number
+      venue?: string
+      minUsd?: number
+      currentPrice?: number
+      maxDistancePct?: number
+      status?: 'active' | 'all' | 'revoked'
+      balanced?: boolean
+    },
+    signal?: AbortSignal,
+  ): Promise<PanelLargeOrders | null>
   /** Financial valuation & fundamentals (PE, PB, Market Cap). null when not supported. */
   getFundamentals(symbol: string, providerId?: string, signal?: AbortSignal): Promise<FundamentalsPackage | null>
   /** User custom watchlist items & groups from @dsh-trading/watchlist. */
@@ -113,6 +126,7 @@ export interface PanelLargeOrders {
   cgSymbol: string
   pair: string
   orderCount: number
+  updatedAt?: number
   walls: PanelLargeOrderWall[]
 }
 
@@ -627,6 +641,11 @@ export function createMarketClient(rpc: RpcCaller): MarketClient {
       if (opts?.hours !== undefined) body['hours'] = opts.hours
       if (opts?.top !== undefined) body['top'] = opts.top
       if (opts?.venue !== undefined) body['venue'] = opts.venue
+      if (opts?.minUsd !== undefined) body['minUsd'] = opts.minUsd
+      if (opts?.currentPrice !== undefined) body['currentPrice'] = opts.currentPrice
+      if (opts?.maxDistancePct !== undefined) body['maxDistancePct'] = opts.maxDistancePct
+      if (opts?.status !== undefined) body['status'] = opts.status
+      if (opts?.balanced !== undefined) body['balanced'] = opts.balanced
       const value = await unwrap(rpc.call(CHANNEL, 'largeOrders', body, signal)) as PanelLargeOrders
       return value
     },

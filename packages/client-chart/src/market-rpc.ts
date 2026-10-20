@@ -87,6 +87,7 @@ export interface LargeOrdersResponse {
   cgSymbol: string
   pair: string
   orderCount: number
+  updatedAt?: number
   walls: {
     id: string | number
     exchange: string

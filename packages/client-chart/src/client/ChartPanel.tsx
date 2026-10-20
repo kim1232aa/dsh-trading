@@ -480,6 +480,83 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
 }
 
 /**
+ * Large order walls summary strip (CoinGlass capi).
+ * Displays: 买墙/卖墙堵数、合计名义价值、最近强支撑/阻力价格、最近刷新时间与手动刷新按钮。
+ */
+function LargeWallsStrip({
+  wallsData,
+  onRefresh,
+}: {
+  wallsData: PanelLargeOrders | null
+  onRefresh?: () => void
+}): JSX.Element | null {
+  if (!wallsData || !wallsData.walls || wallsData.walls.length === 0) return null
+
+  const buys = wallsData.walls.filter(w => w.side === 'buy')
+  const sells = wallsData.walls.filter(w => w.side === 'sell')
+
+  const totalBuyUsd = buys.reduce((acc, w) => acc + w.currentUsd, 0)
+  const totalSellUsd = sells.reduce((acc, w) => acc + w.currentUsd, 0)
+
+  const fmtUsd = (n: number): string => {
+    if (n >= 1e8) return `${(n / 1e8).toFixed(2)}亿`
+    if (n >= 1e4) return `${(n / 1e4).toFixed(1)}万`
+    return `${n.toFixed(0)}`
+  }
+
+  const updatedTime = wallsData.updatedAt
+    ? new Date(wallsData.updatedAt).toLocaleTimeString()
+    : '刚刚'
+
+  const nearestBuy = buys[0]
+  const nearestSell = sells[0]
+
+  return (
+    <div
+      style={{
+        ...STRIP,
+        background: 'var(--dsw-alias-bg-hover, rgba(128,128,128,0.06))',
+        fontSize: 11,
+        alignItems: 'center',
+      }}
+      title={`CoinGlass 大额挂单墙统计 (仅当前在挂订单) · 更新于 ${updatedTime}`}
+    >
+      <span style={{ fontWeight: 600, color: 'var(--dsw-alias-text-1, #ccc)' }}>
+        🧱 大单墙(在挂)
+      </span>
+      <span style={{ color: '#3ddc97' }}>
+        买墙: <span style={VALUE}>{buys.length}堵 (${fmtUsd(totalBuyUsd)})</span>
+        {nearestBuy ? <span style={{ opacity: 0.85, marginLeft: 4 }}>[强撑 @{nearestBuy.price}]</span> : null}
+      </span>
+      <span style={{ color: '#f47067' }}>
+        卖墙: <span style={VALUE}>{sells.length}堵 (${fmtUsd(totalSellUsd)})</span>
+        {nearestSell ? <span style={{ opacity: 0.85, marginLeft: 4 }}>[强阻 @{nearestSell.price}]</span> : null}
+      </span>
+      <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, opacity: 0.8 }}>
+        <span>更新: {updatedTime}</span>
+        {onRefresh ? (
+          <button
+            type="button"
+            onClick={onRefresh}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              color: 'inherit',
+              padding: '0 2px',
+              fontSize: 11,
+            }}
+            title="立即刷新大单墙数据"
+          >
+            🔄
+          </button>
+        ) : null}
+      </span>
+    </div>
+  )
+}
+
+/**
  * Institutional & retail capital flow strip for A-shares / equities.
  * Displays: 主力净流入 (superLarge + large), 超大单, 大单, 散户 (medium + small), 主力净买占比.
  */
@@ -750,6 +827,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
   const fails = useRef(0)
   const failedFollow = useRef<string | null>(null)
   const ownOrigin = useRef<'user' | 'followed'>('user')
+  const pullLargeWallsRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     let active = true
@@ -838,29 +916,50 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
   useEffect(() => {
     if (!largeWallsOn || payload === null) {
       setPanelLargeWalls(null)
+      pullLargeWallsRef.current = null
       return
     }
     const symbol = payload.symbol
     if (!symbol || !market.getLargeOrders) {
       setPanelLargeWalls(null)
+      pullLargeWallsRef.current = null
       return
     }
     let active = true
     const controller = new AbortController()
     const pull = (): void => {
-      market.getLargeOrders!(symbol, { hours: 72, top: 24 }, controller.signal).then(
+      const tf0 = payload.timeframes?.[0]
+      const lastCandle = tf0?.candles?.[tf0.candles.length - 1]
+      const currentPrice = lastCandle?.close
+      const minWan = peekSettings()['LARGE_WALLS']?.params?.[0] ?? 100
+      const maxDist = (peekSettings()['LARGE_WALLS']?.params?.[1] ?? 20) / 100
+      const sideLimit = peekSettings()['LARGE_WALLS']?.params?.[2] ?? 8
+      market.getLargeOrders!(
+        symbol,
+        {
+          hours: 72,
+          top: sideLimit * 2,
+          status: 'active',
+          maxDistancePct: maxDist,
+          minUsd: minWan * 10_000,
+          ...(typeof currentPrice === 'number' ? { currentPrice } : {}),
+        },
+        controller.signal,
+      ).then(
         snap => { if (active) setPanelLargeWalls(snap) },
         () => { if (active && !controller.signal.aborted) setPanelLargeWalls(null) },
       )
     }
+    pullLargeWallsRef.current = pull
     pull()
     const timer = setInterval(pull, LARGE_WALLS_MS)
     return () => {
       active = false
       controller.abort()
       clearInterval(timer)
+      pullLargeWallsRef.current = null
     }
-  }, [largeWallsOn, market, payload?.symbol])
+  }, [largeWallsOn, market, payload?.symbol, payload?.timeframes])
 
 
   const load = useCallback(async (
@@ -1396,6 +1495,13 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
                 onData={setPanelDerivatives}
                 hoveredTime={hoveredTime}
                 intervalMs={shownTimeframe ? TF_MS[shownTimeframe] : undefined}
+              />
+            ) : null}
+            {largeWallsOn && panelLargeWalls?.walls?.length ? (
+              <LargeWallsStrip
+                key="large-walls-strip"
+                wallsData={panelLargeWalls}
+                onRefresh={() => pullLargeWallsRef.current?.()}
               />
             ) : null}
             {payload.provider === 'cn' ? (

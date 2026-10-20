@@ -42,6 +42,8 @@ export interface LargeOrdersSnapshot {
   statistics: LargeOrderStatistics[]
   /** How many raw walls before top-N trim. */
   orderCount: number
+  /** Epoch timestamp ms of when this snapshot was fetched. */
+  updatedAt?: number
 }
 
 export interface FetchLargeOrdersOptions {
@@ -58,4 +60,17 @@ export interface FetchLargeOrdersOptions {
   maxPrice?: number
   /** AbortSignal. */
   signal?: AbortSignal
+  /**
+   * Filter order status.
+   * 'active' (default): only still-resting open limit orders (state === 1).
+   * 'all': include both resting and historical completed/revoked orders.
+   * 'revoked': only cancelled/revoked orders (state === 2).
+   */
+  status?: 'active' | 'all' | 'revoked'
+  /** Current market price for distance filtering and symmetric buy/sell grouping. */
+  currentPrice?: number
+  /** Maximum distance ratio from currentPrice (e.g. 0.3 = ±30%). */
+  maxDistancePct?: number
+  /** Whether to balance top walls evenly between buy (support) and sell (resistance). Default true. */
+  balanced?: boolean
 }

@@ -75,7 +75,7 @@ describe('sanitizeSettings', () => {
       REVPOINT: { params: [0.7, 2, 3, 0, 0, 1, 0, 1, 0], visible: true },
       LSR_RATIO: { params: [], visible: true },
       ENTRY_SIGNAL: { params: [60, 4], visible: false },
-      LARGE_WALLS: { params: [100], visible: false },
+      LARGE_WALLS: { params: [100, 20, 8], visible: false },
     })
     expect(sanitizeSettings('x')).toEqual(sanitizeSettings(null))
   })
@@ -89,13 +89,13 @@ describe('sanitizeSettings', () => {
     expect(s['LSR_RATIO']).toEqual({ params: [], visible: true })
   })
   it('LARGE_WALLS defaults to 100万 and clamps out-of-range', () => {
-    expect(sanitizeSettings(null)['LARGE_WALLS']).toEqual({ params: [100], visible: false })
-    expect(sanitizeSettings({ LARGE_WALLS: { params: [500], visible: true } })['LARGE_WALLS'])
-      .toEqual({ params: [500], visible: true })
-    expect(sanitizeSettings({ LARGE_WALLS: { params: [9999], visible: true } })['LARGE_WALLS'])
-      .toEqual({ params: [100], visible: true })
-    expect(sanitizeSettings({ LARGE_WALLS: { params: [-1], visible: true } })['LARGE_WALLS'])
-      .toEqual({ params: [100], visible: true })
+    expect(sanitizeSettings(null)['LARGE_WALLS']).toEqual({ params: [100, 20, 8], visible: false })
+    expect(sanitizeSettings({ LARGE_WALLS: { params: [500, 15, 6], visible: true } })['LARGE_WALLS'])
+      .toEqual({ params: [500, 15, 6], visible: true })
+    expect(sanitizeSettings({ LARGE_WALLS: { params: [9999, 20, 8], visible: true } })['LARGE_WALLS'])
+      .toEqual({ params: [100, 20, 8], visible: true })
+    expect(sanitizeSettings({ LARGE_WALLS: { params: [-1, 20, 8], visible: true } })['LARGE_WALLS'])
+      .toEqual({ params: [100, 20, 8], visible: true })
   })
 })
 

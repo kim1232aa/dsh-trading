@@ -240,13 +240,47 @@ export class CoinglassCapi {
       const v = opts.venue.toLowerCase()
       walls = walls.filter(w => w.exchange.toLowerCase() === v)
     }
+    const status = opts.status ?? 'active'
+    if (status === 'active') {
+      walls = walls.filter(w => w.state === 1)
+    } else if (status === 'revoked') {
+      walls = walls.filter(w => w.state === 2)
+    }
+
     if (opts.minUsd !== undefined && opts.minUsd > 0) {
       walls = walls.filter(w => w.currentUsd >= opts.minUsd!)
     }
-    walls.sort((a, b) => b.currentUsd - a.currentUsd)
+
+    if (typeof opts.currentPrice === 'number' && Number.isFinite(opts.currentPrice) && opts.currentPrice > 0) {
+      const maxDist = opts.maxDistancePct ?? 0.35
+      walls = walls.filter(w => Math.abs(w.price - opts.currentPrice!) / opts.currentPrice! <= maxDist)
+    }
+
+    const orderCount = walls.length
+
+    let selectedWalls: LargeOrderWall[]
+    if (opts.balanced !== false && typeof opts.currentPrice === 'number' && opts.currentPrice > 0) {
+      const p = opts.currentPrice
+      const buys = walls.filter(w => w.side === 'buy' && w.price <= p).sort((a, b) => b.currentUsd - a.currentUsd)
+      const sells = walls.filter(w => w.side === 'sell' && w.price >= p).sort((a, b) => b.currentUsd - a.currentUsd)
+      const half = Math.ceil(top / 2)
+      const pickBuys = buys.slice(0, half)
+      const pickSells = sells.slice(0, half)
+      if (pickBuys.length < half && sells.length > half) {
+        pickSells.push(...sells.slice(half, half + (half - pickBuys.length)))
+      } else if (pickSells.length < half && buys.length > half) {
+        pickBuys.push(...buys.slice(half, half + (half - pickSells.length)))
+      }
+      pickSells.sort((a, b) => a.price - b.price)
+      pickBuys.sort((a, b) => b.price - a.price)
+      selectedWalls = [...pickSells, ...pickBuys]
+    } else {
+      walls.sort((a, b) => b.currentUsd - a.currentUsd)
+      selectedWalls = walls.slice(0, top)
+    }
 
     let statistics: LargeOrderStatistics[] = []
-    const prices = walls.map(w => w.price).filter(p => p > 0)
+    const prices = selectedWalls.map(w => w.price).filter(p => p > 0)
     if (prices.length > 0) {
       const minP = opts.minPrice ?? Math.min(...prices) * 0.98
       const maxP = opts.maxPrice ?? Math.max(...prices) * 1.02
@@ -269,9 +303,10 @@ export class CoinglassCapi {
       pair: mapped.pair,
       startTime: start,
       endTime: end,
-      orderCount: walls.length,
-      walls: walls.slice(0, top),
+      orderCount,
+      walls: selectedWalls,
       statistics,
+      updatedAt: Date.now(),
     }
   }
 }

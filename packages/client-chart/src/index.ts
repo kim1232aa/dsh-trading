@@ -82,13 +82,27 @@ export function apply(ctx: Context): void {
         const hours = typeof body['hours'] === 'number' && Number.isFinite(body['hours']) ? body['hours'] : 72
         const top = typeof body['top'] === 'number' && Number.isFinite(body['top']) ? Math.min(60, Math.max(1, Math.trunc(body['top']))) : 24
         const venue = typeof body['venue'] === 'string' ? body['venue'] : undefined
+        const currentPrice = typeof body['currentPrice'] === 'number' && Number.isFinite(body['currentPrice']) ? body['currentPrice'] : undefined
+        const maxDistancePct = typeof body['maxDistancePct'] === 'number' && Number.isFinite(body['maxDistancePct']) ? body['maxDistancePct'] : undefined
+        const minUsd = typeof body['minUsd'] === 'number' && Number.isFinite(body['minUsd']) ? body['minUsd'] : undefined
+        const status: 'active' | 'all' | 'revoked' = body['status'] === 'all' || body['status'] === 'revoked' || body['status'] === 'active' ? body['status'] : 'active'
+        const balanced = typeof body['balanced'] === 'boolean' ? body['balanced'] : true
+
         const client = coinglass?.client ?? new CoinglassCapi()
         if (coinglass && !coinglass.enabled) {
           return { ok: true, value: { symbol, cgSymbol: '', pair: '', orderCount: 0, walls: [] } }
         }
-        const snap = await (coinglass
-          ? coinglass.getLargeOrders(symbol, { hours, top, ...(venue ? { venue } : {}) })
-          : client.getLargeOrders(symbol, { hours, top, ...(venue ? { venue } : {}) }))
+        const opts = {
+          hours,
+          top,
+          status,
+          balanced,
+          ...(venue ? { venue } : {}),
+          ...(currentPrice !== undefined ? { currentPrice } : {}),
+          ...(maxDistancePct !== undefined ? { maxDistancePct } : {}),
+          ...(minUsd !== undefined ? { minUsd } : {}),
+        }
+        const snap = await (coinglass ? coinglass.getLargeOrders(symbol, opts) : client.getLargeOrders(symbol, opts))
         return {
           ok: true,
           value: {
@@ -96,6 +110,7 @@ export function apply(ctx: Context): void {
             cgSymbol: snap.cgSymbol,
             pair: snap.pair,
             orderCount: snap.orderCount,
+            updatedAt: snap.updatedAt ?? Date.now(),
             walls: snap.walls.map(w => ({
               id: w.id,
               exchange: w.exchange,

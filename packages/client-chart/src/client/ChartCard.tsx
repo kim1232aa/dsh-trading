@@ -300,7 +300,11 @@ export const EDITABLE: {
   { name: 'OI_POSTURE', title: '合约OI', pane: 'pane_oi_posture', defaults: [], params: [] },
   { name: 'LSR_RATIO', title: '多空比', pane: 'pane_lsr', defaults: [], params: [] },
   { name: 'ENTRY_SIGNAL', title: '多空观察信号(未验证)', defaults: [60, 4], defaultVisible: false, params: [period('ST周期'), { label: 'ST倍数', min: 0.1, max: 20, step: 0.1 }] },
-  { name: 'LARGE_WALLS', title: '大单墙(CoinGlass)', defaults: [100], defaultVisible: false, params: [{ label: '最低金额(万)', min: 0, max: 3000, step: 1 }] },
+  { name: 'LARGE_WALLS', title: '大单墙(CoinGlass)', defaults: [100, 20, 8], defaultVisible: false, params: [
+    { label: '最低金额(万)', min: 0, max: 3000, step: 1 },
+    { label: '距离现价(%)', min: 1, max: 100, step: 1 },
+    { label: '单边展示条数', min: 2, max: 20, step: 1 },
+  ] },
 ]
 
 export type IndicatorSettings = Record<string, { params: number[]; visible: boolean }>
@@ -1496,27 +1500,48 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     wallOverlayIds.current = []
     if (!(settings['LARGE_WALLS']?.visible) || !largeWalls?.walls?.length) return
     const minWan = settings['LARGE_WALLS']?.params?.[0] ?? 100
+    const maxDistPct = (settings['LARGE_WALLS']?.params?.[1] ?? 20) / 100
+    const sideLimit = settings['LARGE_WALLS']?.params?.[2] ?? 8
     const minUsd = minWan * 10_000
-    const walls = largeWalls.walls.filter(w => w.currentUsd >= minUsd).slice(0, 20)
+
+    const last = data.candles[data.candles.length - 1]
+    const curP = last?.close
+
+    let walls = largeWalls.walls.filter(w => w.currentUsd >= minUsd)
+    if (typeof curP === 'number' && curP > 0) {
+      walls = walls.filter(w => Math.abs(w.price - curP) / curP <= maxDistPct)
+    }
+
+    const buys = walls.filter(w => w.side === 'buy').sort((a, b) => b.currentUsd - a.currentUsd).slice(0, sideLimit)
+    const sells = walls.filter(w => w.side === 'sell').sort((a, b) => b.currentUsd - a.currentUsd).slice(0, sideLimit)
+    const finalWalls = [...sells, ...buys]
+
     const fmt = (n: number): string => {
       const abs = Math.abs(n)
       if (abs >= 1e8) return `${(abs / 1e8).toFixed(2)}亿`
       if (abs >= 1e4) return `${(abs / 1e4).toFixed(1)}万`
       return `${abs.toFixed(0)}`
     }
-    // Cap labels to keep the pane readable; biggest walls first (API already sorts).
-    for (const w of walls) {
+
+    const lowest = Math.min(...data.candles.map(c => c.low))
+    const highest = Math.max(...data.candles.map(c => c.high))
+    const lanes = assignLabelLanes(finalWalls.map(w => w.price), lowest, highest, axisSettings.coordType)
+    for (let i = 0; i < finalWalls.length; i++) {
+      const w = finalWalls[i]!
       const color = w.side === 'buy' ? '#3ddc97' : '#f47067'
-      const label = `${w.exchange} ${w.side === 'buy' ? '买墙' : '卖墙'} $${fmt(w.currentUsd)}`
+      const distStr = typeof curP === 'number' && curP > 0
+        ? ` (${w.price >= curP ? '+' : ''}${(((w.price - curP) / curP) * 100).toFixed(1)}%)`
+        : ''
+      const label = `${w.exchange} ${w.side === 'buy' ? '买' : '卖'} $${fmt(w.currentUsd)}${distStr}`
       const id = chart.createOverlay({
         name: 'tm_hline',
         lock: true,
         points: [{ value: w.price }],
-        extendData: { color, dashed: false, label, lane: 0 },
+        extendData: { color, dashed: true, label, lane: lanes[i] ?? 0 },
       })
       if (typeof id === 'string' && id) wallOverlayIds.current.push(id)
     }
-  }, [settings, largeWalls, seriesKey])
+  }, [settings, largeWalls, seriesKey, data.candles.length])
 
   // Live tail: push the newest bar into the existing plot. klinecharts updates
   // the last bar in place, or appends when the timestamp has moved on, so the
