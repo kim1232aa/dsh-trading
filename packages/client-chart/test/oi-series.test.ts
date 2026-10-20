@@ -100,8 +100,8 @@ describe('OI_POSTURE / LSR_RATIO series', () => {
 
   it('LSR_RATIO draws account ratio + top position ratio with mid=1 boundary', () => {
     const rows = calcLsrRatioRows(candles.slice(0, 2), history)
-    expect(rows[0]).toEqual(expect.objectContaining({ lsr: 1.40, topPos: 1.55, mid: 1 }))
-    expect(rows[1]).toEqual(expect.objectContaining({ lsr: 1.42, topPos: 0.95, mid: 1 }))
+    expect(rows[0]).toEqual(expect.objectContaining({ lsr: 1.40, topPos: 1.55, topAcc: 1.48, mid: 1 }))
+    expect(rows[1]).toEqual(expect.objectContaining({ lsr: 1.42, topPos: 0.95, topAcc: 1.50, mid: 1 }))
     // >1 net-long / <1 net-short is a display convention on the drawn values
     expect(rows[0]!.lsr!).toBeGreaterThan(1)
     expect(rows[1]!.topPos!).toBeLessThan(1)

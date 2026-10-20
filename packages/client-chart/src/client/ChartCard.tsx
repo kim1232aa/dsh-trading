@@ -608,12 +608,13 @@ export function calcOiPostureRows(
 export type LsrRatioRow = {
   lsr?: number
   topPos?: number
+  topAcc?: number
   mid?: number
   bar?: PanelDerivativeBar
 }
 
 /**
- * LSR_RATIO subplot: account long/short ratio + top-trader position ratio.
+ * LSR_RATIO subplot: account long/short ratio + top-trader position ratio + top-trader account ratio.
  * mid=1 is the net-long / net-short boundary (>1 净多).
  */
 export function calcLsrRatioRows(
@@ -635,7 +636,10 @@ export function calcLsrRatioRows(
     if (bar.topPositionRatio != null && Number.isFinite(bar.topPositionRatio)) {
       row.topPos = bar.topPositionRatio
     }
-    if (row.lsr === undefined && row.topPos === undefined) return {}
+    if (bar.topAccountRatio != null && Number.isFinite(bar.topAccountRatio)) {
+      row.topAcc = bar.topAccountRatio
+    }
+    if (row.lsr === undefined && row.topPos === undefined && row.topAcc === undefined) return {}
     return row
   })
 }
@@ -860,6 +864,12 @@ function ensureRegistered(): void {
         styles: () => ({ color: '#ffa726', size: 1.5 }),
       },
       {
+        key: 'topAcc',
+        title: '大户账户比: ',
+        type: 'line',
+        styles: () => ({ color: '#b083f0', size: 1.5 }),
+      },
+      {
         key: 'mid',
         title: '中性1: ',
         type: 'line',
@@ -870,6 +880,7 @@ function ensureRegistered(): void {
       lines: [
         { color: '#58a6ff', size: 1.5, style: 'solid', smooth: false, dashedValue: [2, 2] },
         { color: '#ffa726', size: 1.5, style: 'solid', smooth: false, dashedValue: [2, 2] },
+        { color: '#b083f0', size: 1.5, style: 'solid', smooth: false, dashedValue: [2, 2] },
         { color: '#768390', size: 1, style: 'dashed', smooth: false, dashedValue: [4, 3] },
       ],
     },
@@ -900,11 +911,11 @@ function ensureRegistered(): void {
           values: [{ title: '说明: ', value: { text: '无历史比值', color: '#8b949e' } }],
         }
       }
-      const ratioColor = (v: number | null | undefined) => {
-        if (v == null || !Number.isFinite(v)) return '#8b949e'
-        if (v > 1) return '#22c55e'
-        if (v < 1) return '#ef4444'
-        return '#c9d1d9'
+      const ratioTag = (v: number | null | undefined) => {
+        if (v == null || !Number.isFinite(v)) return ''
+        if (v > 1) return '(>1净多)'
+        if (v < 1) return '(<1净空)'
+        return '(=1)'
       }
       const lsr = target.longShortRatio
       const topPos = target.topPositionRatio
@@ -913,22 +924,25 @@ function ensureRegistered(): void {
         {
           title: '账户人数比: ',
           value: {
-            text: lsr != null ? `${lsr.toFixed(2)}${lsr > 1 ? '(>1净多)' : lsr < 1 ? '(<1净空)' : '(=1)'}` : '—',
-            color: ratioColor(lsr),
+            text: lsr != null ? `${lsr.toFixed(2)}${ratioTag(lsr)}` : '—',
+            color: '#58a6ff',
           },
         },
         {
           title: '大户持仓比: ',
           value: {
-            text: topPos != null ? `${topPos.toFixed(2)}${topPos > 1 ? '(>1净多)' : topPos < 1 ? '(<1净空)' : '(=1)'}` : '—',
-            color: ratioColor(topPos),
+            text: topPos != null ? `${topPos.toFixed(2)}${ratioTag(topPos)}` : '—',
+            color: '#ffa726',
           },
         },
       ]
       if (topAcc != null) {
         values.push({
           title: '大户账户比: ',
-          value: { text: topAcc.toFixed(2), color: ratioColor(topAcc) },
+          value: {
+            text: `${topAcc.toFixed(2)}${ratioTag(topAcc)}`,
+            color: '#b083f0',
+          },
         })
       }
       values.push({ title: '中性线: ', value: { text: '1.00', color: '#768390' } })
