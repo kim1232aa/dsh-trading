@@ -50,6 +50,10 @@ describe('AiCoin K线形态 — each plotText condition, hand-computed', () => {
   it('平头底: low == low[1] (98) and low[1] < lowest(low[2],5)=99', () => {
     expect(hitsAtLast([...base(11), bar(100, 100.1, 98, 98.5), bar(98.5, 99.1, 98, 99)])).toEqual(['dojiBottom'])
   })
+  it('平头顶/平头底 rejects Marubozu close-at-extreme followed by open-at-extreme (single turn at bar boundary)', () => {
+    expect(hitsAtLast([...base(11), bar(100, 102, 99.9, 102), bar(102, 102, 100.5, 101)])).toEqual([])
+    expect(hitsAtLast([...base(11), bar(100, 100.1, 98, 98), bar(98, 99.5, 98, 99)])).toEqual([])
+  })
   it('看涨吞没: 100→99.5 then 99.3→100.5, wave 1.2/99.3>0.005, low 99.2<99.4', () => {
     expect(hitsAtLast([...base(11), bar(100, 100.1, 99.4, 99.5), bar(99.3, 100.6, 99.2, 100.5)])).toEqual(['bullishEngulfing'])
   })
@@ -207,10 +211,10 @@ describe('AiCoin K线形态 — plotText / alertcondition metadata', () => {
       '启明星:buy', '黄昏星:sell', '平头顶:sell', '平头底:buy', '顶分型:sell', '底分型:buy', '红三兵:buy', '黑三兵:sell',
     ])
   })
-  it('defaults: all shown, green #008000 / red #ff0000, fontSize 12, white bg, alerts off; plugin + Baidu slots appended', () => {
+  it('defaults: 15 AiCoin shown, green #008000 / red #ff0000, fontSize 12, white bg, alerts off; Baidu 19 slots default off', () => {
     expect(KP_DEFAULTS).toHaveLength(71)
     expect(KP_DEFAULTS.slice(KP_THEME, KP_BAIDU_SHOW)).toEqual([1, 0, 1, 0])
-    expect(KP_DEFAULTS.slice(KP_BAIDU_SHOW)).toEqual(Array(19).fill(1))
+    expect(KP_DEFAULTS.slice(KP_BAIDU_SHOW)).toEqual(Array(19).fill(0))
     expect([KP_THEME, KP_MODE, KP_FORMING, KP_LAST, KP_BAIDU_SHOW]).toEqual([48, 49, 50, 51, 52])
     expect(KP_DEFAULTS.slice(KP_SHOW, KP_SHOW + 15).every(v => v === 1)).toBe(true)
     expect(KP_DEFAULTS[KP_COLOR]).toBe(0x008000)
@@ -218,8 +222,8 @@ describe('AiCoin K线形态 — plotText / alertcondition metadata', () => {
     expect(KP_DEFAULTS.slice(KP_FONT, KP_FONT + 3)).toEqual([12, 1, 0xffffff])
     expect(KP_DEFAULTS.slice(KP_ALERT, KP_THEME).every(v => v === 0)).toBe(true)
     expect(sanitizeKPatternParams(KP_DEFAULTS.slice(0, 52)).baiduShow.every(v => !v)).toBe(true)
-    expect(sanitizeKPatternParams(undefined).baiduShow.every(Boolean)).toBe(true)
-    expect(sanitizeKPatternParams([]).baiduShow.every(Boolean)).toBe(true)
+    expect(sanitizeKPatternParams(undefined).baiduShow.every(v => !v)).toBe(true)
+    expect(sanitizeKPatternParams([]).baiduShow.every(v => !v)).toBe(true)
   })
 })
 
@@ -345,6 +349,7 @@ describe('AiCoin K线形态 — drawing', () => {
   it('draws active KP_BAIDU_PLOTS and includes them in tooltip when baiduShow is enabled', () => {
     const c = [...base(5), bar(102, 103, 101.5, 102.5), bar(100, 101, 99, 100)]
     const p = [...KP_DEFAULTS]; p[KP_THEME] = 0
+    for (let j = 0; j < KP_BAIDU_PLOTS.length; j++) p[KP_BAIDU_SHOW + j] = 1
     const { texts } = run(c, p)
     expect(texts.map(t => t.text)).toEqual(['跳空涨', '跳空跌', '岛形顶'])
     const tip = createKPatternTooltipDataSource({

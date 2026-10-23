@@ -331,7 +331,7 @@ export const KP_DEFAULTS: readonly number[] = [
   12, 1, 0xffffff,
   ...KP_ALERTS.map(() => 0),
   1, 0, 1, 0,
-  ...KP_BAIDU_PLOTS.map(() => 1),
+  ...KP_BAIDU_PLOTS.map(() => 0),
 ]
 
 export interface KpParams {
@@ -422,10 +422,10 @@ export function calculateKPatterns(c: readonly KpCandle[]): KpRow[] {
     const hammer = undershadow >= 2 * Math.abs(close - open) && ampl > 0.005 && low < lowest(L, 1, 10, i) && overshadow < 0.5 * solid
     const hangingMan = undershadow >= 2 * Math.abs(close - open) && ampl > 0.005 && H(i - 1) > highest(H, 2, 10, i) && overshadow < 0.5 * solid
     const shootingStar = overshadow >= 2 * Math.abs(close - open) && ampl > 0.005 && high > highest(H, 1, 10, i) && undershadow < 0.5 * solid
-    const darkCloudCover = O(i - 1) < C(i - 1) && open > close && open > C(i - 1) && close > O(i - 1) && close < (O(i - 1) + C(i - 1)) / 2 && HighestHigh
-    const piercingLine = O(i - 1) > C(i - 1) && open < close && open < C(i - 1) && close < O(i - 1) && close > (O(i - 1) + C(i - 1)) / 2 && lowestLow
-    const dojiTop = Math.abs(high - H(i - 1)) / H(i - 1) <= 0.000015 && HighestHigh
-    const dojiBottom = Math.abs(low - L(i - 1)) / L(i - 1) <= 0.000015 && lowestLow
+    const darkCloudCover = O(i - 1) < C(i - 1) && wave(i - 1) > 0.003 && open > close && open > C(i - 1) && close > O(i - 1) && close < (O(i - 1) + C(i - 1)) / 2 && HighestHigh
+    const piercingLine = O(i - 1) > C(i - 1) && wave(i - 1) > 0.003 && open < close && open < C(i - 1) && close < O(i - 1) && close > (O(i - 1) + C(i - 1)) / 2 && lowestLow
+    const dojiTop = Math.abs(high - H(i - 1)) / H(i - 1) <= 0.000015 && HighestHigh && H(i - 1) > Math.max(O(i - 1), C(i - 1)) && high > Math.max(open, close)
+    const dojiBottom = Math.abs(low - L(i - 1)) / L(i - 1) <= 0.000015 && lowestLow && L(i - 1) < Math.min(O(i - 1), C(i - 1)) && low < Math.min(open, close)
     const bullishEngulfing = O(i - 1) > C(i - 1) && close > open && close > O(i - 1) && open < C(i - 1) && wave(i) > 0.005 && low < L(i - 1)
     const bearishEngulfing = O(i - 1) < C(i - 1) && close < open && close < O(i - 1) && open > C(i - 1) && wave(i) > 0.005 && high > H(i - 1)
 
@@ -445,25 +445,22 @@ export function calculateKPatterns(c: readonly KpCandle[]): KpRow[] {
     const bottomFormation = L(i - 1) < L(i - 2) && L(i - 1) < low && L(i - 1) < lowest(L, 2, 10, i) && close > H(i - 1) && H(i - 2) > H(i - 1) && high > H(i - 1)
 
     // Baidu Finance / TradingCentral 19 additional patterns
-    const ma5 = i >= 4 ? (C(i - 4) + C(i - 3) + C(i - 2) + C(i - 1) + close) / 5 : NaN
     const roundingTop =
       i >= 9 &&
-      highest(H, 3, 4, i) > highest(H, 7, 3, i) &&
-      highest(H, 3, 4, i) > highest(H, 0, 3, i) &&
-      H(i - 2) > H(i - 1) &&
-      H(i - 1) > high &&
-      highest(C, 3, 4, i) > C(i - 9) &&
-      close < ma5 &&
-      close < C(i - 1)
+      H(i - 9) < H(i - 8) && H(i - 8) < H(i - 7) && H(i - 7) < H(i - 6) && H(i - 6) < H(i - 5) &&
+      C(i - 9) < C(i - 8) && C(i - 8) < C(i - 7) && C(i - 7) < C(i - 6) && C(i - 6) < C(i - 5) &&
+      H(i - 5) >= H(i - 4) && H(i - 4) > H(i - 3) && H(i - 3) > H(i - 2) && H(i - 2) > H(i - 1) && H(i - 1) > high &&
+      C(i - 5) >= C(i - 4) && C(i - 4) > C(i - 3) && C(i - 3) > C(i - 2) && C(i - 2) > C(i - 1) && C(i - 1) > close &&
+      close <= C(i - 9) &&
+      (H(i - 5) - Math.min(low, L(i - 9))) / C(i - 5) >= 0.005
     const roundingBottom =
       i >= 9 &&
-      lowest(L, 3, 4, i) < lowest(L, 7, 3, i) &&
-      lowest(L, 3, 4, i) < lowest(L, 0, 3, i) &&
-      L(i - 2) < L(i - 1) &&
-      L(i - 1) < low &&
-      lowest(C, 3, 4, i) < C(i - 9) &&
-      close > ma5 &&
-      close > C(i - 1)
+      L(i - 9) > L(i - 8) && L(i - 8) > L(i - 7) && L(i - 7) > L(i - 6) && L(i - 6) > L(i - 5) &&
+      C(i - 9) > C(i - 8) && C(i - 8) > C(i - 7) && C(i - 7) > C(i - 6) && C(i - 6) > C(i - 5) &&
+      L(i - 5) <= L(i - 4) && L(i - 4) < L(i - 3) && L(i - 3) < L(i - 2) && L(i - 2) < L(i - 1) && L(i - 1) < low &&
+      C(i - 5) <= C(i - 4) && C(i - 4) < C(i - 3) && C(i - 3) < C(i - 2) && C(i - 2) < C(i - 1) && C(i - 1) < close &&
+      close >= C(i - 9) &&
+      (Math.max(high, H(i - 9)) - L(i - 5)) / C(i - 5) >= 0.005
 
     const gapUp = low > H(i - 1) * 1.001
     const gapDown = high < L(i - 1) * 0.999
