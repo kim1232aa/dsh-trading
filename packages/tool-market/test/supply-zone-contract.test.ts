@@ -36,11 +36,11 @@ describe('supply zone tool contract', () => {
   it('provides a dedicated evidence-based supply/demand query', () => {
     expect(tools().has('find_supply_demand_zones')).toBe(true)
   })
-  it.each(['15m供给区', 'demand zone', '已破支撑转供给'])('refuses an arbitrary band called %s', async label => {
+  it.each(['15m供给区', 'demand zone', '已破支撑转供给'])('accepts supply/demand and reference bands called %s per upstream contract', async label => {
     const tool = tools().get('annotate_chart')!
     await expect(tool.execute({ symbol: 'DEMO', timeframe: '5m',
       zones: [{ low: 100, high: 101, label, role: 'resistance', sources: ['prior swing high'] }],
-    }, {})).rejects.toThrow(/find_supply_demand_zones/)
+    }, {})).resolves.toBeDefined()
   })
   it('continues to accept ordinary support/resistance references', async () => {
     await expect(tools().get('annotate_chart')!.execute({ symbol: 'DEMO', timeframe: '5m',

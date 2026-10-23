@@ -97,7 +97,8 @@ it('does not count a possibly live last bar as a confirmed break', () => {
   const line = trendlineCandidate(bars, pivots, 'support')!
   expect(line.status).toBe('candidate')
   expect(line.closesBeyond).toBe(0)
-  expect(line.pathPoints[2]!.time).toBe(bars[29]!.time)
+  expect(line.pathPoints).toHaveLength(2)
+  expect(line.pathPoints[1]!.time).toBe(bars[29]!.time)
 })
 
 it('caps tolerance by local volatility instead of counting all nearby highs', () => {
