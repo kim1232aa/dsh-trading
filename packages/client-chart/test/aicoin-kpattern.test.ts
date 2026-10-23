@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  KP_ALERT, KP_ALERTS, KP_BG_ON, KP_COLOR, KP_DEFAULTS, KP_FONT, KP_PLOTS, KP_SHOW,
+  KP_ALERT, KP_ALERTS, KP_BG_ON, KP_COLOR, KP_DEFAULTS, KP_FONT, KP_FORMING, KP_LAST, KP_MODE, KP_PLOTS, KP_SHOW, KP_THEME,
   calculateKPatterns, drawKPatterns, kPatternIndicator, kpAlertEvents, kpHits,
   type KpCandle,
 } from '../src/client/indicators/aicoin-kpattern.js'
@@ -115,13 +115,15 @@ describe('AiCoin K线形态 — plotText / alertcondition metadata', () => {
       '启明星:buy', '黄昏星:sell', '平头顶:sell', '平头底:buy', '顶分型:sell', '底分型:buy', '红三兵:buy', '黑三兵:sell',
     ])
   })
-  it('defaults: all shown, green #008000 / red #ff0000, fontSize 14, white bg, alerts off', () => {
-    expect(KP_DEFAULTS).toHaveLength(48)
+  it('defaults: all shown, green #008000 / red #ff0000, fontSize 14, white bg, alerts off; plugin slots appended', () => {
+    expect(KP_DEFAULTS).toHaveLength(52)
+    expect(KP_DEFAULTS.slice(KP_THEME)).toEqual([1, 0, 1, 0])
+    expect([KP_THEME, KP_MODE, KP_FORMING, KP_LAST]).toEqual([48, 49, 50, 51])
     expect(KP_DEFAULTS.slice(KP_SHOW, KP_SHOW + 15).every(v => v === 1)).toBe(true)
     expect(KP_DEFAULTS[KP_COLOR]).toBe(0x008000)
     expect(KP_DEFAULTS[KP_COLOR + 1]).toBe(0xff0000)
     expect(KP_DEFAULTS.slice(KP_FONT, KP_FONT + 3)).toEqual([14, 1, 0xffffff])
-    expect(KP_DEFAULTS.slice(KP_ALERT).every(v => v === 0)).toBe(true)
+    expect(KP_DEFAULTS.slice(KP_ALERT, KP_THEME).every(v => v === 0)).toBe(true)
   })
 })
 
@@ -133,6 +135,7 @@ describe('AiCoin K线形态 — alerts on the last closed bar', () => {
     expect(kpAlertEvents(candles, KP_DEFAULTS)).toEqual([])
   })
   it('fires the enabled alertcondition for the closed bar only', () => {
+    expect(KP_DEFAULTS.slice(KP_ALERT, KP_ALERT + 15)).toHaveLength(15)
     const p = [...KP_DEFAULTS]; p[KP_ALERT + 0] = 1
     expect(kpAlertEvents(candles, p)).toEqual([{ id: candles[11]!.time + '|kp.hammer', text: '锤子线 · 买入 (' + candles[11]!.time + ')' }])
     expect(kpAlertEvents(candles.slice(0, 12), p)).toEqual([])
@@ -141,46 +144,101 @@ describe('AiCoin K线形态 — alerts on the last closed bar', () => {
 
 describe('AiCoin K线形态 — drawing', () => {
   function mockCtx() {
-    const texts: { text: string; color: string; x: number; y: number }[] = []
+    const texts: { text: string; color: string; x: number; y: number; alpha: number }[] = []
     const rects: { color: string; x: number; y: number; w: number; h: number }[] = []
+    const strokes: string[] = []
+    let tris = 0
     const ctx = {
-      font: '', textAlign: '', textBaseline: '', fillStyle: '',
-      save() {}, restore() {},
+      font: '', textAlign: '', textBaseline: '', fillStyle: '', strokeStyle: '', lineWidth: 1, globalAlpha: 1,
+      save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, closePath() {},
+      fill() { tris++ },
       measureText: (s: string) => ({ width: s.length * 10 }),
-      fillText(this: { fillStyle: string }, text: string, x: number, y: number) { texts.push({ text, color: this.fillStyle, x, y }) },
+      fillText(this: { fillStyle: string; globalAlpha: number }, text: string, x: number, y: number) { texts.push({ text, color: this.fillStyle, x, y, alpha: this.globalAlpha }) },
       fillRect(this: { fillStyle: string }, x: number, y: number, w: number, h: number) { rects.push({ color: this.fillStyle, x, y, w, h }) },
+      strokeRect(this: { strokeStyle: string }) { strokes.push(this.strokeStyle) },
     }
-    return { ctx, texts, rects }
+    return { ctx, texts, rects, strokes, tris: () => tris }
   }
-  const c = [...base(10), bar(100, 103.1, 99.9, 103), bar(103.5, 104, 103.3, 103.4), bar(103, 103.1, 100.9, 101)]
-  const args = (params: number[]) => {
+  const run = (c: KpCandle[], params: number[], extendData?: unknown, xStep = 10, height?: number) => {
     const m = mockCtx()
     drawKPatterns({
       ctx: m.ctx as never,
-      indicator: { calcParams: params, result: calculateKPatterns(c) },
-      xAxis: { convertToPixel: i => i * 10 },
+      indicator: { calcParams: params, result: calculateKPatterns(c), extendData },
+      xAxis: { convertToPixel: i => i * xStep },
       yAxis: { convertToPixel: v => 1000 - v },
       visibleRange: { from: 0, to: c.length },
+      ...(height !== undefined ? { bounding: { width: 1000, height } } : {}),
       kLineDataList: c,
     })
     return m
   }
-  it('top placements stack above high in plotText order, red text on white box', () => {
-    const { texts, rects } = args([...KP_DEFAULTS])
-    // high 103.1 → y0 896.9; box 14+4=18; gap 4 → first box top 874.9 (centre 883.9), next top 854.9
+  // evening star + top fractal on bar 12, then a closed neutral bar 13 (so bar 12 is not the forming bar)
+  const star = [...base(10), bar(100, 103.1, 99.9, 103), bar(103.5, 104, 103.3, 103.4), bar(103, 103.1, 100.9, 101), bar(100, 101, 99, 100)]
+  const src = () => { const p = [...KP_DEFAULTS]; p[KP_THEME] = 0; return p }
+
+  it('source colours: top placements stack above high in plotText order, red text on white plotText box', () => {
+    const { texts, rects } = run(star, src())
+    // high 103.1 → y0 896.9; box 14+4=18; gap 4 → slot0 top 874.9 (centre 883.9), slot1 top 854.9
     expect(texts.map(t => t.text)).toEqual(['黄昏星', '顶分型'])
-    expect(texts.every(t => t.color === '#ff0000' && t.x === 120)).toBe(true)
+    expect(texts.every(t => t.color === '#ff0000' && t.x === 120 && t.alpha === 1)).toBe(true)
     expect(texts[0]!.y).toBeCloseTo(883.9, 6)
     expect(texts[1]!.y).toBeCloseTo(863.9, 6)
     expect(rects.map(r => r.color)).toEqual(['#ffffff', '#ffffff'])
   })
   it('hidden plotText and disabled background', () => {
-    const p = [...KP_DEFAULTS]; p[KP_SHOW + 10] = 0; p[KP_BG_ON] = 0
-    const { texts, rects } = args(p)
+    const p = src(); p[KP_SHOW + 10] = 0; p[KP_BG_ON] = 0
+    const { texts, rects } = run(star, p)
     expect(texts.map(t => t.text)).toEqual(['顶分型'])
     expect(rects).toEqual([])
   })
-  it('registers as a price-pane overlay with no figures', () => {
+  it('theme mode uses the chart down colour with a tinted, outlined chip', () => {
+    const { texts, rects, strokes } = run(star, [...KP_DEFAULTS], { up: '#3ddc97', down: '#f47067', bg: 'rgba(13, 17, 23, 0.85)' })
+    expect(texts.map(t => t.color)).toEqual(['#f47067', '#f47067'])
+    expect(rects.map(r => r.color)).toEqual(['rgba(13, 17, 23, 0.85)', 'rgba(244, 112, 103, 0.16)', 'rgba(13, 17, 23, 0.85)', 'rgba(244, 112, 103, 0.16)'])
+    expect(strokes).toEqual(['rgba(244, 112, 103, 0.6)', 'rgba(244, 112, 103, 0.6)'])
+  })
+  it('theme mode without theme data falls back to the source colours', () => {
+    expect(run(star, [...KP_DEFAULTS]).texts.map(t => t.color)).toEqual(['#ff0000', '#ff0000'])
+  })
+  it('TD reserve pushes labels further out', () => {
+    const { texts } = run(star, src(), { up: '#0f0', down: '#f00', bg: '#000', reserve: 14 })
+    expect(texts[0]!.y).toBeCloseTo(883.9 - 14, 6)
+  })
+  it('auto mode: crowded labels fall back to short text, then to a triangle', () => {
+    // xStep 1: every bar overlaps every label → bar 12 gets 2 full labels? no: only 3 slots, all free on the first bar
+    const { texts } = run(star, src(), undefined, 10, 60)
+    // pane only 60px tall: label boxes above y=896.9 are off-pane → triangles
+    expect(texts).toEqual([])
+    const m = run(star, src(), undefined, 10, 60)
+    expect(m.tris()).toBe(2)
+  })
+  it('auto mode: adjacent-bar collision makes the second label use the short form', () => {
+    // two hammers on consecutive bars 11 and 12 (lows 98 then 97.5), labels 30px wide but bars 5px apart
+    const c = [...base(11), bar(100, 100.5, 98, 100.4), bar(100, 100.5, 97.5, 100.4), bar(100, 101, 99, 100)]
+    const { texts } = run(c, src(), undefined, 5)
+    expect(texts.map(t => t.text)).toEqual(['锤子线', '锤子线'])
+    // second one could not sit at slot 0 (overlap) → moved one slot further down
+    expect(texts[1]!.y).toBeGreaterThan(texts[0]!.y)
+  })
+  it('marks-only mode draws triangles, no text', () => {
+    const p = src(); p[KP_MODE] = 3
+    const m = run(star, p)
+    expect(m.texts).toEqual([])
+    expect(m.tris()).toBe(2)
+  })
+  it('forming (last) bar is translucent, or skipped when switched off', () => {
+    const forming = star.slice(0, 13)
+    expect(run(forming, src()).texts.every(t => t.alpha === 0.5)).toBe(true)
+    const p = src(); p[KP_FORMING] = 0
+    expect(run(forming, p).texts).toEqual([])
+  })
+  it('showLast limits drawing to the most recent N bars', () => {
+    const p = src(); p[KP_LAST] = 1
+    expect(run(star, p).texts).toEqual([])
+    p[KP_LAST] = 2
+    expect(run(star, p).texts).toHaveLength(2)
+  })
+  it('registers as a price-pane overlay with no figures (does not stretch the Y axis)', () => {
     expect(kPatternIndicator.name).toBe('AICOIN_KPATTERN')
     expect(kPatternIndicator.series).toBe('price')
     expect(kPatternIndicator.figures).toEqual([])

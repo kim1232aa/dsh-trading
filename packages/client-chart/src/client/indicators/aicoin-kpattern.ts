@@ -5,7 +5,8 @@
  * - 15 个 alertcondition：title / direction 与源码一致（KP_ALERTS 顺序 = 源码 alertcondition 顺序）。
  * - 源码里的常数（0.005 振幅、0.000015 平头容差、factor 0.24、0.003 波动、5/10 根回看）是硬编码，不是 input，所以不做成参数。
  * - plotText 未传 bgColor / fontSize：按 AiCoin 文档默认 bgColor=rgba(255,255,255,1)、fontSize=14。
- *   color 'green' / 'red' 为常用颜色名，按 CSS 取 #008000 / #ff0000。
+ *   color 'green' / 'red' 为常用颜色名，按 CSS 取 #008000 / #ff0000。关闭「跟随主题配色」即为这套源码配色。
+ * - 插件适配（AiCoin 没有的）：跟随图表主题涨跌色、标签碰撞避让（完整→简写→三角）、未收盘 K 线半透明、showLast。
  * - highest/lowest 回看窗口不足（K 线历史开头几根）视为 nan，比较结果为 false。
  */
 export interface KpCandle { open: number; high: number; low: number; close: number }
@@ -54,19 +55,43 @@ export const KP_ALERTS: readonly { key: KpKey; title: string; direction: 'buy' |
 export const KP_NAMED_COLOR = { green: 0x008000, red: 0xff0000 } as const
 
 export const KP_N = KP_PLOTS.length
-/** 参数槽位：[0,15) 显示  [15,30) 颜色  30 字号  31 文字背景  32 背景色  [33,48) 提醒（alertcondition 顺序）。 */
+/** plotText placement bottom = 看涨（绿色、画在低点下方），top = 看跌。 */
+export const kpIsBull = (n: number): boolean => KP_PLOTS[n]!.placement === 'bottom'
+export const KP_BULL_INDICES: readonly number[] = KP_PLOTS.map((_, n) => n).filter(kpIsBull)
+export const KP_BEAR_INDICES: readonly number[] = KP_PLOTS.map((_, n) => n).filter(n => !kpIsBull(n))
+
+/** 插件「简写」标签：K 线间距不够放完整文字时用。 */
+export const KP_SHORT: Record<KpKey, string> = {
+  hammer: '锤子', hangingMan: '上吊', shootingStar: '流星', darkCloudCover: '乌云', piercingLine: '刺透',
+  dojiTop: '平顶', dojiBottom: '平底', bullishEngulfing: '涨吞', bearishEngulfing: '跌吞', morningStar: '启明',
+  eveningStar: '黄昏', redThreeSoldiers: '红三', blackThreeSoldiers: '黑三', topFormation: '顶分', bottomFormation: '底分',
+}
+
+/**
+ * 参数槽位
+ *   1:1 源码段  [0,15) 显示  [15,30) 颜色  30 字号  31 文字背景  32 背景色  [33,48) 提醒（alertcondition 顺序）
+ *   插件段      48 跟随主题配色  49 标签模式  50 未收盘K线标注  51 只显示最近N根(=plotText showLast, 0 全部)
+ * 插件段追加在末尾，已保存的设置下标不变。
+ */
 export const KP_SHOW = 0
 export const KP_COLOR = KP_N
 export const KP_FONT = 2 * KP_N
 export const KP_BG_ON = KP_FONT + 1
 export const KP_BG_COLOR = KP_FONT + 2
 export const KP_ALERT = KP_FONT + 3
+export const KP_THEME = KP_ALERT + KP_ALERTS.length
+export const KP_MODE = KP_THEME + 1
+export const KP_FORMING = KP_THEME + 2
+export const KP_LAST = KP_THEME + 3
+
+export const KP_LABEL_MODES = ['自动避让', '完整文字', '简写', '仅标记'] as const
 
 export const KP_DEFAULTS: readonly number[] = [
   ...KP_PLOTS.map(() => 1),
   ...KP_PLOTS.map(p => KP_NAMED_COLOR[p.color]),
   14, 1, 0xffffff,
   ...KP_ALERTS.map(() => 0),
+  1, 0, 1, 0,
 ]
 
 export interface KpParams {
@@ -77,6 +102,12 @@ export interface KpParams {
   bgColor: number
   /** Indexed like KP_ALERTS. */
   alertOn: boolean[]
+  /** 用图表主题的涨跌色（有主题信息时）；关闭 = 源码颜色 + 自定义颜色。 */
+  theme: boolean
+  /** 0 自动避让  1 完整文字  2 简写  3 仅标记 */
+  mode: number
+  forming: boolean
+  showLast: number
 }
 
 export function sanitizeKpParams(params: readonly unknown[]): KpParams {
@@ -92,6 +123,10 @@ export function sanitizeKpParams(params: readonly unknown[]): KpParams {
     bgOn: num(KP_BG_ON) === 1,
     bgColor: color(KP_BG_COLOR),
     alertOn: KP_ALERTS.map((_, k) => num(KP_ALERT + k) === 1),
+    theme: num(KP_THEME) === 1,
+    mode: Math.max(0, Math.min(KP_LABEL_MODES.length - 1, Math.round(num(KP_MODE)))),
+    forming: num(KP_FORMING) === 1,
+    showLast: Math.max(0, Math.round(num(KP_LAST))),
   }
 }
 
@@ -177,76 +212,161 @@ export function kpAlertEvents(candles: readonly (KpCandle & { time: string })[],
   return KP_ALERTS.filter((a, k) => P.alertOn[k] && row[a.key])
     .map(a => ({ id: t + '|kp.' + a.key, text: a.title + ' · ' + (a.direction === 'buy' ? '买入' : '卖出') + ' (' + t + ')' }))
 }
-
 export const kpHex = (n: number): string => '#' + Math.max(0, Math.min(0xffffff, Math.round(n))).toString(16).padStart(6, '0')
 
+/** 图表主题（由 ChartCard 经 extendData 传入）：涨/跌色、标签底色，reserve = 预留给 TD 主图计数的像素。 */
+export interface KpTheme { up: string; down: string; bg: string; reserve?: number }
+export function asKpTheme(ext: unknown): KpTheme | undefined {
+  const e = ext as Partial<KpTheme> | null | undefined
+  return e && typeof e.up === 'string' && typeof e.down === 'string' && typeof e.bg === 'string' ? e as KpTheme : undefined
+}
+export const withAlpha = (hex: string, a: number): string => {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex)
+  if (!m) return hex
+  const n = parseInt(m[1]!, 16)
+  return 'rgba(' + ((n >> 16) & 255) + ', ' + ((n >> 8) & 255) + ', ' + (n & 255) + ', ' + a + ')'
+}
+
+export interface KpLabelStyle { text: string; fill?: string; tint?: string; stroke?: string }
+/** 主题模式：主题涨跌色的描边小标签；源码模式：plotText 的 color + bgColor。 */
+export function kpStyle(P: KpParams, n: number, theme: KpTheme | undefined): KpLabelStyle {
+  if (P.theme && theme) {
+    const c = kpIsBull(n) ? theme.up : theme.down
+    return { text: c, fill: theme.bg, tint: withAlpha(c, 0.16), stroke: withAlpha(c, 0.6) }
+  }
+  return P.bgOn ? { text: kpHex(P.color[n]!), fill: kpHex(P.bgColor) } : { text: kpHex(P.color[n]!) }
+}
+
 const FONT_FAMILY = 'system-ui, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif'
-/** 文字框内边距 / 与 K 线的距离 / 同一根 K 线多个文字之间的间距（px）。 */
+/** 文字框内边距 / 与 K 线的距离 / 堆叠间距（px）。 */
 const PAD = 2
 const GAP = 4
 const STACK = 2
+/** 自动避让：每种文字最多往外挪的层数，放不下就退到简写，再退到小三角。 */
+const AUTO_SLOTS = 3
+const FORCED_SLOTS = 8
+const FORMING_ALPHA = 0.5
 
 export function createKPatternTooltipDataSource({ indicator, crosshair }: {
-  indicator: { calcParams: number[]; result: KpRow[] }
+  indicator: { calcParams: number[]; result: KpRow[]; extendData?: unknown }
   crosshair: { dataIndex?: number | undefined }
 }) {
   const P = sanitizeKpParams(indicator.calcParams ?? [])
+  const theme = asKpTheme(indicator.extendData)
   const i = crosshair.dataIndex
   const row = i !== undefined ? indicator.result?.[i] : undefined
   const values = KP_PLOTS.flatMap((p, k) => (P.show[k] && row?.[p.key]
-    ? [{ title: p.title + ': ', value: { text: p.text, color: kpHex(P.color[k]!) } }]
+    ? [{ title: p.title + ': ', value: { text: p.text, color: kpStyle(P, k, theme).text } }]
     : []))
   return { name: 'K线形态', calcParamsText: '', values, icons: [] }
 }
 
 interface DrawArgs {
   ctx: CanvasRenderingContext2D
-  indicator: { calcParams: number[]; result: KpRow[] }
+  indicator: { calcParams: number[]; result: KpRow[]; extendData?: unknown }
   xAxis: { convertToPixel: (val: number) => number }
   yAxis: { convertToPixel: (val: number) => number }
   visibleRange: { from: number; to: number }
+  bounding?: { width: number; height: number }
+  barSpace?: { bar?: number }
   kLineDataList: { high?: number; low?: number }[]
 }
 
-/** plotText：placement top 画在 refSeries(high) 上方，bottom 画在 refSeries(low) 下方；同一根 K 线多个文字按 plotText 顺序向外堆叠。 */
-export function drawKPatterns({ ctx, indicator, xAxis, yAxis, visibleRange, kLineDataList }: DrawArgs): boolean {
+interface Rect { x0: number; x1: number; y0: number; y1: number }
+
+/**
+ * plotText 的插件渲染：top 画在 high 上方、bottom 画在 low 下方。
+ * 与 AiCoin 不同的是这里做碰撞避让 —— 相邻 K 线的标签不叠在一起：
+ * 自动模式依次尝试 完整文字 → 简写 → 小三角；最后一根（未收盘）K 线半透明，可关闭。
+ */
+export function drawKPatterns({ ctx, indicator, xAxis, yAxis, visibleRange, bounding, barSpace, kLineDataList }: DrawArgs): boolean {
   const rows = indicator.result
   if (!rows || rows.length === 0) return true
   const P = sanitizeKpParams(indicator.calcParams ?? [])
-  const from = Math.max(0, visibleRange.from)
-  const to = Math.min(rows.length - 1, visibleRange.to)
+  const theme = asKpTheme(indicator.extendData)
+  const reserve = theme?.reserve ?? 0
+  const H = bounding?.height ?? Infinity
+  const last = rows.length - 1
+  const from = Math.max(0, visibleRange.from, P.showLast > 0 ? rows.length - P.showLast : 0)
+  const to = Math.min(last, visibleRange.to)
+  if (from > to) return true
   const boxH = P.fontSize + 2 * PAD
+  const tri = Math.max(3, Math.min(6, (barSpace?.bar ?? 8) / 2))
   ctx.save()
   ctx.font = P.fontSize + 'px ' + FONT_FAMILY
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
+  const widths = new Map<string, number>()
+  const width = (s: string): number => {
+    let w = widths.get(s)
+    if (w === undefined) { w = ctx.measureText(s).width + 2 * PAD; widths.set(s, w) }
+    return w
+  }
+  let placed: Rect[] = []
+  const free = (r: Rect): boolean => r.y0 >= 0 && r.y1 <= H && !placed.some(p => r.x0 < p.x1 && r.x1 > p.x0 && r.y0 < p.y1 && r.y1 > p.y0)
+  const label = (t: string, x: number, r: Rect, st: KpLabelStyle): void => {
+    const w = r.x1 - r.x0
+    if (st.fill) { ctx.fillStyle = st.fill; ctx.fillRect(r.x0, r.y0, w, boxH) }
+    if (st.tint) { ctx.fillStyle = st.tint; ctx.fillRect(r.x0, r.y0, w, boxH) }
+    if (st.stroke) { ctx.strokeStyle = st.stroke; ctx.lineWidth = 1; ctx.strokeRect(r.x0 + 0.5, r.y0 + 0.5, w - 1, boxH - 1) }
+    ctx.fillStyle = st.text
+    ctx.fillText(t, x, r.y0 + boxH / 2)
+  }
   for (let i = from; i <= to; i++) {
     const row = rows[i]; const k = kLineDataList[i]
     if (!row || !k) continue
+    const forming = i === last
+    if (forming && !P.forming) continue
     const x = xAxis.convertToPixel(i)
-    let above = 0; let below = 0
-    KP_PLOTS.forEach((p, n) => {
-      if (!P.show[n] || !row[p.key]) return
-      const ref = p.ref === 'high' ? k.high : k.low
-      if (ref === undefined) return
-      const y0 = yAxis.convertToPixel(ref)
+    if (placed.length > 64) placed = placed.filter(p => p.x1 > x - 400)
+    ctx.globalAlpha = forming ? FORMING_ALPHA : 1
+    const marks = { top: 0, bottom: 0 }
+    for (let n = 0; n < KP_N; n++) {
+      const p = KP_PLOTS[n]!
+      if (!P.show[n] || !row[p.key]) continue
       const top = p.placement === 'top'
-        ? y0 - GAP - boxH - above++ * (boxH + STACK)
-        : y0 + GAP + below++ * (boxH + STACK)
-      const w = ctx.measureText(p.text).width + 2 * PAD
-      if (P.bgOn) {
-        ctx.fillStyle = kpHex(P.bgColor)
-        ctx.fillRect(x - w / 2, top, w, boxH)
+      const ref = top ? k.high : k.low
+      if (ref === undefined) continue
+      const y0 = yAxis.convertToPixel(ref)
+      const st = kpStyle(P, n, theme)
+      const slotTop = (s: number): number => (top ? y0 - GAP - reserve - boxH - s * (boxH + STACK) : y0 + GAP + reserve + s * (boxH + STACK))
+      const texts = P.mode === 1 ? [p.text] : P.mode === 2 ? [KP_SHORT[p.key]] : P.mode === 3 ? [] : [p.text, KP_SHORT[p.key]]
+      const slots = P.mode === 0 ? AUTO_SLOTS : FORCED_SLOTS
+      let done = false
+      for (const t of texts) {
+        const w = width(t)
+        for (let s = 0; s < slots && !done; s++) {
+          const yt = slotTop(s)
+          const r = { x0: x - w / 2, x1: x + w / 2, y0: yt, y1: yt + boxH }
+          if (free(r)) { placed.push(r); label(t, x, r, st); done = true }
+        }
+        if (done) break
       }
-      ctx.fillStyle = kpHex(P.color[n]!)
-      ctx.fillText(p.text, x, top + boxH / 2)
-    })
+      if (!done && (P.mode === 1 || P.mode === 2)) {
+        // 用户指定了文字模式：放不下也照画，贴边截住不出界。
+        const t = texts[0]!; const w = width(t)
+        const yt = Math.max(0, Math.min(slotTop(0), H - boxH))
+        const r = { x0: x - w / 2, x1: x + w / 2, y0: yt, y1: yt + boxH }
+        placed.push(r); label(t, x, r, st); done = true
+      }
+      if (!done) {
+        // 小三角：看涨 ▲ 在低点下方，看跌 ▼ 在高点上方；同一根 K 线多个就往外叠。
+        const m = marks[p.placement]++
+        const h = tri * 1.6
+        const tip = top ? y0 - GAP - reserve - m * (h + 2) : y0 + GAP + reserve + m * (h + 2)
+        const base = top ? tip - h : tip + h
+        ctx.beginPath(); ctx.moveTo(x, tip); ctx.lineTo(x + tri, base); ctx.lineTo(x - tri, base); ctx.closePath()
+        ctx.fillStyle = st.text; ctx.fill()
+        placed.push({ x0: x - tri, x1: x + tri, y0: Math.min(tip, base), y1: Math.max(tip, base) })
+      }
+    }
   }
+  ctx.globalAlpha = 1
   ctx.restore()
   return true
 }
 
-/** klinecharts 注册（主图叠加，plotText 不画线，故无 figures）。 */
+/** klinecharts 注册（主图叠加；plotText 不画线，无 figures，不影响 Y 轴范围 —— 同 AiCoin excludeRange）。 */
 export const kPatternIndicator = {
   name: 'AICOIN_KPATTERN',
   shortName: 'K线形态',

@@ -35,8 +35,8 @@ import { mtfSRZones, mtfSRIndicator, mtfSourceTimeframeSeconds } from './indicat
 import { entrySignalIndicator } from './indicators/entry-signal.js'
 import { rsiGridIndicator, rsiGridCumIndicator, rsiGridMarksIndicator } from './indicators/rsi-grid.js'
 import { revPointIndicator, REVPOINT_TABLE_W } from './indicators/revpoint.js'
-import { kPatternIndicator, KP_ALERTS, KP_DEFAULTS, KP_PLOTS, kpAlertEvents } from './indicators/aicoin-kpattern.js'
-import { aicoinTdIndicator, TD_DEFAULTS } from './indicators/aicoin-td.js'
+import { kPatternIndicator, KP_ALERT, KP_ALERTS, KP_BEAR_INDICES, KP_BG_COLOR, KP_BG_ON, KP_BULL_INDICES, KP_COLOR, KP_DEFAULTS, KP_FONT, KP_FORMING, KP_LABEL_MODES, KP_LAST, KP_MODE, KP_PLOTS, KP_SHOW, KP_THEME, kpAlertEvents } from './indicators/aicoin-kpattern.js'
+import { aicoinTdIndicator, aicoinTdMarksIndicator, TD_DEFAULTS, TD_MARK_RESERVE, TD_MODES, tdAlertEvents, tdWantsMarks, tdWantsPane } from './indicators/aicoin-td.js'
 import { ohlcOffsetRightForTopLeft } from './indicators/revpoint-layout.js'
 import { detectPricePrecision, formatPrice } from './precision.js'
 import { createAnnotationOverlays } from './annotation-overlays.js'
@@ -87,6 +87,28 @@ const LIGHT: Palette = {
 const DARK: Palette = {
   text: '#c9d1d9', faint: '#768390', line: '#30363d', up: '#3ddc97', down: '#f47067',
   neckline: '#d4a72c', target: '#539bf5', invalidation: '#b083f0',
+}
+
+/** AiCoin TD: sub-pane lines (source plot) and/or numbers on the candles, per its 显示方式 param. */
+function syncAicoinTd(chart: Chart, s: { params: number[]; visible: boolean }, dark: boolean): void {
+  const p = dark ? DARK : LIGHT
+  const ext = { up: p.up, down: p.down }
+  const sync = (want: boolean, name: string, paneId: string, isStack: boolean): void => {
+    const has = chart.getIndicatorByPaneId(paneId, name) != null
+    if (!want) { if (has) chart.removeIndicator(paneId, name); return }
+    if (has) chart.overrideIndicator({ name, calcParams: s.params, extendData: ext }, paneId)
+    else chart.createIndicator({ name, calcParams: s.params, extendData: ext }, isStack, paneId === 'candle_pane' ? { id: paneId } : { id: paneId, height: PANE_HEIGHT })
+  }
+  sync(s.visible && tdWantsPane(s.params), 'AICOIN_TD', 'pane_aicoin_td', false)
+  sync(s.visible && tdWantsMarks(s.params), 'AICOIN_TD_MARKS', 'candle_pane', true)
+}
+
+/** Chart theme handed to the AiCoin ports (their colours follow the candles unless the user turns it off). */
+function kpThemeExt(dark: boolean, settings: IndicatorSettings): { up: string; down: string; bg: string; reserve: number } {
+  const p = dark ? DARK : LIGHT
+  const td = settings['AICOIN_TD']
+  const tdOnCandles = td !== undefined && td.visible && tdWantsMarks(td.params)
+  return { up: p.up, down: p.down, bg: dark ? 'rgba(13, 17, 23, 0.85)' : 'rgba(255, 255, 255, 0.9)', reserve: tdOnCandles ? TD_MARK_RESERVE : 0 }
 }
 
 /* ------------------------------------------------------------------ */
@@ -317,11 +339,18 @@ export const EDITABLE: {
     ...KP_PLOTS.map(p => colorP(p.title + '色')),
     { label: '字号', min: 6, max: 40, step: 1 }, boolP('文字背景'), colorP('背景色'),
     ...KP_ALERTS.map(a => boolP('提醒:' + a.title + (a.direction === 'buy' ? '(买)' : '(卖)'))),
+    // Plugin-side display (not in the AiCoin script): theme colours, collision-avoiding labels, forming bar, showLast.
+    boolP('跟随主题配色'), { label: '标签模式', min: 0, max: KP_LABEL_MODES.length - 1, step: 1, kind: 'select', options: [...KP_LABEL_MODES] },
+    boolP('标注未收盘K线'), { label: '只看最近N根(0全部)', min: 0, max: 5000, step: 1 },
   ] },
   // 1:1 with the AiCoin TD script: plot(up,"UP") / plot(dn,"Down") — display, color, linewidth.
   { name: 'AICOIN_TD', title: 'TD计数(AiCoin)', pane: 'pane_aicoin_td', defaults: [...TD_DEFAULTS], defaultVisible: false, params: [
     boolP('显示UP'), colorP('UP色'), { label: 'UP线宽', min: 1, max: 10, step: 1 },
     boolP('显示Down'), colorP('Down色'), { label: 'Down线宽', min: 1, max: 10, step: 1 },
+    // Plugin-side display: numbers on the candles (classic TD look) and/or the source's sub-pane lines.
+    { label: '显示方式', min: 0, max: TD_MODES.length - 1, step: 1, kind: 'select', options: [...TD_MODES] },
+    boolP('跟随主题配色'), { label: '数字起始', min: 1, max: 99, step: 1 }, boolP('突出9/13'),
+    boolP('提醒:计数9'), boolP('提醒:计数13'),
   ] },
   { name: 'RSI_GRID', title: 'RSI网格（多空）', pane: 'pane_rsi_grid', defaults: [7, 30, 60, 10], params: [period('RSI周期'), period('多入阈值'), period('多平阈值'), period('累计阈值')] },
   { name: 'REVPOINT', title: '反转点标注 RevPoint', defaults: [0.7, 2.0, 3, 0, 0, 1, 0, 1, 0], params: [{ label: '细档确认阈值%', min: 0.1, max: 10, step: 0.1 }, { label: '粗档(大周期)阈值%', min: 0.5, max: 20, step: 0.1 }, { label: '多周期pivot左右bar数', min: 1, max: 10, step: 1 }, { label: '15m(0/1)', min: 0, max: 1, step: 1 }, { label: '30m(0/1)', min: 0, max: 1, step: 1 }, { label: '1H(0/1)', min: 0, max: 1, step: 1 }, { label: '2H(0/1)', min: 0, max: 1, step: 1 }, { label: '4H(0/1)', min: 0, max: 1, step: 1 }, { label: '细档最少★数', min: 0, max: 4, step: 1 }] },
@@ -992,6 +1021,7 @@ function ensureRegistered(): void {
   registerIndicator(revPointIndicator as never)
 registerIndicator(kPatternIndicator as never)
 registerIndicator(aicoinTdIndicator as never)
+registerIndicator(aicoinTdMarksIndicator as never)
   // Overlay shapes for the draw primitives. extendData: { color, dashed, label }.
   // Register exactly the callbacks exercised by the overlay regression tests.
   for (const overlay of createAnnotationOverlays(FONT_FAMILY, (text, style) =>
@@ -1331,7 +1361,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   // 默认只收起主图指标行，副图名称和数值保持可见。
   const foldRef = useRef(true)
   const paneCount = active.filter(id => CHIP_DEFS.find(d => d.id === id)?.indicator?.overlay !== true).length
-    + EDITABLE.filter(d => d.pane !== undefined && settings[d.name]?.visible).length
+    + EDITABLE.filter(d => d.pane !== undefined && settings[d.name]?.visible && (d.name !== 'AICOIN_TD' || tdWantsPane(settings[d.name]!.params))).length
     // RSI_GRID also mounts the 累计差值 pane under it.
     + (settings['RSI_GRID']?.visible ? 1 : 0)
 
@@ -1367,7 +1397,9 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       if (def.name === 'LARGE_WALLS') continue // overlay drawn from CoinGlass RPC, not a klinecharts indicator
       const s = settingsRef.current[def.name]!
       const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivativesRef.current?.history
-        : def.name === 'MTF_SR' || def.name === 'DUAL_VIEW_HTF' ? { sourceTimeframe: data.timeframe, sourceTimeframeSeconds: mtfSourceTimeframeSeconds(data.timeframe) } : undefined
+        : def.name === 'MTF_SR' || def.name === 'DUAL_VIEW_HTF' ? { sourceTimeframe: data.timeframe, sourceTimeframeSeconds: mtfSourceTimeframeSeconds(data.timeframe) }
+        : def.name === 'AICOIN_KPATTERN' ? kpThemeExt(dark, settingsRef.current) : undefined
+      if (def.name === 'AICOIN_TD') { syncAicoinTd(chart, s, dark); continue }
       if (def.pane !== undefined) {
         // Own pane: created only when shown, so a hidden one doesn't leave a blank strip.
         if (s.visible) {
@@ -1508,7 +1540,9 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       if (def.name === 'LARGE_WALLS') continue
       const s = settings[def.name]!
       const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivatives?.history
-        : def.name === 'MTF_SR' || def.name === 'DUAL_VIEW_HTF' ? { sourceTimeframe: data.timeframe, sourceTimeframeSeconds: mtfSourceTimeframeSeconds(data.timeframe) } : undefined
+        : def.name === 'MTF_SR' || def.name === 'DUAL_VIEW_HTF' ? { sourceTimeframe: data.timeframe, sourceTimeframeSeconds: mtfSourceTimeframeSeconds(data.timeframe) }
+        : def.name === 'AICOIN_KPATTERN' ? kpThemeExt(dark, settings) : undefined
+      if (def.name === 'AICOIN_TD') { syncAicoinTd(chart, s, dark); continue }
       if (def.pane !== undefined) {
         const exists = chart.getIndicatorByPaneId(def.pane, def.name) != null
         if (!s.visible) {
@@ -1534,7 +1568,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       }
       chart.overrideIndicator({ name: def.name, calcParams: s.params, visible: s.visible, extendData: ext }, 'candle_pane')
     }
-  }, [settings, derivatives, data.timeframe])
+  }, [settings, derivatives, data.timeframe, dark])
 
   // CoinGlass 大单墙: horizontal lines, toggled via 指标参数 → 大单墙.
   useEffect(() => {
@@ -1650,7 +1684,9 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     }
     const kp = settings['AICOIN_KPATTERN']
     if (kp?.visible) fired.push(...kpAlertEvents(data.candles, kp.params))
-    if (fired.length === 0 && !(vb?.visible || dv?.visible || nw?.visible || kp?.visible)) { vbSeen.current = null; return }
+    const td = settings['AICOIN_TD']
+    if (td?.visible) fired.push(...tdAlertEvents(data.candles, td.params))
+    if (fired.length === 0 && !(vb?.visible || dv?.visible || nw?.visible || kp?.visible || td?.visible)) { vbSeen.current = null; return }
     if (vbSeen.current === null) { vbSeen.current = new Set(fired.map(f => f.id)); return }
     const fresh = fired.filter(f => !vbSeen.current!.has(f.id))
     if (fresh.length === 0) return
@@ -2355,6 +2391,35 @@ function ParamEditor({ settings, palette, onClose }: {
                           const idx = 39 + relIdx
                           return renderControl(def.name, spec, idx, s.params[idx]!, s.params, commit, setSettings, settings, palette, input)
                         })}
+                      </div>
+                    </div>
+                  ) : def.name === 'AICOIN_KPATTERN' ? (
+                    /* AiCoin K线形态: display options, bullish / bearish groups (show + colour), alertconditions */
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+                        {[KP_THEME, KP_MODE, KP_FORMING, KP_LAST, KP_FONT, ...(s.params[KP_THEME] === 1 ? [] : [KP_BG_ON, KP_BG_COLOR])]
+                          .map(idx => renderControl(def.name, def.params[idx]!, idx, s.params[idx]!, s.params, commit, setSettings, settings, palette, input))}
+                      </div>
+                      {([['看涨 · 标在低点下方', KP_BULL_INDICES, palette.up], ['看跌 · 标在高点上方', KP_BEAR_INDICES, palette.down]] as const).map(([label, group, tone]) => (
+                        <div key={label} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: 6, border: `1px solid ${palette.line}`, borderRadius: 4 }}>
+                          <span style={{ color: tone, fontWeight: 'bold' }}>{label} ({group.filter(n => s.params[KP_SHOW + n] === 1).length}/{group.length})</span>
+                          {([['全开', 1], ['全关', 0]] as const).map(([text, v]) => (
+                            <button key={text} style={{ background: 'transparent', color: palette.faint, border: `1px solid ${palette.line}`, borderRadius: 3, fontSize: 10, cursor: 'pointer', padding: '1px 6px' }} onClick={() => {
+                              const next = [...s.params]
+                              for (const n of group) next[KP_SHOW + n] = v
+                              setSettings(sanitizeSettings({ ...settings, [def.name]: { ...s, params: next } }))
+                            }}>{text}</button>
+                          ))}
+                          {group.map(n => (
+                            <span key={n} style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                              {renderControl(def.name, def.params[KP_SHOW + n]!, KP_SHOW + n, s.params[KP_SHOW + n]!, s.params, commit, setSettings, settings, palette, input)}
+                              {s.params[KP_THEME] === 1 ? null : renderControl(def.name, { ...def.params[KP_COLOR + n]!, label: '' }, KP_COLOR + n, s.params[KP_COLOR + n]!, s.params, commit, setSettings, settings, palette, input)}
+                            </span>
+                          ))}
+                        </div>
+                      ))}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+                        {KP_ALERTS.map((_, k) => renderControl(def.name, def.params[KP_ALERT + k]!, KP_ALERT + k, s.params[KP_ALERT + k]!, s.params, commit, setSettings, settings, palette, input))}
                       </div>
                     </div>
                   ) : def.name === 'RSI_GRID' ? (

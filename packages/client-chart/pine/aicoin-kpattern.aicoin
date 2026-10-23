@@ -1,0 +1,104 @@
+// AiCoin K线形态 — source as provided by the user (2026-10-23). Ported 1:1 in src/client/indicators/aicoin-kpattern.ts.
+// @version=2
+HighestHigh = high[1] > highest(high[2], 5)
+lowestLow = low[1] < lowest(low[2], 5)
+// 计算振幅
+ampl = (high - low) / close[1]
+
+
+// 计算K线实体
+solid = abs(close - open)
+wave = abs(close - open)/open;
+
+// 计算上影线和下影线
+overshadow = high - max(open, close);
+undershadow = min(close, open) - low;
+
+// 锤子线：小实体在上，长下影线（下影线至少为实体的两倍），没有上影线或很短
+hammer = undershadow >= 2 * abs(close - open) and ampl > 0.005 and low < lowest(low[1], 10) and overshadow < 0.5*solid
+plotText(hammer, title='锤子线',  text='锤子线', color='green', refSeries=low, placement='bottom')
+
+// 上吊线：与锤子线形态相似，但出现在上涨趋势中
+hangingMan = undershadow >= 2 * abs(close - open) and ampl > 0.005 and  high[1] > highest(high[2], 10) and overshadow < 0.5*solid
+plotText(hangingMan, title='上吊线', text='上吊线', color='red', refSeries=high, placement='top')
+
+// 流星线：实体很小，上影线较长（至少是实体的两倍），下影线极短或没有
+shootingStar =  overshadow >= 2 * abs(close - open)  and ampl > 0.005 and high > highest(high[1], 10) and undershadow < 0.5*solid
+plotText(shootingStar, title='流星线',  text='流星线', color='red', refSeries=high, placement='top')
+
+// 乌云盖顶：先是一根大阳线，随后出现一根开盘价高于前阳线收盘价的阴线，并收盘穿过前阳线实体的一半位置
+darkCloudCover = open[1] < close[1] && open > close && open > close[1] && close > open[1] && close < (open[1] + close[1]) / 2 && HighestHigh
+plotText(darkCloudCover, title="乌云盖顶", text='乌云盖顶', color='red', refSeries=high, placement='top')
+
+// 刺透形态：先是一根大阴线，随后出现一根开盘价低于前阴线收盘价的阳线，并收盘穿过前阴线实体的一半位置
+piercingLine = open[1] > close[1] && open < close && open < close[1] && close < open[1]  && close > (open[1] + close[1]) / 2 && lowestLow
+plotText(piercingLine, title="刺透", text='刺透', color='green', refSeries=low, placement='bottom')
+
+// 平头顶：连续两根或多根K线的高点相同或接近
+dojiTop = abs(high - high[1])/high[1]<= 0.000015 and HighestHigh
+plotText(dojiTop, title="平头顶", text='平头顶', color='red', refSeries=high, placement='top')
+
+// 平头底：连续两根或多根K线的低点相同或接近，形成平底
+dojiBottom = abs(low - low[1])/low[1]<= 0.000015 and lowestLow
+plotText(dojiBottom, title="平头底", text='平头底', color='green', refSeries=low, placement='bottom')
+
+// 吞没形态：后一根K线的实体完全吞没前一根K线的实体
+bullishEngulfing = open[1] > close[1] && close > open && close > open[1] && open < close[1] and wave > 0.005 and low < low[1]
+bearishEngulfing = open[1] < close[1] && close < open && close < open[1] && open > close[1] and wave > 0.005 and high > high[1] 
+//bullishEngulfing = open[1] > close[1] && close > open && close > open[1] && open < close[1] and low < low[1] and high > high[1] and wave > 0.005
+//bearishEngulfing = open[1] < close[1] && close < open && close < open[1] && open > close[1] and low < low[1] and high > high[1] and wave > 0.005
+plotText(bullishEngulfing, title="看涨吞没", text='涨吞没', color='green', refSeries=low, placement='bottom')
+plotText(bearishEngulfing, title="看跌吞没", text='跌吞没', color='red', refSeries=high, placement='top')
+
+// 启明星：由三根K线组成，第一根为大阴线，第二根为小K线，常伴随跳空低开，形成星形，第三根为大阳线，收盘价接近或超过第一根阴线实体的一半
+// 黄昏星：与启明星相反，三根K线组成， 第一根为大阳线，第二根为小K线，常伴随跳空高开，形成星形，第三根为大阴线，收盘价接近或穿过第一根阳线实体的一半
+morningStar = false;
+eveningStar = false;
+factor = 0.24;
+change = close - open;
+if (abs(change[1]) < factor * min(abs(change), abs(change[2]))) {
+    if (change[2] < 0 && change > 0) {
+        if (close > close[2] && high[1] < min(close, open[2]) && low[1] < min(low, low[2]) && lowestLow) {
+            morningStar := true;
+        }
+    } else if (change[2] > 0 && change < 0) {
+        if (close < close[2] && high[1] > max(high[2], high) && low[1] > max(close, open[2]) && HighestHigh) {
+            eveningStar := true;
+        }
+    }
+}
+plotText(morningStar, title="启明星", text='启明星', refSeries=low, color='green', placement='bottom');
+plotText(eveningStar, title="黄昏星", text='黄昏星', refSeries=high, color='red', placement='top');
+
+// 红三兵：连续三根阳线，每根收盘价逐渐升高且接近最高价，开盘价接近前一根收盘价
+redThreeSoldiers = close > open and close[1] > open[1] and close[2] > open[2] and close > close[1] and close[1] > close[2] and wave[2] > 0.003 and wave[1] > 0.003 and wave > 0.003
+plotText(redThreeSoldiers, title='红三兵', text='红三兵', color='green', refSeries=low, placement='bottom')
+
+// 黑三兵：连续三根阴线，每根收盘价逐渐降低且接近最低价，开盘价接近前一根收盘价
+blackThreeSoldiers = close < open and close[1] < open[1] and close[2] < open[2] and close < close[1] and close[1] < close[2] and wave[2] > 0.003 and wave[1] > 0.003 and wave > 0.003
+plotText(blackThreeSoldiers, title='黑三兵', text='黑三兵', color='red', refSeries=high, placement='top');
+
+// 顶分型：三根非包含关系的K线组合，中间一根K线高点和低点最高，两侧K线高点逐渐降低，形似山峰
+topFormation = high[1] > high[2] and high[1] > high and  high[1] > highest(high[2], 10) and close < close[1] and open[1] > open[2] and low[2]<low[1]and low[1]>low;
+plotText(topFormation, title='顶分型',  text='顶分型', color='red', refSeries=high, placement='top');
+
+// 底分型：三根K线组合，中间一根K线低点最低，两侧K线低点逐渐升高，形似谷底
+bottomFormation = low[1] < low[2] and low[1] < low and low[1] < lowest(low[2], 10) and close > high[1] and high[2]>high[1] and high > high[1];
+plotText(bottomFormation, title='底分型', text='底分型', color='green', refSeries=low, placement='bottom')
+
+//预警指令
+alertcondition(hammer, title='锤子线', direction='buy')
+alertcondition(hangingMan, title='上吊线', direction='sell')
+alertcondition(shootingStar, title='流星线', direction='sell')
+alertcondition(bullishEngulfing, title='看涨吞没', direction='buy')
+alertcondition(bearishEngulfing, title='看跌吞没', direction='sell')
+alertcondition(darkCloudCover, title='乌云盖顶', direction='sell')
+alertcondition(piercingLine, title='刺透形态', direction='buy')
+alertcondition(morningStar, title='启明星', direction='buy')
+alertcondition(eveningStar, title='黄昏星', direction='sell')
+alertcondition(dojiTop, title='平头顶', direction='sell')
+alertcondition(dojiBottom, title='平头底', direction='buy')
+alertcondition(topFormation, title='顶分型', direction='sell')
+alertcondition(bottomFormation, title='底分型', direction='buy')
+alertcondition(redThreeSoldiers, title='红三兵', direction='buy')
+alertcondition(blackThreeSoldiers, title='黑三兵', direction='sell')
