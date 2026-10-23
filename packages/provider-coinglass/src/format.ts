@@ -30,11 +30,12 @@ export function formatWallLine(w: LargeOrderWall): string {
   const side = w.side === 'buy' ? '买墙' : '卖墙'
   const age = formatAge(w.startTime)
   const ageTxt = age ? ` · 挂${age}` : ''
-  return `${w.exchange} ${side} $${formatUsdCn(w.currentUsd)} @ ${w.price}${ageTxt}`
+  const venue = `${w.exchange}${w.market === 'spot' ? '现货' : w.market === 'perp' ? '合约' : ''}`
+  return `${venue} ${side} $${formatUsdCn(w.currentUsd)} @ ${w.price}${ageTxt}`
 }
 
 /** One-line / multi-line summary for the large_orders tool. */
-export function renderLargeOrders(snap: LargeOrdersSnapshot, top = 10): string {
+export function renderLargeOrders(snap: LargeOrdersSnapshot, top = 40): string {
   const buys = snap.walls.filter(w => w.side === 'buy')
   const sells = snap.walls.filter(w => w.side === 'sell')
   const lines: string[] = [
@@ -42,8 +43,9 @@ export function renderLargeOrders(snap: LargeOrdersSnapshot, top = 10): string {
   ]
   if (snap.statistics.length > 0) {
     for (const s of snap.statistics.slice(0, 5)) {
+      const venue = `${s.exchange}${s.market === 'spot' ? '现货' : s.market === 'perp' ? '合约' : ''}`
       lines.push(
-        `  统计 ${s.exchange}: 挂买 $${formatUsdCn(s.bidsTotalUsd)} / 挂卖 $${formatUsdCn(s.asksTotalUsd)}`,
+        `  统计 ${venue}: 挂买 $${formatUsdCn(s.bidsTotalUsd)} / 挂卖 $${formatUsdCn(s.asksTotalUsd)}`,
       )
     }
   }

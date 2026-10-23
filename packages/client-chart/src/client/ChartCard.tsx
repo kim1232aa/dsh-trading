@@ -36,7 +36,7 @@ import { entrySignalIndicator } from './indicators/entry-signal.js'
 import { rsiGridIndicator, rsiGridCumIndicator, rsiGridMarksIndicator } from './indicators/rsi-grid.js'
 import { revPointIndicator, REVPOINT_TABLE_W } from './indicators/revpoint.js'
 import { kPatternIndicator, KP_ALERT, KP_ALERTS, KP_BEAR_INDICES, KP_BG_COLOR, KP_BG_ON, KP_BULL_INDICES, KP_COLOR, KP_DEFAULTS, KP_FONT, KP_FORMING, KP_LABEL_MODES, KP_LAST, KP_MODE, KP_PLOTS, KP_SHOW, KP_THEME, kpAlertEvents } from './indicators/aicoin-kpattern.js'
-import { aicoinTdIndicator, aicoinTdMarksIndicator, TD_DEFAULTS, TD_MARK_RESERVE, TD_MODES, tdAlertEvents, tdWantsMarks, tdWantsPane } from './indicators/aicoin-td.js'
+import { aicoinTdIndicator, aicoinTdMarksIndicator, migrateTdParams, TD_DEFAULTS, TD_MARK_RESERVE, TD_MODES, tdAlertEvents, tdWantsMarks, tdWantsPane } from './indicators/aicoin-td.js'
 import { ohlcOffsetRightForTopLeft } from './indicators/revpoint-layout.js'
 import { detectPricePrecision, formatPrice } from './precision.js'
 import { createAnnotationOverlays } from './annotation-overlays.js'
@@ -343,13 +343,12 @@ export const EDITABLE: {
     boolP('跟随主题配色'), { label: '标签模式', min: 0, max: KP_LABEL_MODES.length - 1, step: 1, kind: 'select', options: [...KP_LABEL_MODES] },
     boolP('标注未收盘K线'), { label: '只看最近N根(0全部)', min: 0, max: 5000, step: 1 },
   ] },
-  // 1:1 with the AiCoin TD script: plot(up,"UP") / plot(dn,"Down") — display, color, linewidth.
+  // AiCoin TD: 显示面板对齐 AiCoin 原生（仅显示9和13、回落点(卖出结构)#26a380、反弹点(买入结构)#cf3e3e）。
   { name: 'AICOIN_TD', title: 'TD计数(AiCoin)', pane: 'pane_aicoin_td', defaults: [...TD_DEFAULTS], defaultVisible: false, params: [
-    boolP('显示UP'), colorP('UP色'), { label: 'UP线宽', min: 1, max: 10, step: 1 },
-    boolP('显示Down'), colorP('Down色'), { label: 'Down线宽', min: 1, max: 10, step: 1 },
-    // Plugin-side display: numbers on the candles (classic TD look) and/or the source's sub-pane lines.
+    boolP('显示回落点(UP)'), colorP('回落点 (卖出结构)'), { label: 'UP线宽', min: 1, max: 10, step: 1 },
+    boolP('显示反弹点(Down)'), colorP('反弹点 (买入结构)'), { label: 'Down线宽', min: 1, max: 10, step: 1 },
     { label: '显示方式', min: 0, max: TD_MODES.length - 1, step: 1, kind: 'select', options: [...TD_MODES] },
-    boolP('跟随主题配色'), { label: '数字起始', min: 1, max: 99, step: 1 }, boolP('突出9/13'),
+    boolP('仅显示9和13'), { label: '数字起始', min: 1, max: 99, step: 1 }, boolP('突出9/13'),
     boolP('提醒:计数9'), boolP('提醒:计数13'),
   ] },
   { name: 'RSI_GRID', title: 'RSI网格（多空）', pane: 'pane_rsi_grid', defaults: [7, 30, 60, 10], params: [period('RSI周期'), period('多入阈值'), period('多平阈值'), period('累计阈值')] },
@@ -360,7 +359,7 @@ export const EDITABLE: {
   { name: 'LARGE_WALLS', title: '大单墙(CoinGlass)', defaults: [100, 20, 8], defaultVisible: false, params: [
     { label: '最低金额(万)', min: 0, max: 3000, step: 1 },
     { label: '距离现价(%)', min: 1, max: 100, step: 1 },
-    { label: '单边展示条数', min: 2, max: 20, step: 1 },
+    { label: '单边展示条数', min: 2, max: 30, step: 1 },
   ] },
 ]
 
@@ -373,8 +372,8 @@ export function sanitizeSettings(raw: unknown): IndicatorSettings {
     const e = src[def.name]
     const entry = typeof e === 'object' && e !== null ? e as { params?: unknown; visible?: unknown } : {}
     const raw: unknown[] = Array.isArray(entry.params) ? entry.params : []
-    // NW_TREND used to store [lookback, bandwidth, h_mult, band_mult]; keep the user's values.
-    const given = def.name === 'NW_TREND' ? migrateNwParams(raw) : raw
+    // NW_TREND used to store [lookback, bandwidth, h_mult, band_mult]; AICOIN_TD used to store 0xffffff.
+    const given = def.name === 'NW_TREND' ? migrateNwParams(raw) : def.name === 'AICOIN_TD' ? migrateTdParams(raw) : raw
     const params = def.params.map((spec, i) => {
       const v = given[i]
       return typeof v === 'number' && v >= spec.min && v <= spec.max && (spec.step !== 1 || Number.isInteger(v))
@@ -928,19 +927,12 @@ function ensureRegistered(): void {
         type: 'line',
         styles: () => ({ color: '#b083f0', size: 1.5 }),
       },
-      {
-        key: 'mid',
-        title: '中性1: ',
-        type: 'line',
-        styles: () => ({ color: '#768390', size: 1, style: 'dashed', dashedValue: [4, 3] }),
-      },
     ],
     styles: {
       lines: [
         { color: '#58a6ff', size: 1.5, style: 'solid', smooth: false, dashedValue: [2, 2] },
         { color: '#ffa726', size: 1.5, style: 'solid', smooth: false, dashedValue: [2, 2] },
         { color: '#b083f0', size: 1.5, style: 'solid', smooth: false, dashedValue: [2, 2] },
-        { color: '#768390', size: 1, style: 'dashed', smooth: false, dashedValue: [4, 3] },
       ],
     },
     calc: (kLineDataList: { timestamp?: number }[], indicator: { extendData?: unknown }) => {
@@ -1403,9 +1395,9 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       if (def.pane !== undefined) {
         // Own pane: created only when shown, so a hidden one doesn't leave a blank strip.
         if (s.visible) {
-          chart.createIndicator({ name: def.name, calcParams: s.params, extendData: ext }, false, { id: def.pane, height: PANE_HEIGHT })
+          chart.createIndicator({ name: def.name, calcParams: s.params, extendData: ext }, false, { id: def.pane, height: PANE_HEIGHT, gap: { top: 0.24, bottom: 0.10 } })
           if (def.name === 'RSI_GRID') {
-            chart.createIndicator({ name: 'RSI_GRID_CUM', calcParams: s.params }, false, { id: 'pane_rsi_cum', height: PANE_HEIGHT })
+            chart.createIndicator({ name: 'RSI_GRID_CUM', calcParams: s.params }, false, { id: 'pane_rsi_cum', height: PANE_HEIGHT, gap: { top: 0.24, bottom: 0.10 } })
             chart.createIndicator({ name: 'RSI_GRID_MARKS', calcParams: s.params }, true, { id: 'candle_pane' })
           }
         }
@@ -1552,9 +1544,9 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
             chart.removeIndicator('candle_pane', 'RSI_GRID_MARKS')
           }
         } else if (!exists) {
-          chart.createIndicator({ name: def.name, calcParams: s.params, extendData: ext }, false, { id: def.pane, height: PANE_HEIGHT })
+          chart.createIndicator({ name: def.name, calcParams: s.params, extendData: ext }, false, { id: def.pane, height: PANE_HEIGHT, gap: { top: 0.24, bottom: 0.10 } })
           if (def.name === 'RSI_GRID') {
-            chart.createIndicator({ name: 'RSI_GRID_CUM', calcParams: s.params }, false, { id: 'pane_rsi_cum', height: PANE_HEIGHT })
+            chart.createIndicator({ name: 'RSI_GRID_CUM', calcParams: s.params }, false, { id: 'pane_rsi_cum', height: PANE_HEIGHT, gap: { top: 0.24, bottom: 0.10 } })
             chart.createIndicator({ name: 'RSI_GRID_MARKS', calcParams: s.params }, true, { id: 'candle_pane' })
           }
         } else {
@@ -1592,8 +1584,14 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       walls = walls.filter(w => Math.abs(w.price - curP) / curP <= maxDistPct)
     }
 
-    const buys = walls.filter(w => w.side === 'buy').sort((a, b) => b.currentUsd - a.currentUsd).slice(0, sideLimit)
-    const sells = walls.filter(w => w.side === 'sell').sort((a, b) => b.currentUsd - a.currentUsd).slice(0, sideLimit)
+    const buys = walls
+      .filter(w => w.side === 'buy')
+      .sort((a, b) => b.price - a.price || b.currentUsd - a.currentUsd)
+      .slice(0, sideLimit)
+    const sells = walls
+      .filter(w => w.side === 'sell')
+      .sort((a, b) => a.price - b.price || b.currentUsd - a.currentUsd)
+      .slice(0, sideLimit)
     const finalWalls = [...sells, ...buys]
 
     const fmt = (n: number): string => {
@@ -1612,7 +1610,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       const distStr = typeof curP === 'number' && curP > 0
         ? ` (${w.price >= curP ? '+' : ''}${(((w.price - curP) / curP) * 100).toFixed(1)}%)`
         : ''
-      const label = `${w.exchange} ${w.side === 'buy' ? '买' : '卖'} $${fmt(w.currentUsd)}${distStr}`
+      const mTag = (w.market === 'spot' || w.market === '10' || w.market === 'SPOT') ? '现货' : '合约'
+      const label = `${w.exchange}${mTag} ${w.side === 'buy' ? '买' : '卖'} $${fmt(w.currentUsd)}${distStr}`
       const id = chart.createOverlay({
         name: 'tm_hline',
         lock: true,
@@ -2420,6 +2419,30 @@ function ParamEditor({ settings, palette, onClose }: {
                       ))}
                       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
                         {KP_ALERTS.map((_, k) => renderControl(def.name, def.params[KP_ALERT + k]!, KP_ALERT + k, s.params[KP_ALERT + k]!, s.params, commit, setSettings, settings, palette, input))}
+                      </div>
+                    </div>
+                  ) : def.name === 'AICOIN_TD' ? (
+                    /* AiCoin TD: 1:1 with AiCoin 显示 dialog (仅显示9和13 / 回落点(卖出结构) / 反弹点(买入结构)) + optional mode/alerts */
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{
+                        display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: '6px 8px',
+                        border: `1px solid ${palette.line}`, borderRadius: 4, background: 'rgba(255,255,255,0.02)',
+                      }}>
+                        <span style={{ color: palette.text, fontWeight: 600 }}>显示</span>
+                        {renderControl(def.name, def.params[7]!, 7, s.params[7]!, s.params, commit, setSettings, settings, palette, input)}
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          {renderControl(def.name, def.params[0]!, 0, s.params[0]!, s.params, commit, setSettings, settings, palette, input)}
+                          {renderControl(def.name, def.params[1]!, 1, s.params[1]!, s.params, commit, setSettings, settings, palette, input)}
+                        </span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          {renderControl(def.name, def.params[3]!, 3, s.params[3]!, s.params, commit, setSettings, settings, palette, input)}
+                          {renderControl(def.name, def.params[4]!, 4, s.params[4]!, s.params, commit, setSettings, settings, palette, input)}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, opacity: 0.88 }}>
+                        {[6, 8, 9, 10, 11, ...(s.params[6] !== 0 ? [2, 5] : [])].map(idx =>
+                          renderControl(def.name, def.params[idx]!, idx, s.params[idx]!, s.params, commit, setSettings, settings, palette, input)
+                        )}
                       </div>
                     </div>
                   ) : def.name === 'RSI_GRID' ? (

@@ -36,6 +36,7 @@ async function pullLargeOrders(
     ...(opts.hours !== undefined ? { hours: opts.hours } : {}),
     ...(opts.top !== undefined ? { top: opts.top } : {}),
     ...(opts.venue !== undefined ? { venue: opts.venue } : {}),
+    ...(opts.market !== undefined ? { marketType: opts.market } : {}),
     ...(opts.minUsd !== undefined ? { minUsd: opts.minUsd } : {}),
     ...(opts.status !== undefined ? { status: opts.status } : {}),
     ...(opts.currentPrice !== undefined ? { currentPrice: opts.currentPrice } : {}),
@@ -72,7 +73,7 @@ export function registerLargeOrdersTool(ctx: Context): void {
       },
       top: {
         type: 'integer',
-        description: 'Max walls to return, sorted by current USD (default 20).',
+        description: 'Max walls to return (default 40: 20 buy + 20 sell).',
       },
       venue: {
         type: 'string',
@@ -126,7 +127,7 @@ export function registerLargeOrdersTool(ctx: Context): void {
     },
     isConcurrencySafe: () => true,
     async execute(args) {
-      const top = args.top ?? 20
+      const top = args.top ?? 40
       const snap = await pullLargeOrders(ctx, args.symbol, {
         ...(args.hours !== undefined ? { hours: args.hours } : {}),
         top,
@@ -160,6 +161,7 @@ export function registerLargeOrdersTool(ctx: Context): void {
           currentTime: w.currentTime,
           ...(w.baseAsset !== undefined ? { baseAsset: w.baseAsset } : {}),
           ...(w.market !== undefined ? { market: w.market } : {}),
+          ...(w.instrumentId !== undefined ? { instrumentId: w.instrumentId } : {}),
         })),
         statistics: snap.statistics.map(s => ({
           exchange: s.exchange,

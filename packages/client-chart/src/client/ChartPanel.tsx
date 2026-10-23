@@ -483,17 +483,53 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
  * Large order walls summary strip (CoinGlass capi).
  * Displays: 买墙/卖墙堵数、合计名义价值、最近强支撑/阻力价格、最近刷新时间与手动刷新按钮。
  */
+function formatWallAge(startTime: number, currentTime?: number): string {
+  const end = currentTime && currentTime > startTime ? currentTime : Date.now()
+  const sec = Math.max(0, Math.floor((end - startTime) / 1000))
+  if (sec < 60) return `${sec}秒`
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min}分${sec % 60}秒`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}小时${min % 60}分`
+  const day = Math.floor(hr / 24)
+  return `${day}天${hr % 24}小时`
+}
+
+function marketBadgeText(market?: string): string {
+  if (!market) return ''
+  const m = market.toLowerCase()
+  if (m === 'spot' || m === '10') return '现货'
+  return '合约'
+}
+
 function LargeWallsStrip({
   wallsData,
+  currentPrice,
   onRefresh,
 }: {
   wallsData: PanelLargeOrders | null
+  currentPrice?: number | undefined
   onRefresh?: () => void
 }): JSX.Element | null {
+  const [bookOpen, setBookOpen] = useState(false)
+  const [marketFilter, setMarketFilter] = useState<'all' | 'spot' | 'perp'>('all')
+  const [sideFilter, setSideFilter] = useState<'all' | 'buy' | 'sell'>('all')
+
   if (!wallsData || !wallsData.walls || wallsData.walls.length === 0) return null
 
-  const buys = wallsData.walls.filter(w => w.side === 'buy')
-  const sells = wallsData.walls.filter(w => w.side === 'sell')
+  const filteredWalls = wallsData.walls.filter(w => {
+    if (marketFilter === 'all') return true
+    const m = (w.market ?? '').toLowerCase()
+    const isSpot = m === 'spot' || m === '10'
+    return marketFilter === 'spot' ? isSpot : !isSpot
+  })
+
+  const buys = filteredWalls
+    .filter(w => w.side === 'buy')
+    .sort((a, b) => b.price - a.price || b.currentUsd - a.currentUsd)
+  const sells = filteredWalls
+    .filter(w => w.side === 'sell')
+    .sort((a, b) => a.price - b.price || b.currentUsd - a.currentUsd)
 
   const totalBuyUsd = buys.reduce((acc, w) => acc + w.currentUsd, 0)
   const totalSellUsd = sells.reduce((acc, w) => acc + w.currentUsd, 0)
@@ -510,48 +546,173 @@ function LargeWallsStrip({
 
   const nearestBuy = buys[0]
   const nearestSell = sells[0]
+  const maxUsd = Math.max(1, ...filteredWalls.map(w => w.currentUsd))
+  const bookSells = sideFilter === 'buy' ? [] : [...sells].reverse()
+  const bookBuys = sideFilter === 'sell' ? [] : buys
+
+  const pillBtn = (active: boolean): CSSProperties => ({
+    background: active ? 'rgba(83, 155, 245, 0.18)' : 'transparent',
+    color: active ? '#539bf5' : 'var(--dsw-alias-text-2, #9ca3af)',
+    border: `1px solid ${active ? 'rgba(83, 155, 245, 0.45)' : 'var(--dsw-alias-border-l2, rgba(128,128,128,0.25))'}`,
+    borderRadius: 3,
+    fontSize: 10,
+    padding: '0 5px',
+    cursor: 'pointer',
+    lineHeight: '16px',
+  })
 
   return (
-    <div
-      style={{
-        ...STRIP,
-        background: 'var(--dsw-alias-bg-hover, rgba(128,128,128,0.06))',
-        fontSize: 11,
-        alignItems: 'center',
-      }}
-      title={`CoinGlass 大额挂单墙统计 (仅当前在挂订单) · 更新于 ${updatedTime}`}
-    >
-      <span style={{ fontWeight: 600, color: 'var(--dsw-alias-text-1, #ccc)' }}>
-        🧱 大单墙(在挂)
-      </span>
-      <span style={{ color: '#3ddc97' }}>
-        买墙: <span style={VALUE}>{buys.length}堵 (${fmtUsd(totalBuyUsd)})</span>
-        {nearestBuy ? <span style={{ opacity: 0.85, marginLeft: 4 }}>[强撑 @{nearestBuy.price}]</span> : null}
-      </span>
-      <span style={{ color: '#f47067' }}>
-        卖墙: <span style={VALUE}>{sells.length}堵 (${fmtUsd(totalSellUsd)})</span>
-        {nearestSell ? <span style={{ opacity: 0.85, marginLeft: 4 }}>[强阻 @{nearestSell.price}]</span> : null}
-      </span>
-      <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, opacity: 0.8 }}>
-        <span>更新: {updatedTime}</span>
-        {onRefresh ? (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: '0 0 auto' }}>
+      <div
+        style={{
+          ...STRIP,
+          background: 'var(--dsw-alias-bg-hover, rgba(128,128,128,0.06))',
+          fontSize: 11,
+          alignItems: 'center',
+        }}
+        title={`CoinGlass 大额挂单墙统计 (在挂订单) · 更新于 ${updatedTime}`}
+      >
+        <span style={{ fontWeight: 600, color: 'var(--dsw-alias-text-1, #ccc)' }}>
+          🧱 大单墙
+        </span>
+        <span style={{ display: 'inline-flex', gap: 3 }}>
+          {([['all', '全部'], ['perp', '合约'], ['spot', '现货']] as const).map(([k, label]) => (
+            <button key={k} type="button" style={pillBtn(marketFilter === k)} onClick={() => setMarketFilter(k)}>
+              {label}
+            </button>
+          ))}
+        </span>
+        <span style={{ color: '#3ddc97' }}>
+          买墙: <span style={VALUE}>{buys.length}堵 ($${fmtUsd(totalBuyUsd)})</span>
+          {nearestBuy ? (
+            <span style={{ opacity: 0.9, marginLeft: 4 }}>
+              [近撑 @{nearestBuy.price} {nearestBuy.exchange}{marketBadgeText(nearestBuy.market)}]
+            </span>
+          ) : null}
+        </span>
+        <span style={{ color: '#f47067' }}>
+          卖墙: <span style={VALUE}>{sells.length}堵 ($${fmtUsd(totalSellUsd)})</span>
+          {nearestSell ? (
+            <span style={{ opacity: 0.9, marginLeft: 4 }}>
+              [近阻 @{nearestSell.price} {nearestSell.exchange}{marketBadgeText(nearestSell.market)}]
+            </span>
+          ) : null}
+        </span>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <button
             type="button"
-            onClick={onRefresh}
+            onClick={() => setBookOpen(v => !v)}
             style={{
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              color: 'inherit',
-              padding: '0 2px',
+              ...pillBtn(bookOpen),
               fontSize: 11,
+              padding: '1px 6px',
+              fontWeight: 600,
             }}
-            title="立即刷新大单墙数据"
+            title="展开/收起 CoinGlass 实时大额挂单簿明细"
           >
-            🔄
+            📋 挂单簿 ({filteredWalls.length}) {bookOpen ? '▲' : '▼'}
           </button>
-        ) : null}
-      </span>
+          <span style={{ opacity: 0.75 }}>更新: {updatedTime}</span>
+          {onRefresh ? (
+            <button
+              type="button"
+              onClick={onRefresh}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                color: 'inherit',
+                padding: '0 2px',
+                fontSize: 11,
+              }}
+              title="立即刷新大单墙数据"
+            >
+              🔄
+            </button>
+          ) : null}
+        </span>
+      </div>
+
+      {bookOpen ? (
+        <div
+          style={{
+            borderBottom: '1px solid var(--dsw-alias-border-l1, rgba(128,128,128,0.18))',
+            background: 'rgba(13, 17, 23, 0.75)',
+            padding: '6px 10px',
+            fontSize: 11,
+            maxHeight: 240,
+            overflowY: 'auto',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4, color: '#8b949e' }}>
+            <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+              <strong style={{ color: '#c9d1d9' }}>CoinGlass 挂单簿</strong>
+              {([['all', '全部'], ['sell', '仅卖墙'], ['buy', '仅买墙']] as const).map(([k, label]) => (
+                <button key={k} type="button" style={pillBtn(sideFilter === k)} onClick={() => setSideFilter(k)}>
+                  {label}
+                </button>
+              ))}
+            </span>
+            <span style={{ fontSize: 10 }}>价格 · 交易所(市场) | 金额 | 距现价 | 挂单时长</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1.1fr 0.7fr 0.9fr', gap: 4, alignItems: 'center', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+            {bookSells.map(w => {
+              const dist = typeof currentPrice === 'number' && currentPrice > 0 ? ((w.price - currentPrice) / currentPrice) * 100 : null
+              const pct = Math.min(100, Math.round((w.currentUsd / maxUsd) * 100))
+              const mBadge = marketBadgeText(w.market)
+              return (
+                <div key={`s-${w.id}`} style={{ display: 'contents' }}>
+                  <span style={{ color: '#f47067', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {w.price.toLocaleString('en-US', { maximumFractionDigits: 4 })}{' '}
+                    <span style={{ color: '#c9d1d9', fontSize: 10 }}>{w.exchange}</span>
+                    {mBadge ? <span style={{ marginLeft: 3, fontSize: 9, padding: '0 3px', borderRadius: 2, background: 'rgba(244,112,103,0.14)', color: '#f47067' }}>{mBadge}</span> : null}
+                  </span>
+                  <span style={{ position: 'relative', padding: '1px 4px', textAlign: 'right', color: '#c9d1d9' }}>
+                    <span style={{ position: 'absolute', right: 0, top: 1, bottom: 1, width: `${pct}%`, background: 'rgba(244, 112, 103, 0.22)', borderRadius: 2, pointerEvents: 'none' }} />
+                    <span style={{ position: 'relative' }}>${fmtUsd(w.currentUsd)}</span>
+                  </span>
+                  <span style={{ textAlign: 'right', color: '#f47067' }}>
+                    {dist !== null ? `${dist >= 0 ? '+' : ''}${dist.toFixed(2)}%` : '—'}
+                  </span>
+                  <span style={{ textAlign: 'right', color: '#8b949e', fontSize: 10 }}>
+                    {formatWallAge(w.startTime, w.currentTime)}
+                  </span>
+                </div>
+              )
+            })}
+            {typeof currentPrice === 'number' && currentPrice > 0 ? (
+              <div style={{ gridColumn: '1 / -1', padding: '3px 6px', margin: '2px 0', background: 'rgba(83, 155, 245, 0.12)', borderRadius: 3, display: 'flex', justifyContent: 'space-between', fontWeight: 600, color: '#58a6ff' }}>
+                <span>现价 {wallsData.pair || wallsData.symbol}</span>
+                <span>{currentPrice.toLocaleString('en-US', { maximumFractionDigits: 4 })}</span>
+              </div>
+            ) : null}
+            {bookBuys.map(w => {
+              const dist = typeof currentPrice === 'number' && currentPrice > 0 ? ((w.price - currentPrice) / currentPrice) * 100 : null
+              const pct = Math.min(100, Math.round((w.currentUsd / maxUsd) * 100))
+              const mBadge = marketBadgeText(w.market)
+              return (
+                <div key={`b-${w.id}`} style={{ display: 'contents' }}>
+                  <span style={{ color: '#3ddc97', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {w.price.toLocaleString('en-US', { maximumFractionDigits: 4 })}{' '}
+                    <span style={{ color: '#c9d1d9', fontSize: 10 }}>{w.exchange}</span>
+                    {mBadge ? <span style={{ marginLeft: 3, fontSize: 9, padding: '0 3px', borderRadius: 2, background: 'rgba(61,220,151,0.14)', color: '#3ddc97' }}>{mBadge}</span> : null}
+                  </span>
+                  <span style={{ position: 'relative', padding: '1px 4px', textAlign: 'right', color: '#c9d1d9' }}>
+                    <span style={{ position: 'absolute', right: 0, top: 1, bottom: 1, width: `${pct}%`, background: 'rgba(61, 220, 151, 0.22)', borderRadius: 2, pointerEvents: 'none' }} />
+                    <span style={{ position: 'relative' }}>${fmtUsd(w.currentUsd)}</span>
+                  </span>
+                  <span style={{ textAlign: 'right', color: '#3ddc97' }}>
+                    {dist !== null ? `${dist >= 0 ? '+' : ''}${dist.toFixed(2)}%` : '—'}
+                  </span>
+                  <span style={{ textAlign: 'right', color: '#8b949e', fontSize: 10 }}>
+                    {formatWallAge(w.startTime, w.currentTime)}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -933,12 +1094,12 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
       const currentPrice = lastCandle?.close
       const minWan = peekSettings()['LARGE_WALLS']?.params?.[0] ?? 100
       const maxDist = (peekSettings()['LARGE_WALLS']?.params?.[1] ?? 20) / 100
-      const sideLimit = peekSettings()['LARGE_WALLS']?.params?.[2] ?? 8
+      const sideLimit = peekSettings()['LARGE_WALLS']?.params?.[2] ?? 12
       market.getLargeOrders!(
         symbol,
         {
-          hours: 72,
-          top: sideLimit * 2,
+          hours: 168,
+          top: Math.max(40, sideLimit * 2),
           status: 'active',
           maxDistancePct: maxDist,
           minUsd: minWan * 10_000,
@@ -1501,6 +1662,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
               <LargeWallsStrip
                 key="large-walls-strip"
                 wallsData={panelLargeWalls}
+                currentPrice={payload.timeframes[0]?.candles[payload.timeframes[0].candles.length - 1]?.close}
                 onRefresh={() => pullLargeWallsRef.current?.()}
               />
             ) : null}

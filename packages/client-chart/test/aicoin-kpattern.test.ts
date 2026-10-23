@@ -115,14 +115,14 @@ describe('AiCoin K线形态 — plotText / alertcondition metadata', () => {
       '启明星:buy', '黄昏星:sell', '平头顶:sell', '平头底:buy', '顶分型:sell', '底分型:buy', '红三兵:buy', '黑三兵:sell',
     ])
   })
-  it('defaults: all shown, green #008000 / red #ff0000, fontSize 14, white bg, alerts off; plugin slots appended', () => {
+  it('defaults: all shown, green #008000 / red #ff0000, fontSize 12, white bg, alerts off; plugin slots appended', () => {
     expect(KP_DEFAULTS).toHaveLength(52)
     expect(KP_DEFAULTS.slice(KP_THEME)).toEqual([1, 0, 1, 0])
     expect([KP_THEME, KP_MODE, KP_FORMING, KP_LAST]).toEqual([48, 49, 50, 51])
     expect(KP_DEFAULTS.slice(KP_SHOW, KP_SHOW + 15).every(v => v === 1)).toBe(true)
     expect(KP_DEFAULTS[KP_COLOR]).toBe(0x008000)
     expect(KP_DEFAULTS[KP_COLOR + 1]).toBe(0xff0000)
-    expect(KP_DEFAULTS.slice(KP_FONT, KP_FONT + 3)).toEqual([14, 1, 0xffffff])
+    expect(KP_DEFAULTS.slice(KP_FONT, KP_FONT + 3)).toEqual([12, 1, 0xffffff])
     expect(KP_DEFAULTS.slice(KP_ALERT, KP_THEME).every(v => v === 0)).toBe(true)
   })
 })
@@ -147,17 +147,23 @@ describe('AiCoin K线形态 — drawing', () => {
     const texts: { text: string; color: string; x: number; y: number; alpha: number }[] = []
     const rects: { color: string; x: number; y: number; w: number; h: number }[] = []
     const strokes: string[] = []
+    const stems: { color: string; x0: number; y0: number; x1: number; y1: number }[] = []
     let tris = 0
+    let mx = 0, my = 0, lx = 0, ly = 0
     const ctx = {
       font: '', textAlign: '', textBaseline: '', fillStyle: '', strokeStyle: '', lineWidth: 1, globalAlpha: 1,
-      save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, closePath() {},
+      save() {}, restore() {}, beginPath() {},
+      moveTo(x: number, y: number) { mx = x; my = y },
+      lineTo(x: number, y: number) { lx = x; ly = y },
+      closePath() {},
+      stroke(this: { strokeStyle: string }) { stems.push({ color: this.strokeStyle, x0: mx, y0: my, x1: lx, y1: ly }) },
       fill() { tris++ },
       measureText: (s: string) => ({ width: s.length * 10 }),
       fillText(this: { fillStyle: string; globalAlpha: number }, text: string, x: number, y: number) { texts.push({ text, color: this.fillStyle, x, y, alpha: this.globalAlpha }) },
       fillRect(this: { fillStyle: string }, x: number, y: number, w: number, h: number) { rects.push({ color: this.fillStyle, x, y, w, h }) },
       strokeRect(this: { strokeStyle: string }) { strokes.push(this.strokeStyle) },
     }
-    return { ctx, texts, rects, strokes, tris: () => tris }
+    return { ctx, texts, rects, strokes, stems, tris: () => tris }
   }
   const run = (c: KpCandle[], params: number[], extendData?: unknown, xStep = 10, height?: number) => {
     const m = mockCtx()
@@ -178,11 +184,11 @@ describe('AiCoin K线形态 — drawing', () => {
 
   it('source colours: top placements stack above high in plotText order, red text on white plotText box', () => {
     const { texts, rects } = run(star, src())
-    // high 103.1 → y0 896.9; box 14+4=18; gap 4 → slot0 top 874.9 (centre 883.9), slot1 top 854.9
+    // high 103.1 → y0 896.9; box 12+4=16; gap 8 → slot0 top 872.9 (centre 880.9), slot1 top 854.9 (centre 862.9)
     expect(texts.map(t => t.text)).toEqual(['黄昏星', '顶分型'])
     expect(texts.every(t => t.color === '#ff0000' && t.x === 120 && t.alpha === 1)).toBe(true)
-    expect(texts[0]!.y).toBeCloseTo(883.9, 6)
-    expect(texts[1]!.y).toBeCloseTo(863.9, 6)
+    expect(texts[0]!.y).toBeCloseTo(880.9, 6)
+    expect(texts[1]!.y).toBeCloseTo(862.9, 6)
     expect(rects.map(r => r.color)).toEqual(['#ffffff', '#ffffff'])
   })
   it('hidden plotText and disabled background', () => {
@@ -191,18 +197,20 @@ describe('AiCoin K线形态 — drawing', () => {
     expect(texts.map(t => t.text)).toEqual(['顶分型'])
     expect(rects).toEqual([])
   })
-  it('theme mode uses the chart down colour with a tinted, outlined chip', () => {
-    const { texts, rects, strokes } = run(star, [...KP_DEFAULTS], { up: '#3ddc97', down: '#f47067', bg: 'rgba(13, 17, 23, 0.85)' })
+  it('theme mode uses the chart down colour as clean text without pill box/border and draws pointer stems', () => {
+    const { texts, rects, strokes, stems } = run(star, [...KP_DEFAULTS], { up: '#3ddc97', down: '#f47067', bg: 'rgba(13, 17, 23, 0.85)' })
     expect(texts.map(t => t.color)).toEqual(['#f47067', '#f47067'])
-    expect(rects.map(r => r.color)).toEqual(['rgba(13, 17, 23, 0.85)', 'rgba(244, 112, 103, 0.16)', 'rgba(13, 17, 23, 0.85)', 'rgba(244, 112, 103, 0.16)'])
-    expect(strokes).toEqual(['rgba(244, 112, 103, 0.6)', 'rgba(244, 112, 103, 0.6)'])
+    expect(rects).toEqual([])
+    expect(strokes).toEqual([])
+    expect(stems).toHaveLength(2)
+    expect(stems[0]).toEqual({ color: '#f47067', x0: 120, y0: 894.9, x1: 120, y1: 887.9 })
   })
   it('theme mode without theme data falls back to the source colours', () => {
     expect(run(star, [...KP_DEFAULTS]).texts.map(t => t.color)).toEqual(['#ff0000', '#ff0000'])
   })
   it('TD reserve pushes labels further out', () => {
-    const { texts } = run(star, src(), { up: '#0f0', down: '#f00', bg: '#000', reserve: 14 })
-    expect(texts[0]!.y).toBeCloseTo(883.9 - 14, 6)
+    const { texts } = run(star, src(), { up: '#0f0', down: '#f00', bg: '#000', reserve: 18 })
+    expect(texts[0]!.y).toBeCloseTo(880.9 - 18, 6)
   })
   it('auto mode: crowded labels fall back to short text, then to a triangle', () => {
     // xStep 1: every bar overlaps every label → bar 12 gets 2 full labels? no: only 3 slots, all free on the first bar

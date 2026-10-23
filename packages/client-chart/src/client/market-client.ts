@@ -78,6 +78,7 @@ export interface MarketClient {
       hours?: number
       top?: number
       venue?: string
+      marketType?: 'all' | 'spot' | 'perp'
       minUsd?: number
       currentPrice?: number
       maxDistancePct?: number
@@ -112,6 +113,7 @@ export interface PanelMoneyFlow {
 export interface PanelLargeOrderWall {
   id: string | number
   exchange: string
+  market?: 'spot' | 'perp' | string
   side: 'buy' | 'sell'
   price: number
   currentUsd: number
@@ -641,6 +643,7 @@ export function createMarketClient(rpc: RpcCaller): MarketClient {
       if (opts?.hours !== undefined) body['hours'] = opts.hours
       if (opts?.top !== undefined) body['top'] = opts.top
       if (opts?.venue !== undefined) body['venue'] = opts.venue
+      if (opts?.marketType !== undefined) body['marketType'] = opts.marketType
       if (opts?.minUsd !== undefined) body['minUsd'] = opts.minUsd
       if (opts?.currentPrice !== undefined) body['currentPrice'] = opts.currentPrice
       if (opts?.maxDistancePct !== undefined) body['maxDistancePct'] = opts.maxDistancePct

@@ -3,6 +3,7 @@
  * @module
  */
 import { decryptCapiBody } from './decrypt.js'
+import { renderLargeOrders } from './format.js'
 import { toCgSymbol } from './symbol.js'
 import type {
   FetchLargeOrdersOptions,
@@ -10,6 +11,8 @@ import type {
   LargeOrderWall,
   LargeOrdersSnapshot,
 } from './types.js'
+
+export { renderLargeOrders }
 
 export const DEFAULT_BASE_URL = 'https://capi.coinglass.com'
 
@@ -29,8 +32,9 @@ type RawGroup = {
   instrument?: {
     exName?: string
     baseAsset?: string
-    contractType?: string
+    contractType?: string | null
     type?: string | number
+    instrumentId?: string
   }
   list?: RawOrder[]
 }
@@ -50,11 +54,18 @@ type RawOrder = {
 }
 
 type RawStats = {
-  instrument?: { exName?: string; baseAsset?: string; contractType?: string; type?: string | number }
+  instrument?: { exName?: string; baseAsset?: string; contractType?: string | null; type?: string | number; instrumentId?: string }
   bidsTotalUsd?: number
   asksTotalUsd?: number
   buyVolUsd?: number
   sellVolUsd?: number
+}
+
+function normalizeMarketType(inst: { contractType?: string | null; type?: string | number }): 'spot' | 'perp' {
+  if (Number(inst.type) === 10 || String(inst.contractType ?? '').toUpperCase() === 'SPOT') {
+    return 'spot'
+  }
+  return 'perp'
 }
 
 /** Flatten venue groups into wall rows. side: 1=sell, 2=buy. */
@@ -63,6 +74,8 @@ export function flattenWalls(groups: unknown): LargeOrderWall[] {
   const rows: LargeOrderWall[] = []
   for (const g of groups as RawGroup[]) {
     const inst = g.instrument ?? {}
+    const market = normalizeMarketType(inst)
+    const instrumentId = typeof inst.instrumentId === 'string' && inst.instrumentId ? inst.instrumentId : undefined
     for (const o of g.list ?? []) {
       const side = o.side === 1 ? 'sell' : o.side === 2 ? 'buy' : null
       if (side === null) continue
@@ -72,9 +85,8 @@ export function flattenWalls(groups: unknown): LargeOrderWall[] {
         id: o.id ?? `${inst.exName}-${price}-${o.startTime}`,
         exchange: String(inst.exName ?? ''),
         ...(inst.baseAsset !== undefined ? { baseAsset: String(inst.baseAsset) } : {}),
-        ...(inst.contractType !== undefined || inst.type !== undefined
-          ? { market: String(inst.contractType ?? inst.type) }
-          : {}),
+        market,
+        ...(instrumentId !== undefined ? { instrumentId } : {}),
         side,
         price,
         startUsd: Number(o.startUsd) || 0,
@@ -99,11 +111,9 @@ function flattenStats(raw: unknown): LargeOrderStatistics[] {
       exchange: String(inst.exName ?? ''),
       bidsTotalUsd: Number(s.bidsTotalUsd) || 0,
       asksTotalUsd: Number(s.asksTotalUsd) || 0,
+      market: normalizeMarketType(inst),
     }
     if (inst.baseAsset !== undefined) row.baseAsset = String(inst.baseAsset)
-    if (inst.contractType !== undefined || inst.type !== undefined) {
-      row.market = String(inst.contractType ?? inst.type)
-    }
     if (s.buyVolUsd !== undefined) row.buyVolUsd = Number(s.buyVolUsd) || 0
     if (s.sellVolUsd !== undefined) row.sellVolUsd = Number(s.sellVolUsd) || 0
     return row
@@ -240,6 +250,9 @@ export class CoinglassCapi {
       const v = opts.venue.toLowerCase()
       walls = walls.filter(w => w.exchange.toLowerCase() === v)
     }
+    if (opts.marketType === 'spot' || opts.marketType === 'perp') {
+      walls = walls.filter(w => w.market === opts.marketType)
+    }
     const status = opts.status ?? 'active'
     if (status === 'active') {
       walls = walls.filter(w => w.state === 1)
@@ -251,7 +264,8 @@ export class CoinglassCapi {
       walls = walls.filter(w => w.currentUsd >= opts.minUsd!)
     }
 
-    if (typeof opts.currentPrice === 'number' && Number.isFinite(opts.currentPrice) && opts.currentPrice > 0) {
+    const hasCurrentPrice = typeof opts.currentPrice === 'number' && Number.isFinite(opts.currentPrice) && opts.currentPrice > 0
+    if (hasCurrentPrice) {
       const maxDist = opts.maxDistancePct ?? 0.35
       walls = walls.filter(w => Math.abs(w.price - opts.currentPrice!) / opts.currentPrice! <= maxDist)
     }
@@ -259,21 +273,33 @@ export class CoinglassCapi {
     const orderCount = walls.length
 
     let selectedWalls: LargeOrderWall[]
-    if (opts.balanced !== false && typeof opts.currentPrice === 'number' && opts.currentPrice > 0) {
-      const p = opts.currentPrice
-      const buys = walls.filter(w => w.side === 'buy' && w.price <= p).sort((a, b) => b.currentUsd - a.currentUsd)
-      const sells = walls.filter(w => w.side === 'sell' && w.price >= p).sort((a, b) => b.currentUsd - a.currentUsd)
+    if (opts.balanced !== false) {
       const half = Math.ceil(top / 2)
-      const pickBuys = buys.slice(0, half)
-      const pickSells = sells.slice(0, half)
-      if (pickBuys.length < half && sells.length > half) {
-        pickSells.push(...sells.slice(half, half + (half - pickBuys.length)))
-      } else if (pickSells.length < half && buys.length > half) {
-        pickBuys.push(...buys.slice(half, half + (half - pickSells.length)))
+      if (hasCurrentPrice) {
+        const buys = walls
+          .filter(w => w.side === 'buy')
+          .sort((a, b) => b.price - a.price || b.currentUsd - a.currentUsd)
+        const sells = walls
+          .filter(w => w.side === 'sell')
+          .sort((a, b) => a.price - b.price || b.currentUsd - a.currentUsd)
+        const pickBuys = buys.slice(0, half)
+        const pickSells = sells.slice(0, half)
+        selectedWalls = [...pickBuys, ...pickSells]
+      } else {
+        const buys = walls
+          .filter(w => w.side === 'buy')
+          .sort((a, b) => b.currentUsd - a.currentUsd)
+        const sells = walls
+          .filter(w => w.side === 'sell')
+          .sort((a, b) => b.currentUsd - a.currentUsd)
+        const pickBuys = buys
+          .slice(0, half)
+          .sort((a, b) => b.price - a.price || b.currentUsd - a.currentUsd)
+        const pickSells = sells
+          .slice(0, half)
+          .sort((a, b) => a.price - b.price || b.currentUsd - a.currentUsd)
+        selectedWalls = [...pickBuys, ...pickSells]
       }
-      pickSells.sort((a, b) => a.price - b.price)
-      pickBuys.sort((a, b) => b.price - a.price)
-      selectedWalls = [...pickSells, ...pickBuys]
     } else {
       walls.sort((a, b) => b.currentUsd - a.currentUsd)
       selectedWalls = walls.slice(0, top)
@@ -292,6 +318,9 @@ export class CoinglassCapi {
         if (opts.venue) {
           const v = opts.venue.toLowerCase()
           statistics = statistics.filter(s => s.exchange.toLowerCase() === v)
+        }
+        if (opts.marketType === 'spot' || opts.marketType === 'perp') {
+          statistics = statistics.filter(s => s.market === opts.marketType)
         }
       } catch {
         // Statistics are optional; walls alone are enough for the tool/overlay.

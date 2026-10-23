@@ -89,7 +89,7 @@ export const KP_LABEL_MODES = ['自动避让', '完整文字', '简写', '仅标
 export const KP_DEFAULTS: readonly number[] = [
   ...KP_PLOTS.map(() => 1),
   ...KP_PLOTS.map(p => KP_NAMED_COLOR[p.color]),
-  14, 1, 0xffffff,
+  12, 1, 0xffffff,
   ...KP_ALERTS.map(() => 0),
   1, 0, 1, 0,
 ]
@@ -232,7 +232,7 @@ export interface KpLabelStyle { text: string; fill?: string; tint?: string; stro
 export function kpStyle(P: KpParams, n: number, theme: KpTheme | undefined): KpLabelStyle {
   if (P.theme && theme) {
     const c = kpIsBull(n) ? theme.up : theme.down
-    return { text: c, fill: theme.bg, tint: withAlpha(c, 0.16), stroke: withAlpha(c, 0.6) }
+    return { text: c }
   }
   return P.bgOn ? { text: kpHex(P.color[n]!), fill: kpHex(P.bgColor) } : { text: kpHex(P.color[n]!) }
 }
@@ -240,7 +240,7 @@ export function kpStyle(P: KpParams, n: number, theme: KpTheme | undefined): KpL
 const FONT_FAMILY = 'system-ui, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif'
 /** 文字框内边距 / 与 K 线的距离 / 堆叠间距（px）。 */
 const PAD = 2
-const GAP = 4
+const GAP = 8
 const STACK = 2
 /** 自动避让：每种文字最多往外挪的层数，放不下就退到简写，再退到小三角。 */
 const AUTO_SLOTS = 3
@@ -304,7 +304,17 @@ export function drawKPatterns({ ctx, indicator, xAxis, yAxis, visibleRange, boun
   }
   let placed: Rect[] = []
   const free = (r: Rect): boolean => r.y0 >= 0 && r.y1 <= H && !placed.some(p => r.x0 < p.x1 && r.x1 > p.x0 && r.y0 < p.y1 && r.y1 > p.y0)
-  const label = (t: string, x: number, r: Rect, st: KpLabelStyle): void => {
+  const label = (t: string, x: number, r: Rect, st: KpLabelStyle, top: boolean, y0: number): void => {
+    const stemStart = top ? y0 - reserve - 2 : y0 + reserve + 2
+    const stemEnd = top ? r.y1 - 1 : r.y0 + 1
+    if (Math.abs(stemEnd - stemStart) >= 2) {
+      ctx.beginPath?.()
+      ctx.moveTo?.(x, stemStart)
+      ctx.lineTo?.(x, stemEnd)
+      ctx.strokeStyle = st.text
+      ctx.lineWidth = 1
+      ctx.stroke?.()
+    }
     const w = r.x1 - r.x0
     if (st.fill) { ctx.fillStyle = st.fill; ctx.fillRect(r.x0, r.y0, w, boxH) }
     if (st.tint) { ctx.fillStyle = st.tint; ctx.fillRect(r.x0, r.y0, w, boxH) }
@@ -338,7 +348,7 @@ export function drawKPatterns({ ctx, indicator, xAxis, yAxis, visibleRange, boun
         for (let s = 0; s < slots && !done; s++) {
           const yt = slotTop(s)
           const r = { x0: x - w / 2, x1: x + w / 2, y0: yt, y1: yt + boxH }
-          if (free(r)) { placed.push(r); label(t, x, r, st); done = true }
+          if (free(r)) { placed.push(r); label(t, x, r, st, top, y0); done = true }
         }
         if (done) break
       }
@@ -347,7 +357,7 @@ export function drawKPatterns({ ctx, indicator, xAxis, yAxis, visibleRange, boun
         const t = texts[0]!; const w = width(t)
         const yt = Math.max(0, Math.min(slotTop(0), H - boxH))
         const r = { x0: x - w / 2, x1: x + w / 2, y0: yt, y1: yt + boxH }
-        placed.push(r); label(t, x, r, st); done = true
+        placed.push(r); label(t, x, r, st, top, y0); done = true
       }
       if (!done) {
         // 小三角：看涨 ▲ 在低点下方，看跌 ▼ 在高点上方；同一根 K 线多个就往外叠。

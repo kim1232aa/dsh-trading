@@ -4,8 +4,10 @@ export interface LargeOrderWall {
   /** Venue display name, e.g. Binance / OKX. */
   exchange: string
   baseAsset?: string
-  /** PERPETUAL / spot type label from instrument. */
-  market?: string
+  /** Normalized market type ('spot' | 'perp'). */
+  market?: 'spot' | 'perp'
+  /** Exchange instrument identifier (e.g. BTC-USDT-SWAP, BTCUSDT, BTC-USD). */
+  instrumentId?: string
   side: 'buy' | 'sell'
   price: number
   startUsd: number
@@ -53,6 +55,8 @@ export interface FetchLargeOrdersOptions {
   top?: number
   /** Filter to one venue after flatten (e.g. Binance). */
   venue?: string
+  /** Filter walls by market type: 'all' (default), 'spot', or 'perp'. */
+  marketType?: 'all' | 'spot' | 'perp'
   /** Drop walls whose currentUsd is below this (e.g. 1_000_000 for $100万). */
   minUsd?: number
   /** Optional price band for statistics. */

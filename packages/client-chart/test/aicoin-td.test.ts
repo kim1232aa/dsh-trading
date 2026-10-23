@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { TD_DEFAULTS, aicoinTdIndicator, aicoinTdMarksIndicator, calculateAicoinTd, drawTdMarks, sanitizeTdParams, tdAlertEvents, tdWantsMarks, tdWantsPane } from '../src/client/indicators/aicoin-td.js'
+import { TD_DEFAULTS, TD_MARK_RESERVE, aicoinTdIndicator, aicoinTdMarksIndicator, calculateAicoinTd, drawTdMarks, migrateTdParams, sanitizeTdParams, tdAlertEvents, tdWantsMarks, tdWantsPane } from '../src/client/indicators/aicoin-td.js'
 import { EDITABLE, sanitizeSettings } from '../src/client/ChartCard.js'
 
 const rows = (closes: number[]) => calculateAicoinTd(closes.map(close => ({ close })))
@@ -30,21 +30,26 @@ describe('AiCoin TD — oup/odn by hand', () => {
 })
 
 describe('AiCoin TD — plot styling / display', () => {
-  it('defaults: source plot colours (AiCoin plot default white, linewidth 1); plugin slots appended', () => {
-    expect(TD_DEFAULTS).toEqual([1, 0xffffff, 1, 1, 0xffffff, 1, 0, 1, 1, 1, 0, 0])
+  it('defaults: AiCoin TD colours (#26a380 for UP/回落点, #cf3e3e for Down/反弹点, only9And13 off)', () => {
+    expect(TD_DEFAULTS).toEqual([1, 0x26a380, 1, 1, 0xcf3e3e, 1, 0, 0, 1, 1, 0, 0])
+    expect(TD_MARK_RESERVE).toBe(18)
     expect(sanitizeTdParams([])).toEqual({
-      showUp: true, upColor: 0xffffff, upWidth: 1, showDn: true, dnColor: 0xffffff, dnWidth: 1,
-      mode: 0, theme: true, start: 1, highlight: true, alert9: false, alert13: false,
+      showUp: true, upColor: 0x26a380, upWidth: 1, showDn: true, dnColor: 0xcf3e3e, dnWidth: 1,
+      mode: 0, only9And13: false, theme: false, start: 1, highlight: true, alert9: false, alert13: false,
     })
   })
-  it('figure styles: panel colours when theme is off, chart colours when on', () => {
+  it('migrateTdParams upgrades old white-default slots to #26a380 / #cf3e3e and only9And13=0', () => {
+    expect(migrateTdParams([1, 0xffffff, 1, 1, 0xffffff, 1, 0, 1, 1, 1, 0, 0])).toEqual([1, 0x26a380, 1, 1, 0xcf3e3e, 1, 0, 0, 1, 1, 0, 0])
+    expect(migrateTdParams([1, 0x123456, 1, 1, 0x654321, 1, 0, 1, 1, 1, 0, 0])).toEqual([1, 0x123456, 1, 1, 0x654321, 1, 0, 1, 1, 1, 0, 0])
+  })
+  it('figure styles: always respect panel colours', () => {
     const [up, dn] = aicoinTdIndicator.figures
     const off = { calcParams: [1, 0x00ff00, 2, 1, 0xff0000, 3, 1, 0] }
     expect(up!.styles(null, off)).toEqual({ color: '#00ff00', size: 2 })
     expect(dn!.styles(null, off)).toEqual({ color: '#ff0000', size: 3 })
     const on = { calcParams: [1, 0x00ff00, 2, 1, 0xff0000, 3, 1, 1], extendData: { up: '#3ddc97', down: '#f47067' } }
-    expect(up!.styles(null, on)).toEqual({ color: '#3ddc97', size: 2 })
-    expect(dn!.styles(null, on)).toEqual({ color: '#f47067', size: 3 })
+    expect(up!.styles(null, on)).toEqual({ color: '#00ff00', size: 2 })
+    expect(dn!.styles(null, on)).toEqual({ color: '#ff0000', size: 3 })
   })
   it('display off blanks that plot only', () => {
     const data = [10, 11, 12, 13, 14].map(close => ({ close }))
@@ -80,30 +85,44 @@ describe('AiCoin TD — numbers on the candles', () => {
     })
     return texts
   }
-  const rising = Array.from({ length: 15 }, (_, i) => 100 + i) // up counts 1..11 on bars 4..14
-  it('UP above the high in the chart up colour; last bar translucent; 9 bold', () => {
+  const rising = Array.from({ length: 18 }, (_, i) => 100 + i) // up counts 1..14 on bars 4..17
+  it('UP above the high in #26a380; draws 1..9 and 13 only (never spams 10..12 or >=14); 9/13 bold', () => {
     const t = run(rising, [...TD_DEFAULTS])
-    expect(t.map(x => x.text)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11'])
-    expect(t.every(x => x.color === '#3ddc97')).toBe(true)
+    expect(t.map(x => x.text)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', '13'])
+    expect(t.every(x => x.color === '#26a380')).toBe(true)
     expect(t[0]!.y).toBe(1000 - 105 - 2)
     expect(t[8]!.font.startsWith('bold 12px')).toBe(true)
-    expect(t[10]!.alpha).toBe(0.5)
+    expect(t[9]!.font.startsWith('bold 12px')).toBe(true)
   })
-  it('数字起始 hides the early counts; dense bars keep only 9 / 13', () => {
+  it('only9And13 shows only 9 and 13; 数字起始 hides early counts; dense bars keep only 9 / 13', () => {
+    const only = [...TD_DEFAULTS]; only[7] = 1
+    expect(run(rising, only).map(x => x.text)).toEqual(['9', '13'])
     const p = [...TD_DEFAULTS]; p[8] = 7
-    expect(run(rising, p).map(x => x.text)).toEqual(['7', '8', '9', '10', '11'])
-    expect(run(rising, [...TD_DEFAULTS], 4).map(x => x.text)).toEqual(['9'])
+    expect(run(rising, p).map(x => x.text)).toEqual(['7', '8', '9', '13'])
+    expect(run(rising, [...TD_DEFAULTS], 4).map(x => x.text)).toEqual(['9', '13'])
   })
-  it('Down below the low', () => {
+  it('Down below the low in #cf3e3e', () => {
     const falling = Array.from({ length: 8 }, (_, i) => 100 - i)
     const t = run(falling, [...TD_DEFAULTS])
     expect(t.map(x => x.text)).toEqual(['1', '2', '3', '4'])
-    expect(t[0]!.color).toBe('#f47067')
+    expect(t[0]!.color).toBe('#cf3e3e')
     expect(t[0]!.y).toBe(1000 - (96 - 1) + 2)
+    expect(t[3]!.alpha).toBe(0.5)
   })
-  it('marks indicator is a price-pane overlay without figures', () => {
+  it('marks indicator is a price-pane overlay without figures and formats tooltip as Up:/Down:', () => {
     expect(aicoinTdMarksIndicator.series).toBe('price')
     expect(aicoinTdMarksIndicator.figures).toEqual([])
+    const res = calculateAicoinTd(rising.map(close => ({ close })))
+    const tt = aicoinTdMarksIndicator.createTooltipDataSource({
+      indicator: { calcParams: [...TD_DEFAULTS], result: res },
+      crosshair: { dataIndex: 9 },
+    })
+    expect(tt).toEqual({
+      name: 'TD',
+      calcParamsText: '',
+      values: [{ title: 'Up:', value: { text: '6', color: '#26a380' } }],
+      icons: [],
+    })
   })
 })
 

@@ -18,14 +18,24 @@
  */
 export interface TdRow { oup: number; odn: number; up?: number; dn?: number }
 
-/** 参数槽位：0 显示UP 1 UP色 2 UP线宽 3 显示Down 4 Down色 5 Down线宽 | 6 显示方式 7 跟随主题 8 数字起始 9 突出9/13 10 提醒9 11 提醒13 */
+/** 参数槽位：0 显示UP 1 UP色(回落点/卖出结构) 2 UP线宽 3 显示Down 4 Down色(反弹点/买入结构) 5 Down线宽 | 6 显示方式 7 仅显示9和13 8 数字起始 9 突出9/13 10 提醒9 11 提醒13 */
 export const TD_MODES = ['主图数字', '副图曲线', '两者'] as const
-export const TD_DEFAULTS: readonly number[] = [1, 0xffffff, 1, 1, 0xffffff, 1, 0, 1, 1, 1, 0, 0]
+export const TD_DEFAULTS: readonly number[] = [1, 0x26a380, 1, 1, 0xcf3e3e, 1, 0, 0, 1, 1, 0, 0]
 
 export interface TdParams {
   showUp: boolean; upColor: number; upWidth: number
   showDn: boolean; dnColor: number; dnWidth: number
-  mode: number; theme: boolean; start: number; highlight: boolean; alert9: boolean; alert13: boolean
+  mode: number; only9And13: boolean; theme: boolean; start: number; highlight: boolean; alert9: boolean; alert13: boolean
+}
+
+export function migrateTdParams(raw: readonly unknown[]): unknown[] {
+  const out = [...raw]
+  if (out[1] === 0xffffff && out[4] === 0xffffff) {
+    out[1] = 0x26a380
+    out[4] = 0xcf3e3e
+    out[7] = 0
+  }
+  return out
 }
 
 export function sanitizeTdParams(params: readonly unknown[]): TdParams {
@@ -39,7 +49,8 @@ export function sanitizeTdParams(params: readonly unknown[]): TdParams {
     showUp: num(0) === 1, upColor: color(1), upWidth: width(2),
     showDn: num(3) === 1, dnColor: color(4), dnWidth: width(5),
     mode: Math.max(0, Math.min(TD_MODES.length - 1, Math.round(num(6)))),
-    theme: num(7) === 1,
+    only9And13: num(7) === 1,
+    theme: false,
     start: Math.max(1, Math.min(99, Math.round(num(8)))),
     highlight: num(9) === 1,
     alert9: num(10) === 1,
@@ -92,14 +103,14 @@ const asTheme = (ext: unknown): TdTheme | undefined => {
   const e = ext as Partial<TdTheme> | null | undefined
   return e && typeof e.up === 'string' && typeof e.down === 'string' ? e as TdTheme : undefined
 }
-export function tdColors(P: TdParams, ext: unknown): { up: string; dn: string } {
-  const t = P.theme ? asTheme(ext) : undefined
-  return t ? { up: t.up, dn: t.down } : { up: hex(P.upColor), dn: hex(P.dnColor) }
+export function tdColors(P: TdParams, _ext?: unknown): { up: string; dn: string } {
+  void asTheme
+  return { up: hex(P.upColor), dn: hex(P.dnColor) }
 }
 
 /** 主图数字占用的高度（K 线形态标签据此往外让）。 */
 export const TD_MARK_FONT = 10
-export const TD_MARK_RESERVE = 14
+export const TD_MARK_RESERVE = 18
 
 /** klinecharts 注册（副图 = 源码 plot）。nan → undefined，line 图在该处断开，同 AiCoin plot(nan)。 */
 export const aicoinTdIndicator = {
@@ -148,9 +159,10 @@ export function drawTdMarks({ ctx, indicator, xAxis, yAxis, visibleRange, barSpa
     ctx.globalAlpha = i === last ? 0.5 : 1
     const x = xAxis.convertToPixel(i)
     const mark = (n: number | undefined, y: number | undefined, color: string, above: boolean): void => {
-      if (n === undefined || y === undefined || n < P.start) return
+      if (n === undefined || y === undefined) return
       const key = n === 9 || n === 13
-      if (dense && !key) return
+      const shown = P.only9And13 ? key : (n >= P.start && n <= 9) || n === 13
+      if (!shown || (dense && !key)) return
       const big = P.highlight && key
       ctx.font = (big ? 'bold ' : '') + (big ? TD_MARK_FONT + 2 : TD_MARK_FONT) + 'px ' + FONT_FAMILY
       ctx.textBaseline = above ? 'bottom' : 'top'
@@ -179,8 +191,8 @@ export const aicoinTdMarksIndicator = {
     const col = tdColors(P, indicator.extendData)
     const r = crosshair.dataIndex !== undefined ? indicator.result?.[crosshair.dataIndex] : undefined
     const values: { title: string; value: { text: string; color: string } }[] = []
-    if (P.showUp && r?.up !== undefined) values.push({ title: 'UP: ', value: { text: String(r.up), color: col.up } })
-    if (P.showDn && r?.dn !== undefined) values.push({ title: 'Down: ', value: { text: String(r.dn), color: col.dn } })
+    if (P.showUp && r?.up !== undefined) values.push({ title: 'Up:', value: { text: String(r.up), color: col.up } })
+    if (P.showDn && r?.dn !== undefined) values.push({ title: 'Down:', value: { text: String(r.dn), color: col.dn } })
     return { name: 'TD', calcParamsText: '', values, icons: [] }
   },
   draw: drawTdMarks,
