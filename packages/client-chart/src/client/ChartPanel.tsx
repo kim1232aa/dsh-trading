@@ -24,7 +24,7 @@ import type { ChartHistory } from './ChartCard.js'
 import { derivativesAtBar } from './market-client.js'
 import { getLatestChart, subscribeLatestChart } from './latest.js'
 import { decideFollow } from './follow.js'
-import { mergeMarks, mergeTail, PANEL_TIMEFRAMES, postureColor, readMarks, recallMarks, rememberMarks, timeframesForSource, withCandles } from './market-client.js'
+import { combineMarks, mergeMarks, mergeTail, PANEL_TIMEFRAMES, postureColor, readMarks, recallMarks, rememberMarks, timeframesForSource, withCandles } from './market-client.js'
 import type { ChartMarks, MarketClient, PanelDerivatives, PanelLargeOrders, PanelMoneyFlow } from './market-client.js'
 import type { ChartPayload } from './payload.js'
 import type { FundamentalsPackage, Orderbook } from '@dsh-trading/market-data'
@@ -1030,15 +1030,17 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
   useEffect(() => {
     const next = readMarks(fromAgent)
     if (next === null) return
+    const isCandidateZonePayload = fromAgent?.replaceMarks === true
     setMarks(cur => {
-      if (cur !== null && cur.key === next.key) return cur
-      rememberMarks(next)
+      const combined = combineMarks(cur, next, isCandidateZonePayload)
+      if (cur !== null && cur.key === combined.key) return cur
+      rememberMarks(combined)
       // A dismissal is about the marks that were on screen when it was
       // clicked, not a standing veto. Without this, adopting a different set
       // while an old key is dismissed hides the pill too — and with the pill
       // goes the only way back to the drawing.
       setDismissed(null)
-      return next
+      return combined
     })
   }, [fromAgent])
 

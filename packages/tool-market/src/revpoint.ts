@@ -451,7 +451,7 @@ export type RevPointReport = {
   oiChg1hPct: number | null
   htf: { tf: RpTf; R: number | null; S: number | null; rActive: boolean; sActive: boolean }[]
 }
-const nn = (v: number) => (Number.isFinite(v) ? Number(v.toPrecision(8)) : null)
+const nn = (v: number) => (Number.isFinite(v) ? (Number(v.toPrecision(8)) || 0) : null)
 
 export function revPointReport(candles: readonly { time: string; open: number; high: number; low: number; close: number; volume: number }[],
   oi: readonly RpOiPoint[] = [], o: Partial<RevPointOpts> = {}): RevPointReport {
@@ -459,11 +459,11 @@ export function revPointReport(candles: readonly { time: string; open: number; h
   const lf = r.fine.at(-1), lb = r.big.at(-1)
   return {
     candidate: r.candidate === null ? null : { side: r.candidate.isTop ? 'top' : 'bottom', price: nn(r.candidate.price)!, stars: r.candidate.stars,
-      needPct: r.candidate.need > 0 ? Number(r.candidate.need.toFixed(2)) : null, text: r.candidate.text.replace('\n', ' ') },
+      needPct: r.candidate.need > 0 ? (Number(r.candidate.need.toFixed(2)) || 0) : null, text: r.candidate.text.replace('\n', ' ') },
     lastFine: lf ? { side: lf.isTop ? 'top' : 'bottom', price: nn(lf.price)!, stars: lf.stars, tip: lf.tip } : null,
     lastBig: lb ? { side: lb.isTop ? 'top' : 'bottom', price: nn(lb.price)! } : null,
     trend1h: r.trendUp ? 'up' : 'down',
-    oiChg1hPct: Number.isFinite(r.oiChg1h) ? Number(r.oiChg1h.toFixed(2)) : null,
+    oiChg1hPct: Number.isFinite(r.oiChg1h) ? (Number(r.oiChg1h.toFixed(2)) || 0) : null,
     htf: r.htf.filter(h => h.on).map(h => ({ tf: h.tf, R: nn(h.r.px), S: nn(h.s.px), rActive: h.r.active !== null, sActive: h.s.active !== null })),
   }
 }

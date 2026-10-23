@@ -41,8 +41,8 @@ export type Trendline = {
   broken: boolean
 }
 
-const r2 = (v: number): number => Math.round(v * 100) / 100
-const r1 = (v: number): number => Math.round(v * 10) / 10
+const r2 = (v: number): number => Math.round(v * 100) / 100 || 0
+const r1 = (v: number): number => Math.round(v * 10) / 10 || 0
 /** Within 0.05% counts as an equal high/low (double top/bottom), not a new extreme. */
 const EQ_TOL = 0.0005
 

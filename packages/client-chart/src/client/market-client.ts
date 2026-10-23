@@ -381,6 +381,42 @@ export function readMarks(payload: ChartPayload | null): ChartMarks | null {
   }
 }
 
+function isCandidateZoneAnnotation(a: ChartAnnotation): boolean {
+  return a.type === 'zone' && typeof (a as unknown as Record<string, unknown>)['availableAt'] === 'string'
+}
+
+/**
+ * Combine existing marks with a newly arrived tool payload for the same symbol so
+ * rule-verified supply/demand candidates (`find_supply_demand_zones`, which sets
+ * `replaceMarks: true`) and structural drawings (`annotate_chart`) coexist instead
+ * of wiping each other out when called in sequence.
+ */
+export function combineMarks(
+  cur: ChartMarks | null,
+  next: ChartMarks,
+  isCandidateZonePayload: boolean,
+): ChartMarks {
+  if (cur === null || cur.provider !== next.provider || cur.symbol !== next.symbol) {
+    return next
+  }
+  const annotations = isCandidateZonePayload
+    ? [...cur.annotations.filter(a => !isCandidateZoneAnnotation(a)), ...next.annotations]
+    : [...cur.annotations.filter(isCandidateZoneAnnotation), ...next.annotations]
+  const scenarios = isCandidateZonePayload && next.scenarios.length === 0
+    ? cur.scenarios
+    : next.scenarios
+  const timeframe = isCandidateZonePayload && next.annotations.length === 0 && cur.annotations.some(a => !isCandidateZoneAnnotation(a))
+    ? cur.timeframe
+    : next.timeframe
+  return {
+    ...next,
+    timeframe,
+    annotations,
+    scenarios,
+    key: `${next.provider}|${next.symbol}|${timeframe}|${annotationDigest(annotations, scenarios)}`,
+  }
+}
+
 /** Plausibility band, mirroring the producer's own validation. */
 function band(role: unknown, lo: number, hi: number, isCrossTf = false): { floor: number; ceil: number } {
   if (isCrossTf) {
@@ -399,6 +435,54 @@ function inBand(price: unknown, role: unknown, lo: number, hi: number, isCrossTf
   if (typeof price !== 'number' || !Number.isFinite(price)) return false
   const { floor, ceil } = band(role, lo, hi, isCrossTf)
   return price >= floor && price <= ceil
+}
+
+/**
+ * Clip a polyline to [firstMs, lastMs] by linear interpolation at the window
+ * boundaries. Prevents klinecharts' nearest-bar lookup from collapsing multiple
+ * forward-projected vertices onto the final candle (which creates vertical kinks)
+ * and allows higher-timeframe trendlines to remain visible on lower-timeframe views.
+ */
+function clipPathToWindow(
+  pts: readonly { time: string; t: number; price: number }[],
+  firstMs: number,
+  lastMs: number,
+): { time: string; price: number }[] {
+  if (pts.length < 2) return []
+  const allInside = pts.every((p, idx) =>
+    p.t >= firstMs && p.t <= lastMs && (idx === 0 || p.t > pts[idx - 1]!.t))
+  if (allInside) return pts.map(p => ({ time: p.time, price: p.price }))
+
+  const out: { time: string; t: number; price: number }[] = []
+  const pushPt = (time: string, t: number, price: number): void => {
+    const rounded = Number(price.toPrecision(8)) || 0
+    const prev = out[out.length - 1]
+    if (prev !== undefined && Math.abs(prev.t - t) < 1) {
+      out[out.length - 1] = { time, t, price: rounded }
+      return
+    }
+    out.push({ time, t, price: rounded })
+  }
+
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i]!
+    const b = pts[i + 1]!
+    if (b.t <= a.t) continue
+    if (b.t < firstMs || a.t > lastMs) continue
+
+    const t0 = Math.max(firstMs, a.t)
+    const t1 = Math.min(lastMs, b.t)
+    if (t1 < t0) continue
+
+    const p0 = t0 === a.t ? a.price : a.price + (b.price - a.price) * ((t0 - a.t) / (b.t - a.t))
+    const p1 = t1 === b.t ? b.price : a.price + (b.price - a.price) * ((t1 - a.t) / (b.t - a.t))
+    const s0 = t0 === a.t ? a.time : new Date(t0).toISOString()
+    const s1 = t1 === b.t ? b.time : new Date(t1).toISOString()
+
+    pushPt(s0, t0, p0)
+    if (t1 > t0) pushPt(s1, t1, p1)
+  }
+  return out.length >= 2 ? out.map(p => ({ time: p.time, price: p.price })) : []
 }
 
 /**
@@ -465,17 +549,39 @@ export function mergeMarks(payload: ChartPayload, marks: ChartMarks): MergeMarks
       else dropped += 1
     } else if (a.type === 'path') {
       const points = Array.isArray(record['points']) ? record['points'] : []
-      // A path is dropped WHOLE or not at all: a truncated path is a different
-      // claim than the one the agent made.
-      const ok = points.length >= 2 && points.every(p => {
-        if (typeof p !== 'object' || p === null) return false
+      const parsed: { time: string; t: number; price: number }[] = []
+      let validRaw = points.length >= 2
+      for (const p of points) {
+        if (typeof p !== 'object' || p === null) { validRaw = false; break }
         const pt = p as Record<string, unknown>
         const t = typeof pt['time'] === 'string' ? Date.parse(pt['time']) : NaN
-        return inBand(pt['price'], role, lo, hi, isCrossTf)
-          && !Number.isNaN(t) && t >= firstMs && t <= lastMs + forwardMs
-      })
-      if (ok) kept.push(a)
-      else dropped += 1
+        const price = pt['price']
+        if (typeof price !== 'number' || !Number.isFinite(price) || Number.isNaN(t)) {
+          validRaw = false
+          break
+        }
+        parsed.push({ time: pt['time'] as string, t, price })
+      }
+      if (!validRaw) {
+        dropped += 1
+      } else if (!isCrossTf) {
+        // A path on the same timeframe is dropped WHOLE or not at all when out of bounds.
+        const ok = parsed.every(pt =>
+          inBand(pt.price, role, lo, hi, false) && pt.t >= firstMs && pt.t <= lastMs + forwardMs)
+        if (ok) {
+          const clamped = clipPathToWindow(parsed, firstMs, lastMs)
+          kept.push(clamped.length >= 2 ? { ...a, points: clamped } : a)
+        } else {
+          dropped += 1
+        }
+      } else {
+        // Cross-timeframe: clip segments crossing [firstMs, lastMs] so higher-timeframe
+        // trendlines stay visible on lower-timeframe views when their active leg fits.
+        const clipped = clipPathToWindow(parsed, firstMs, lastMs)
+        const ok = clipped.length >= 2 && clipped.every(pt => inBand(pt.price, role, lo, hi, true))
+        if (ok) kept.push({ ...a, points: clipped })
+        else dropped += 1
+      }
     } else {
       // The annotation array is an open envelope: an unknown type belongs to a
       // renderer this build has never heard of, and stripping it would break

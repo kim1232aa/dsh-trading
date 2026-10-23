@@ -59,7 +59,7 @@ export const SIGNAL_RULES = '收盘确认 + ST翻转/回踩 + WMA60同侧 + ADX�
 
 const ADX_MIN = 20
 const COOLDOWN = 6
-const r2 = (v: number): number => Math.round(v * 100) / 100
+const r2 = (v: number): number => Math.round(v * 100) / 100 || 0
 
 export function confirmedBarCount(length: number, options: SignalOptions = {}): number {
   const count = Math.max(0, length - (options.lastBarClosed === true ? 0 : 1))

@@ -681,7 +681,7 @@ export interface PositionReading {
 /** % change a→b relative to b. Null when either side missing or b≤0. */
 export function pctChange(now: number | null, past: number | null): number | null {
   if (now === null || past === null || !(past > 0) || !Number.isFinite(now) || !Number.isFinite(past)) return null
-  return Number((((now - past) / past) * 100).toFixed(2))
+  return Number((((now - past) / past) * 100).toFixed(2)) || 0
 }
 
 /**
@@ -692,7 +692,7 @@ export function pctChange(now: number | null, past: number | null): number | nul
 export function fundingAnnualizedPct(rate: number | null | undefined, intervalHours = 8): number | null {
   if (rate === null || rate === undefined || !Number.isFinite(rate)) return null
   const h = Number.isFinite(intervalHours) && intervalHours > 0 ? intervalHours : 8
-  return Number((rate * 100 * (24 / h) * 365).toFixed(2))
+  return Number((rate * 100 * (24 / h) * 365).toFixed(2)) || 0
 }
 
 /**
@@ -725,7 +725,7 @@ export function cvdFromTakerRows(
     sum += buy - sell
     n += 1
   }
-  return n === 0 ? null : Number(sum.toFixed(4))
+  return n === 0 ? null : (Number(sum.toFixed(4)) || 0)
 }
 
 /** Brief CVD vs price note — descriptive only, not a signal. */
@@ -743,7 +743,7 @@ export function cvdNoteOf(cvd: number | null, priceChangePct: number | null): st
 /** (mark − index) / index, in percent. Null when either price is missing. */
 export function basisPct(mark: number | null, index: number | null): number | null {
   if (mark === null || index === null || !(index > 0)) return null
-  return Number((((mark - index) / index) * 100).toFixed(4))
+  return Number((((mark - index) / index) * 100).toFixed(4)) || 0
 }
 
 /**
@@ -1262,7 +1262,7 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
       sum += b - s
       n += 1
     }
-    cvd1h = n === 0 ? null : Number(sum.toFixed(4))
+    cvd1h = n === 0 ? null : (Number(sum.toFixed(4)) || 0)
   }
   const cvdNote = cvdNoteOf(cvd1h, priceChangePct1h)
   const markPx = num(markRow['markPx'])

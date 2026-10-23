@@ -77,7 +77,7 @@ export function trendlineCandidate(candles: readonly Bar[], pivots: readonly Piv
       projectedNow, spanBars, scale: 'arithmetic' as const, status,
       pathPoints: [
         ...touches.map(p => ({ time: p.time, price: p.price })),
-        { time: candles[last]!.time, price: Number(projectedNow.toPrecision(8)) },
+        { time: candles[last]!.time, price: Number(projectedNow.toPrecision(8)) || 0 },
       ],
       touches: touches.length, retests, closesBeyond,
       touchPoints: touches.map(p => ({ time: p.time, price: p.price })),

@@ -124,4 +124,11 @@ describe("RevPoint HTF without lookahead", () => {
     expect(r.barEvents.fineConfirmed.some(Boolean)).toBe(true)
     expect(r.htfStepPlots["1H"].r).toHaveLength(c.length)
   })
+  it("normalizes tiny negative oiChg1hPct to +0 (never -0) for lossless JSON", () => {
+    const c = mk(Array.from({ length: 20 }, () => 100))
+    const oi = c.map((b, i) => ({ t: b.t, oi: i === c.length - 1 ? 99_999 : 100_000 }))
+    const rep = revPointReport(c.map(b => ({ ...b, time: new Date(b.t).toISOString() })), oi, past)
+    expect(rep.oiChg1hPct).toBe(0)
+    expect(Object.is(rep.oiChg1hPct, -0)).toBe(false)
+  })
 })

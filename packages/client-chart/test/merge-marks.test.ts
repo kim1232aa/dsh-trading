@@ -8,7 +8,7 @@
  * below it disagree, which is the exact failure this feature exists to prevent.
  */
 import { describe, expect, it } from 'vitest'
-import { mergeMarks, readMarks, recallMarks, rememberMarks } from '../src/client/market-client.js'
+import { combineMarks, mergeMarks, readMarks, recallMarks, rememberMarks } from '../src/client/market-client.js'
 import type { ChartMarks } from '../src/client/market-client.js'
 import type { ChartPayload } from '../src/client/payload.js'
 
@@ -295,5 +295,45 @@ describe('remembering marks across a reload', () => {
     expect(() => rememberMarks(marks)).not.toThrow()
     expect(recallMarks()).toBeNull()
     ;(globalThis as { sessionStorage?: unknown }).sessionStorage = saved
+  })
+})
+
+describe('combineMarks & cross-timeframe path clipping', () => {
+  it('preserves find_supply_demand_zones candidate zones when annotate_chart runs next', () => {
+    const supplyZone = {
+      type: 'zone' as const,
+      low: 120,
+      high: 130,
+      label: '供给区候选',
+      role: 'resistance' as const,
+      sources: ['rule'],
+      startTime: '2026-08-18T00:00:00.000Z',
+      confirmedAt: '2026-08-19T00:00:00.000Z',
+      availableAt: '2026-08-19T00:00:00.000Z',
+    }
+    const sdMarks = marksOf({ annotations: [supplyZone] })
+    const annMarks = marksOf({ annotations: [level(150)] })
+    const combined = combineMarks(sdMarks, annMarks, false)
+    expect(combined.annotations).toEqual([supplyZone, level(150)])
+  })
+
+  it('clips a cross-timeframe path whose anchor starts before the lower-timeframe window', () => {
+    const crossTfPath = {
+      type: 'path' as const,
+      points: [
+        { time: '2026-08-17T00:00:00.000Z', price: 110 },
+        { time: '2026-08-20T00:00:00.000Z', price: 170 },
+      ],
+      label: '15m趋势线',
+      role: 'support' as const,
+      sources: ['swing'],
+    }
+    const r = mergeMarks(chart({ timeframes: [{ timeframe: '15m', candles: CANDLES, indicators: null, annotations: [] }] }), marksOf({ timeframe: '4h', annotations: [crossTfPath] }))
+    expect(r.applied).toBe(true)
+    expect(r.kept).toBe(1)
+    const pts = (r.payload.timeframes[0]?.annotations?.[0] as { points: { time: string; price: number }[] }).points
+    expect(pts[0]?.time).toBe('2026-08-18T00:00:00.000Z')
+    expect(pts[0]?.price).toBeCloseTo(130, 5)
+    expect(pts[1]).toEqual({ time: '2026-08-20T00:00:00.000Z', price: 170 })
   })
 })
