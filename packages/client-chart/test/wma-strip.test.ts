@@ -9,6 +9,7 @@ import {
   wmaAt,
 } from '../src/client/ChartCard.js'
 import { DV_DEFAULTS } from '../src/client/indicators/dual-view-htf-patterns.js'
+import { NW_DEFAULTS } from '../src/client/indicators/nadaraya-watson.js'
 
 describe('supertrend', () => {
   // Independent reference: TradingView's published ta.supertrend pseudo-code, line by line.
@@ -65,7 +66,7 @@ describe('sanitizeSettings', () => {
       WMA: { params: [60, 100, 200], visible: true },
       SUPERTREND: { params: [60, 4], visible: true },
       EVASIVE_ST: { params: [10, 3.0, 1.0, 0.5], visible: false },
-      NW_TREND: { params: [50, 8, 2.0, 1.5], visible: false },
+      NW_TREND: { params: [...NW_DEFAULTS], visible: false },
       OB_BB: { params: [5, 5, 20], visible: false },
       VB_PRO_READ: { params: [0, 20, 2.0, 1.5, 5, 3, 0.8, 14, 20, 1, 1, 0x1B5E40, 0xC0412F, 0x8A8A8A, 0, 0, 0, 0, 0], visible: false },
       DUAL_VIEW_HTF: { params: [...DV_DEFAULTS], visible: false },
@@ -84,7 +85,10 @@ describe('sanitizeSettings', () => {
     expect(s['WMA']).toEqual({ params: [20, 100, 200], visible: false })
     expect(s['SUPERTREND']).toEqual({ params: [10, 2.5], visible: true })
     expect(s['EVASIVE_ST']).toEqual({ params: [10, 3.0, 1.0, 0.5], visible: false })
-    expect(s['NW_TREND']).toEqual({ params: [50, 8, 2.0, 1.5], visible: false })
+    expect(s['NW_TREND']).toEqual({ params: [...NW_DEFAULTS], visible: false })
+    // pre-1:1 4-param layout migrates into lookback/bandwidth/h_mult/band_mult slots
+    const old = sanitizeSettings({ NW_TREND: { params: [30, 6, 1.5, 2.5], visible: true } })['NW_TREND']!
+    expect([old.params[3], old.params[4], old.params[5], old.params[8], old.visible]).toEqual([30, 6, 1.5, 2.5, true])
     expect(s['OI_POSTURE']).toEqual({ params: [], visible: true })
     expect(s['LSR_RATIO']).toEqual({ params: [], visible: true })
   })
@@ -115,9 +119,9 @@ describe('ported indicators', () => {
   it('nadarayaWatsonTrend computes kernel smoothing and envelope bands', () => {
     const out = nadarayaWatsonTrend(bars, 20, 5, 2.0, 1.8)
     expect(out.length).toBe(60)
-    expect(out[30]?.up).toBeDefined()
-    expect(out[30]?.upper).toBeGreaterThan(out[30]?.up!)
-    expect(out[30]?.lower).toBeLessThan(out[30]?.up!)
+    expect(out[30]?.nw).toBeDefined()
+    expect(out[30]?.upper).toBeGreaterThan(out[30]?.nw!)
+    expect(out[30]?.lower).toBeLessThan(out[30]?.nw!)
   })
 
   it('orderBlockBreaker detects sweeps and structure breaks', () => {

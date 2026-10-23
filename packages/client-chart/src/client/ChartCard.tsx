@@ -27,7 +27,7 @@ import { rsiGridStateText } from '../../../tool-market/src/rsi-grid.js'
 import type { RsiGridReport } from '../../../tool-market/src/rsi-grid.js'
 import { regimeSeries } from '../../../tool-market/src/chart-payload.js'
 import { evasiveSuperTrend, evasiveSuperTrendIndicator } from './indicators/evasive-st.js'
-import { nadarayaWatsonTrend, nadarayaWatsonIndicator } from './indicators/nadaraya-watson.js'
+import { nadarayaWatsonIndicator, NW_ALERTS, NW_COLOR_PRESETS, NW_DEFAULTS, NW_KERNELS, NW_PRESET_NAMES, NW_SOURCES, migrateNwParams, nwAlertEvents } from './indicators/nadaraya-watson.js'
 import { orderBlockBreaker, orderBlockIndicator } from './indicators/order-blocks.js'
 import { calculateVbProRead, enabledVbAlerts, intToHex, VB_ALERTS, VB_DEFAULTS, vbProReadIndicator } from './indicators/vb-pro-read.js'
 import { dualViewHtfIndicator, DV_DEFAULTS, PATTERN_KEYS, PATTERN_CN, HTF_TF_LABELS, PATTERN_FILTER_OPTS, SIZE_OPTS, TREND_OPTS, dvAlertEvents } from './indicators/dual-view-htf-patterns.js'
@@ -264,7 +264,21 @@ export const EDITABLE: {
   { name: 'WMA', title: 'WMA', defaults: WMA_PERIODS, params: [period('周期1'), period('周期2'), period('周期3')] },
   { name: 'SUPERTREND', title: '超级趋势', defaults: [60, 4], params: [period('ATR周期'), { label: '倍数', min: 0.1, max: 20, step: 0.1 }] },
   { name: 'EVASIVE_ST', title: '避险超级趋势(LuxAlgo)', defaults: [10, 3.0, 1.0, 0.5], defaultVisible: false, params: [period('ATR周期'), { label: '倍数', min: 0.1, max: 20, step: 0.1 }, { label: '噪音阈值', min: 0.1, max: 10, step: 0.1 }, { label: '避险Alpha', min: 0, max: 5, step: 0.1 }] },
-  { name: 'NW_TREND', title: '核回归趋势(QuantAlgo)', defaults: [50, 8, 2.0, 1.5], defaultVisible: false, params: [period('回溯周期'), { label: '带宽', min: 1, max: 50, step: 1 }, { label: '倍数(h)', min: 0.5, max: 10, step: 0.1 }, { label: '通道倍数', min: 0.5, max: 10, step: 0.1 }] },
+  // 1:1 with pine/nadaraya-watson.pine inputs L31-49 (same order), then one toggle per alertcondition L159-163.
+  { name: 'NW_TREND', title: '核回归趋势(QuantAlgo)', defaults: [...NW_DEFAULTS], defaultVisible: false, params: [
+    { label: '预设配置', min: 0, max: 2, step: 1, kind: 'select', options: [...NW_PRESET_NAMES] },
+    { label: '源', min: 0, max: NW_SOURCES.length - 1, step: 1, kind: 'select', options: [...NW_SOURCES] },
+    { label: '核类型', min: 0, max: NW_KERNELS.length - 1, step: 1, kind: 'select', options: [...NW_KERNELS] },
+    { label: '回溯窗口', min: 1, max: 500, step: 1 }, { label: '核带宽', min: 1, max: 1000, step: 1 },
+    { label: '带宽倍数', min: 0.1, max: 100, step: 0.1 }, { label: '相对权重(RQ)', min: 0.1, max: 100, step: 0.25 },
+    boolP('显示残差带'), { label: '带倍数', min: 0.1, max: 100, step: 0.1 },
+    boolP('显示渐变填充'), boolP('显示反转标记'),
+    { label: '颜色预设', min: 0, max: 5, step: 1, kind: 'select', options: [...NW_COLOR_PRESETS] },
+    colorP('看涨色'), colorP('看跌色'),
+    boolP('启用K线着色'), { label: 'K线着色透明度', min: 0, max: 100, step: 1 },
+    boolP('启用背景着色'), { label: '背景着色透明度', min: 0, max: 100, step: 1 },
+    ...NW_ALERTS.map(a => boolP(`提醒:${a.cn}`)),
+  ] },
   { name: 'OB_BB', title: '订单块/破坏块(RWB)', defaults: [5, 5, 20], defaultVisible: false, params: [period('Swing左'), period('Swing右'), period('等待K线')] },
   { name: 'VB_PRO_READ', title: '波动带Pro-Read(Indicatr)', defaults: [...VB_DEFAULTS], defaultVisible: false, params: [
     { label: '带类型', min: 0, max: 2, step: 1, kind: 'select', options: ['布林', '肯特纳', '唐奇安'] }, { label: '周期', min: 2, max: 500, step: 1 }, { label: '布林倍数', min: 0.1, max: 20, step: 0.1 }, { label: '肯特纳ATR倍数', min: 0.1, max: 20, step: 0.1 },
@@ -315,7 +329,9 @@ export function sanitizeSettings(raw: unknown): IndicatorSettings {
   return Object.fromEntries(EDITABLE.map(def => {
     const e = src[def.name]
     const entry = typeof e === 'object' && e !== null ? e as { params?: unknown; visible?: unknown } : {}
-    const given: unknown[] = Array.isArray(entry.params) ? entry.params : []
+    const raw: unknown[] = Array.isArray(entry.params) ? entry.params : []
+    // NW_TREND used to store [lookback, bandwidth, h_mult, band_mult]; keep the user's values.
+    const given = def.name === 'NW_TREND' ? migrateNwParams(raw) : raw
     const params = def.params.map((spec, i) => {
       const v = given[i]
       return typeof v === 'number' && v >= spec.min && v <= spec.max && (spec.step !== 1 || Number.isInteger(v))
@@ -1602,19 +1618,21 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     }
   }, [data, active, seriesKey, dark])
 
-  // Indicator alertconditions (VB + Dual View HTF): fire once per id; first eval seeds.
+  // Indicator alertconditions (VB + NW + Dual View HTF): fire once per id; first eval seeds.
   const vbSeen = useRef<Set<string> | null>(null)
   const [vbToasts, setVbToasts] = useState<{ id: string; text: string }[]>([])
   useEffect(() => {
     const fired: { id: string; text: string }[] = []
     const vb = settings['VB_PRO_READ']
     if (vb?.visible) fired.push(...vbAlertEvents(data.candles, vb.params))
+    const nw = settings['NW_TREND']
+    if (nw?.visible) fired.push(...nwAlertEvents(data.candles, nw.params))
     const dv = settings['DUAL_VIEW_HTF']
     if (dv?.visible) {
       const rows = data.candles.map(c => ({ ...c, timestamp: Date.parse(c.time) }))
       fired.push(...dvAlertEvents(rows, dv.params, data.timeframe))
     }
-    if (fired.length === 0 && !(vb?.visible || dv?.visible)) { vbSeen.current = null; return }
+    if (fired.length === 0 && !(vb?.visible || dv?.visible || nw?.visible)) { vbSeen.current = null; return }
     if (vbSeen.current === null) { vbSeen.current = new Set(fired.map(f => f.id)); return }
     const fresh = fired.filter(f => !vbSeen.current!.has(f.id))
     if (fresh.length === 0) return

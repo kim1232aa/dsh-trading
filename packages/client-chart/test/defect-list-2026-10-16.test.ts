@@ -122,14 +122,16 @@ describe('#6 label lanes on a log axis', () => {
 
 describe('#7 NW draw batches same-trend runs', () => {
   it('groups consecutive bars by direction', () => {
-    const r = (b: boolean) => ({ isBullish: b }) as never
+    const r = (b: boolean) => ({ isBullish: b, value: 1 }) as never
     expect(nwTrendRuns([r(true), r(true), r(false), r(false), r(false), r(true)], 0, 5)).toEqual([
       { start: 0, end: 1, bullish: true }, { start: 2, end: 4, bullish: false }, { start: 5, end: 5, bullish: true },
     ])
   })
   it('a missing bar breaks a run', () => {
-    const r = { isBullish: true } as never
+    const r = { isBullish: true, value: 1 } as never
     expect(nwTrendRuns([r, undefined, r], 0, 2)).toHaveLength(2)
+    // Pine na (value undefined) also breaks a run
+    expect(nwTrendRuns([r, { isBullish: true } as never, r], 0, 2)).toHaveLength(2)
   })
 })
 
