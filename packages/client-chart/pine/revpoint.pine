@@ -1,0 +1,539 @@
+//@version=6
+// 反转点标注 RevPoint v6.5 (Pine v6)
+//
+// v6.5 摆动趋势线: 顶连顶=下降(红), 底连底=上升(青)。
+//   趋势一转就画(只有 1 个点时先画水平水位), 不再等第二次同向大摆动。
+//   反向线冻结成虚线、不再向右无限延长。
+// v6.4 周期勾选; v6.3 拆 request.security。
+indicator("反转点标注 RevPoint", overlay = true, max_labels_count = 500, max_lines_count = 500)
+
+string grpZ = "确认阈值"
+string grpV = "量能 · OI"
+string grpH = "多周期趋势线"
+string grpF = "过滤 · 显示"
+
+thrPctInput        = input.float(0.7,  "细档确认阈值 %",     minval = 0.1, step = 0.1, group = grpZ) / 100
+thrBigPctInput     = input.float(2.0,  "粗档(大周期)阈值 %",  minval = 0.5, step = 0.1, group = grpZ) / 100
+showBigInput       = input.bool(true,  "显示粗档大周期结构点", group = grpZ)
+showSwingLnInput   = input.bool(true,  "摆动趋势线(顶连顶↓ / 底连底↑)", group = grpZ)
+showCInput         = input.bool(true,  "显示C类枯竭爆量bar", group = grpZ)
+
+volLenInput        = input.int(20,     "量比基准长度",         group = grpV)
+volThrInput        = input.float(2.0,  "量能高潮阈值(倍)",    minval = 1.0, step = 0.5, group = grpV)
+lookbackHoursInput = input.float(24,   "前高低回看(小时)",    minval = 1, group = grpV)
+oiExchInput        = input.string("BINANCE", "OI数据源", options = ["BINANCE", "OKX", "BYBIT"], group = grpV)
+
+minStarsInput      = input.int(0,      "细档最少★数(过滤)",   minval = 0, maxval = 4, group = grpF)
+needVolInput       = input.bool(false, "细档必须有量能配合",   group = grpF)
+confirmedOnlyInput = input.bool(true,  "仅收盘确认(防实时重绘)", group = grpF)
+showHtfInput       = input.bool(true,  "总开关 · 多周期水位", group = grpH)
+show15Input        = input.bool(false, "15m", inline = "htfTfs", group = grpH)
+show30Input        = input.bool(false, "30m", inline = "htfTfs", group = grpH)
+show1hInput        = input.bool(true,  "1H",  inline = "htfTfs", group = grpH)
+show2hInput        = input.bool(false, "2H",  inline = "htfTfs", group = grpH)
+show4hInput        = input.bool(true,  "4H",  inline = "htfTfs", group = grpH)
+showHtfSlopeInput  = input.bool(false, "两点连斜趋势线(默认关,只画当前水平水位)", group = grpH)
+showHtfPlotsInput  = input.bool(false, "历史阶梯plot(会铺满全图,默认关)", group = grpH)
+showHtfHorizInput  = input.bool(true,  "仅1个pivot时仍画水平水位", group = grpH)
+showHtfTableInput  = input.bool(true,  "右上角状态表",         group = grpH)
+showHtfTagsInput   = input.bool(true,  "右缘周期标签(15m R / 1H S…)", group = grpH)
+showHtfDebugInput  = input.bool(false, "HTF诊断标签(调试)",    group = grpH)
+pivotLegInput      = input.int(3,      "多周期pivot左右bar数(越大越稳但越滞后)", minval = 1, maxval = 10, group = grpH)
+
+canRun = not confirmedOnlyInput or barstate.isconfirmed
+
+type PivotState
+    float price      = na
+    int   barIdx     = na
+    float volRatio   = na
+    float oiChg      = na
+    float rsi        = na
+    float pctB       = na
+    bool  touchLevel = false
+    bool  extreme12h = false
+    bool  stall      = false
+
+type LinePoint
+    int   barIdx = na
+    float price  = na
+
+freezeLine(line ln) =>
+    if not na(ln)
+        float y = line.get_price(ln, bar_index)
+        line.set_extend(ln, extend.none)
+        line.set_style(ln, line.style_dashed)
+        line.set_width(ln, 1)
+        if not na(y)
+            line.set_xy2(ln, bar_index, y)
+    ln
+
+swingConnect(int aIdx, float aPx, int bIdx, float bPx, line old, color col, int w) =>
+    line.delete(old)
+    line out = na
+    bool two = not na(aPx) and not na(aIdx) and not na(bPx) and not na(bIdx) and aIdx != bIdx
+    if two
+        out := line.new(aIdx, aPx, bIdx, bPx, xloc = xloc.bar_index, extend = extend.right, color = col, width = w)
+    else if not na(bPx) and not na(bIdx)
+        out := line.new(bIdx, bPx, bar_index, bPx, xloc = xloc.bar_index, extend = extend.right, color = col, width = math.max(1, w - 1), style = line.style_dotted)
+    out
+
+type TfLine
+    color col
+    string tfName = ""
+    float lastSeenPx = na
+    int   lastSeenT  = na
+    float aPx   = na
+    int   aTime = na
+    float bPx   = na
+    int   bTime = na
+    line  active = na
+    label tag = na
+
+enum Trend
+    up
+    down
+
+volRatio   = volume / ta.sma(volume, volLenInput)
+atr14      = ta.atr(14)
+rsi14      = ta.rsi(close, 14)
+bbBasis    = ta.sma(close, 20)
+bbDev      = 2.0 * ta.stdev(close, 20)
+pctB       = bbDev == 0 ? 0.5 : (close - (bbBasis - bbDev)) / (2 * bbDev)
+lookbkBars = math.max(20, int(math.round(lookbackHoursInput * 3600.0 / timeframe.in_seconds())))
+priorHigh  = ta.highest(high, lookbkBars)[7]
+priorLow   = ta.lowest(low,  lookbkBars)[7]
+
+bars1h  = math.max(1, int(math.round(3600.0  / timeframe.in_seconds())))
+bars12h = math.max(2, int(math.round(43200.0 / timeframe.in_seconds())))
+low12   = ta.lowest(low,  bars12h)
+high12  = ta.highest(high, bars12h)
+ema1h   = request.security(syminfo.tickerid, "60", ta.ema(close, 21), lookahead = barmerge.lookahead_off)
+trendUp = ema1h > ema1h[bars1h]
+
+oiTicker = oiExchInput + ":" + syminfo.basecurrency + "USDT.P_OI"
+oiClose  = request.security(oiTicker, timeframe.period, close, ignore_invalid_symbol = true)
+oiChg1h  = na(oiClose) or na(oiClose[bars1h]) or oiClose[bars1h] == 0 ? na : 100.0 * (oiClose - oiClose[bars1h]) / oiClose[bars1h]
+
+starGlyphs(int n) =>
+    string s = ""
+    if n > 0
+        for _ = 1 to n by 1
+            s += "★"
+    s
+
+trendTag(bool isTop) =>
+    (isTop ? trendUp : not trendUp) ? " 逆1H" : " 顺1H"
+
+method snapshot(PivotState p, float px, bool touch, bool ext12h, bool stallFlag) =>
+    p.price      := px
+    p.barIdx     := bar_index
+    p.volRatio   := volRatio
+    p.oiChg      := oiChg1h
+    p.rsi        := rsi14
+    p.pctB       := pctB
+    p.touchLevel := touch
+    p.extreme12h := ext12h
+    p.stall      := stallFlag
+    p
+
+method starCount(PivotState p, bool isTop) =>
+    int s = 0
+    s += p.volRatio >= volThrInput ? 1 : 0
+    s += isTop and p.touchLevel ? 1 : 0
+    s += not na(p.oiChg) and (isTop ? p.oiChg >= 0.3 : p.oiChg <= -0.25) ? 1 : 0
+    s += p.extreme12h ? 1 : 0
+    s
+
+method drawLabel(PivotState p, bool isTop, bool bearDiv, bool tlTch) =>
+    int st = p.starCount(isTop)
+    if st >= minStarsInput and (not needVolInput or p.volRatio >= volThrInput)
+        string sp = isTop ?
+             (p.volRatio < 1.5 and p.stall ? "B·缩量衰竭 " : "") :
+             (p.volRatio >= volThrInput ? "A·放量V底 " : "")
+        string tip = sp + starGlyphs(st) + " " + str.tostring(p.price, format.mintick) +
+             (p.volRatio >= volThrInput ? " " + str.tostring(p.volRatio, "#.#") + "x" : "") +
+             (not na(p.oiChg) and (isTop ? p.oiChg >= 0.3 : p.oiChg <= -0.25) ?
+                  " OI" + (p.oiChg > 0 ? "+" : "") + str.tostring(p.oiChg, "#.##") + "%" : "") +
+             (p.extreme12h ? " 12h极值" : "") + (p.stall ? (isTop ? " (滞涨)" : " (滞跌)") : "") +
+             (bearDiv ? " (背离)" : "") + (not isTop and tlTch ? " (触趋线)" : "") +
+             (not isTop and (p.rsi <= 35 or p.pctB <= 0.1) ? " 超卖" : "") + trendTag(isTop)
+        int sz = 9 + st * 5
+        float mkY = isTop ? p.price + 0.3 * atr14 : p.price - 0.3 * atr14
+        label.new(p.barIdx, mkY, isTop ? "▼" : "▲", xloc.bar_index, yloc.price,
+             color = color.new(color.white, 100), style = label.style_none,
+             textcolor = isTop ? color.red : color.green, size = sz, tooltip = tip)
+        alert((isTop ? "阶段顶确认 " : "阶段底确认 ") + str.tostring(p.price, format.mintick), alert.freq_once_per_bar)
+
+method levelAt(TfLine s, int t) =>
+    float out = na
+    if not na(s.bPx) and (na(s.aPx) or na(s.aTime) or na(s.bTime) or s.aTime == s.bTime)
+        out := s.bPx
+    else if not na(s.aPx) and not na(s.bPx) and not na(s.aTime) and not na(s.bTime)
+        out := s.aPx + (s.bPx - s.aPx) * (t - s.aTime) / float(s.bTime - s.aTime)
+    out
+
+method retire(TfLine s) =>
+    line.delete(s.active)
+    s.active := na
+    s
+
+method hideAll(TfLine s) =>
+    line.delete(s.active)
+    s.active := na
+    if not na(s.tag)
+        label.delete(s.tag)
+        s.tag := na
+    s.lastSeenPx := na
+    s.lastSeenT  := na
+    s.aPx := na
+    s.aTime := na
+    s.bPx := na
+    s.bTime := na
+    s
+
+method refreshTag(TfLine s, float px, bool isRes, bool on) =>
+    bool show = on and showHtfTagsInput and barstate.islast and not na(px)
+    if not show
+        if not na(s.tag)
+            label.delete(s.tag)
+            s.tag := na
+        s
+    else
+        string txt = s.tfName + (isRes ? " R " : " S ") + str.tostring(px, format.mintick)
+        if na(s.tag)
+            s.tag := label.new(bar_index, px, txt, xloc.bar_index, yloc.price,
+                 color = s.col, style = label.style_label_left, textcolor = color.white, size = size.small)
+        else
+            label.set_xy(s.tag, bar_index, px)
+            label.set_text(s.tag, txt)
+            label.set_color(s.tag, s.col)
+        s
+
+method applyPack(TfLine s, float latestPx, int latestT, float prevPx, int prevT, int lineWidth) =>
+    bool hasLatest = not na(latestPx) and not na(latestT)
+    bool changed = hasLatest and (na(s.lastSeenT) or latestT != s.lastSeenT or latestPx != s.lastSeenPx)
+    if changed
+        s.retire()
+        s.aPx   := showHtfSlopeInput ? prevPx : latestPx
+        s.aTime := showHtfSlopeInput ? prevT : latestT
+        s.bPx   := latestPx
+        s.bTime := latestT
+        s.lastSeenPx := latestPx
+        s.lastSeenT  := latestT
+        bool twoPt = showHtfSlopeInput and not na(prevPx) and not na(prevT) and prevT != latestT
+        if twoPt
+            s.active := line.new(prevT, prevPx, latestT, latestPx, xloc = xloc.bar_time,
+                 extend = extend.right, color = s.col, width = lineWidth)
+        else if showHtfHorizInput or not showHtfSlopeInput
+            s.active := line.new(latestT, latestPx, time, latestPx, xloc = xloc.bar_time,
+                 extend = extend.right, color = s.col, width = lineWidth)
+    s
+
+method breakCheck(TfLine s, bool isResistance) =>
+    if not na(s.active)
+        float lvl = s.levelAt(time)
+        if not na(lvl) and (isResistance ? close > lvl : close < lvl)
+            s.retire()
+
+htfPack() =>
+    int   leg = pivotLegInput
+    float ph  = ta.pivothigh(high, leg, leg)
+    float pl  = ta.pivotlow(low, leg, leg)
+    var float h1 = na
+    var int   ht1 = na
+    var float h2 = na
+    var int   ht2 = na
+    var float l1 = na
+    var int   lt1 = na
+    var float l2 = na
+    var int   lt2 = na
+    if not na(ph)
+        h2  := h1
+        ht2 := ht1
+        h1  := ph
+        ht1 := time[leg]
+    if not na(pl)
+        l2  := l1
+        lt2 := lt1
+        l1  := pl
+        lt1 := time[leg]
+    [h1, ht1, h2, ht2, l1, lt1, l2, lt2]
+
+var Trend      dir     = Trend.up
+var PivotState curExt  = PivotState.new(price = high, barIdx = bar_index)
+var PivotState lastTop = PivotState.new()
+var line       upLn    = na
+var line       dnLn    = na
+var line       fineUp  = na
+var line       fineDn  = na
+var LinePoint  fTopA   = LinePoint.new()
+var LinePoint  fTopB   = LinePoint.new()
+var LinePoint  fBotA   = LinePoint.new()
+var LinePoint  fBotB   = LinePoint.new()
+fineConfirmed = false
+
+if canRun and dir == Trend.up
+    if high >= curExt.price
+        curExt.snapshot(high, high >= priorHigh - 0.7 * atr14, high >= high12, (close - close[6]) < 0.3 * atr14)
+    if (curExt.price - low) / curExt.price >= thrPctInput
+        bool bearDiv = not na(lastTop.price) and curExt.price > lastTop.price and not na(lastTop.rsi) and curExt.rsi < lastTop.rsi - 2
+        curExt.drawLabel(true, bearDiv, false)
+        lastTop := curExt.copy()
+        dir := Trend.down
+        if showSwingLnInput
+            fTopA := fTopB.copy()
+            fTopB := LinePoint.new(curExt.barIdx, curExt.price)
+            fineUp := freezeLine(fineUp)
+            fineDn := swingConnect(fTopA.barIdx, fTopA.price, fTopB.barIdx, fTopB.price, fineDn, color.new(#e24b4a, 0), 2)
+        curExt.snapshot(low, low <= priorLow + 0.7 * atr14, low <= low12, (close[6] - close) < 0.3 * atr14)
+        fineConfirmed := true
+else if canRun
+    if low <= curExt.price
+        curExt.snapshot(low, low <= priorLow + 0.7 * atr14, low <= low12, (close[6] - close) < 0.3 * atr14)
+    if (high - curExt.price) / curExt.price >= thrPctInput
+        bool tlTouch = not na(upLn) and math.abs(curExt.price - line.get_price(upLn, curExt.barIdx)) <= 0.5 * atr14
+        curExt.drawLabel(false, false, tlTouch)
+        dir := Trend.up
+        if showSwingLnInput
+            fBotA := fBotB.copy()
+            fBotB := LinePoint.new(curExt.barIdx, curExt.price)
+            fineDn := freezeLine(fineDn)
+            fineUp := swingConnect(fBotA.barIdx, fBotA.price, fBotB.barIdx, fBotB.price, fineUp, color.new(#1aa38a, 0), 2)
+        curExt.snapshot(high, high >= priorHigh - 0.7 * atr14, high >= high12, (close - close[6]) < 0.3 * atr14)
+        fineConfirmed := true
+
+var int lastC = -99
+cDry   = (volRatio[1] + volRatio[2] + volRatio[3] + volRatio[4]) / 4 <= 0.7
+cGiant = volRatio >= 4 and math.abs(close - open) >= 1.2 * atr14
+if showCInput and canRun and cDry and cGiant and bar_index - lastC >= 6
+    lastC := bar_index
+    bool upC = close >= open
+    label.new(bar_index, upC ? low : high,
+         "C·枯竭爆量" + (upC ? "↑" : "↓") + str.tostring(volRatio, "#.#") + "x",
+         xloc.bar_index, yloc.price,
+         color = color.new(color.purple, 10),
+         style = upC ? label.style_label_up : label.style_label_down,
+         textcolor = color.white, size = size.small)
+    alert("C类枯竭爆量 " + (upC ? "向上" : "向下") + " " + str.tostring(close, format.mintick), alert.freq_once_per_bar)
+
+var Trend     dirB  = Trend.up
+var float     extBg = high
+var int       extBB = bar_index
+var LinePoint botA  = LinePoint.new()
+var LinePoint botB  = LinePoint.new()
+var LinePoint topA  = LinePoint.new()
+var LinePoint topB  = LinePoint.new()
+bigConfirmed = false
+
+if showBigInput and canRun
+    if dirB == Trend.up
+        if high >= extBg
+            extBg := high
+            extBB := bar_index
+        if (extBg - low) / extBg >= thrBigPctInput
+            label.new(extBB, extBg, "◆大顶\n" + str.tostring(extBg, format.mintick) + trendTag(true),
+                 xloc.bar_index, yloc.price, color = color.new(color.maroon, 0),
+                 style = label.style_label_down, textcolor = color.white, size = size.normal)
+            alert("大周期顶确认 " + str.tostring(extBg, format.mintick), alert.freq_once_per_bar)
+            topA := topB.copy()
+            topB := LinePoint.new(extBB, extBg)
+            if showSwingLnInput
+                upLn := freezeLine(upLn)
+                dnLn := swingConnect(topA.barIdx, topA.price, topB.barIdx, topB.price, dnLn, color.new(#c62828, 0), 2)
+            dirB  := Trend.down
+            extBg := low
+            extBB := bar_index
+            bigConfirmed := true
+    else
+        if low <= extBg
+            extBg := low
+            extBB := bar_index
+        if (high - extBg) / extBg >= thrBigPctInput
+            label.new(extBB, extBg, "◆大底\n" + str.tostring(extBg, format.mintick) + trendTag(false),
+                 xloc.bar_index, yloc.price, color = color.new(#0b6e4f, 0),
+                 style = label.style_label_up, textcolor = color.white, size = size.normal)
+            alert("大周期底确认 " + str.tostring(extBg, format.mintick), alert.freq_once_per_bar)
+            botA := botB.copy()
+            botB := LinePoint.new(extBB, extBg)
+            if showSwingLnInput
+                dnLn := freezeLine(dnLn)
+                upLn := swingConnect(botA.barIdx, botA.price, botB.barIdx, botB.price, upLn, color.new(#0b6e4f, 0), 2)
+            dirB  := Trend.up
+            extBg := high
+            extBB := bar_index
+            bigConfirmed := true
+
+// ===== HTF: 5 次独立 request, 不走循环 =====
+[ph15, th15, ph15p, th15p, pl15, tl15, pl15p, tl15p] = request.security(syminfo.tickerid, "15",  htfPack(), lookahead = barmerge.lookahead_off)
+[ph30, th30, ph30p, th30p, pl30, tl30, pl30p, tl30p] = request.security(syminfo.tickerid, "30",  htfPack(), lookahead = barmerge.lookahead_off)
+[ph60, th60, ph60p, th60p, pl60, tl60, pl60p, tl60p] = request.security(syminfo.tickerid, "60",  htfPack(), lookahead = barmerge.lookahead_off)
+[ph2h, th2h, ph2hp, th2hp, pl2h, tl2h, pl2hp, tl2hp] = request.security(syminfo.tickerid, "120", htfPack(), lookahead = barmerge.lookahead_off)
+[ph4h, th4h, ph4hp, th4hp, pl4h, tl4h, pl4hp, tl4hp] = request.security(syminfo.tickerid, "240", htfPack(), lookahead = barmerge.lookahead_off)
+
+colR15 = color.new(#ef9a9a, 0)
+colR30 = color.new(#ff8a65, 0)
+colR1h = color.new(#e24b4a, 0)
+colR2h = color.new(#ec407a, 0)
+colR4h = color.new(#ff5252, 0)
+colS15 = color.new(#80cbc4, 0)
+colS30 = color.new(#4dd0e1, 0)
+colS1h = color.new(#1aa38a, 0)
+colS2h = color.new(#26a69a, 0)
+colS4h = color.new(#00bfa5, 0)
+
+bool usePlot = showHtfInput and showHtfPlotsInput
+plot(usePlot and show15Input ? ph15 : na, "15m阻力", colR15, 1, plot.style_stepline)
+plot(usePlot and show15Input ? pl15 : na, "15m支撑", colS15, 1, plot.style_stepline)
+plot(usePlot and show30Input ? ph30 : na, "30m阻力", colR30, 1, plot.style_stepline)
+plot(usePlot and show30Input ? pl30 : na, "30m支撑", colS30, 1, plot.style_stepline)
+plot(usePlot and show1hInput ? ph60 : na, "1H阻力",  colR1h, 2, plot.style_stepline)
+plot(usePlot and show1hInput ? pl60 : na, "1H支撑",  colS1h, 2, plot.style_stepline)
+plot(usePlot and show2hInput ? ph2h : na, "2H阻力",  colR2h, 2, plot.style_stepline)
+plot(usePlot and show2hInput ? pl2h : na, "2H支撑",  colS2h, 2, plot.style_stepline)
+plot(usePlot and show4hInput ? ph4h : na, "4H阻力",  colR4h, 3, plot.style_stepline)
+plot(usePlot and show4hInput ? pl4h : na, "4H支撑",  colS4h, 3, plot.style_stepline)
+
+var TfLine r15 = TfLine.new(col = colR15, tfName = "15m")
+var TfLine s15 = TfLine.new(col = colS15, tfName = "15m")
+var TfLine r30 = TfLine.new(col = colR30, tfName = "30m")
+var TfLine s30 = TfLine.new(col = colS30, tfName = "30m")
+var TfLine r1h = TfLine.new(col = colR1h, tfName = "1H")
+var TfLine s1h = TfLine.new(col = colS1h, tfName = "1H")
+var TfLine r2h = TfLine.new(col = colR2h, tfName = "2H")
+var TfLine s2h = TfLine.new(col = colS2h, tfName = "2H")
+var TfLine r4h = TfLine.new(col = colR4h, tfName = "4H")
+var TfLine s4h = TfLine.new(col = colS4h, tfName = "4H")
+
+int chartSec = timeframe.in_seconds()
+applyTf(TfLine r, TfLine s, float h1, int ht1, float h2, int ht2, float l1, int lt1, float l2, int lt2, string tf, int w, bool enabled) =>
+    bool ok = timeframe.in_seconds(tf) >= chartSec
+    bool on = showHtfInput and ok and enabled
+    if on
+        if canRun
+            r.breakCheck(true)
+            s.breakCheck(false)
+            r.applyPack(h1, ht1, h2, ht2, w)
+            s.applyPack(l1, lt1, l2, lt2, w)
+        r.refreshTag(h1, true, on)
+        s.refreshTag(l1, false, on)
+    else
+        r.hideAll()
+        s.hideAll()
+    on
+
+ok15 = applyTf(r15, s15, ph15, th15, ph15p, th15p, pl15, tl15, pl15p, tl15p, "15",  1, show15Input)
+ok30 = applyTf(r30, s30, ph30, th30, ph30p, th30p, pl30, tl30, pl30p, tl30p, "30",  2, show30Input)
+ok60 = applyTf(r1h, s1h, ph60, th60, ph60p, th60p, pl60, tl60, pl60p, tl60p, "60",  2, show1hInput)
+ok2h = applyTf(r2h, s2h, ph2h, th2h, ph2hp, th2hp, pl2h, tl2h, pl2hp, tl2hp, "120", 2, show2hInput)
+ok4h = applyTf(r4h, s4h, ph4h, th4h, ph4hp, th4hp, pl4h, tl4h, pl4hp, tl4hp, "240", 3, show4hInput)
+
+tfCell(bool on, float px) =>
+    not on ? "关" : na(px) ? "—" : str.tostring(px, format.mintick)
+
+var label debugLbl = na
+string dbgTxt = "HTF诊断:\n" +
+     "15m hi=" + str.tostring(ph15, format.mintick) + " lo=" + str.tostring(pl15, format.mintick) + " R=" + (na(r15.active) ? "na" : "有") + "\n" +
+     "30m hi=" + str.tostring(ph30, format.mintick) + " lo=" + str.tostring(pl30, format.mintick) + " R=" + (na(r30.active) ? "na" : "有") + "\n" +
+     "1H  hi=" + str.tostring(ph60, format.mintick) + " lo=" + str.tostring(pl60, format.mintick) + " R=" + (na(r1h.active) ? "na" : "有") + "\n" +
+     "2H  hi=" + str.tostring(ph2h, format.mintick) + " lo=" + str.tostring(pl2h, format.mintick) + " R=" + (na(r2h.active) ? "na" : "有") + "\n" +
+     "4H  hi=" + str.tostring(ph4h, format.mintick) + " lo=" + str.tostring(pl4h, format.mintick) + " R=" + (na(r4h.active) ? "na" : "有")
+
+if showHtfDebugInput
+    if barstate.islast
+        if na(debugLbl)
+            debugLbl := label.new(bar_index, high, dbgTxt, xloc.bar_index, yloc.price,
+                 color = color.new(color.blue, 20), style = label.style_label_left,
+                 textcolor = color.white, size = size.small, textalign = text.align_left)
+        else
+            label.set_xy(debugLbl, bar_index, high)
+            label.set_text(debugLbl, dbgTxt)
+else if not na(debugLbl)
+    label.delete(debugLbl)
+    debugLbl := na
+
+var label swingTag = na
+if showSwingLnInput and barstate.islast
+    bool downNow = dir == Trend.down
+    float tagPx = downNow ? fTopB.price : fBotB.price
+    string tagTxt = downNow ? "↓趋 " + str.tostring(fTopB.price, format.mintick) : "↑趋 " + str.tostring(fBotB.price, format.mintick)
+    color tagCol = downNow ? color.new(#e24b4a, 0) : color.new(#1aa38a, 0)
+    if na(tagPx)
+        if not na(swingTag)
+            label.delete(swingTag)
+            swingTag := na
+    else if na(swingTag)
+        swingTag := label.new(bar_index, tagPx, tagTxt, xloc.bar_index, yloc.price, color = tagCol, style = label.style_label_left, textcolor = color.white, size = size.small)
+    else
+        label.set_xy(swingTag, bar_index, tagPx)
+        label.set_text(swingTag, tagTxt)
+        label.set_color(swingTag, tagCol)
+else if not na(swingTag)
+    label.delete(swingTag)
+    swingTag := na
+
+var label candLbl = na
+bool  isTopCand = dir == Trend.up
+float back = isTopCand ? (curExt.price - close) / curExt.price : (close - curExt.price) / curExt.price
+float need = (thrPctInput - back) * 100
+bool  tlC  = not isTopCand and not na(upLn) and math.abs(curExt.price - line.get_price(upLn, curExt.barIdx)) <= 0.5 * atr14
+string ctxt = (isTopCand ? "候选顶 " : "候选底 ") + str.tostring(curExt.price, format.mintick) +
+              starGlyphs(curExt.starCount(isTopCand)) + (tlC ? " 触趋线" : "") + trendTag(isTopCand) +
+              (na(oiChg1h) ? "" : "  OI1h " + (oiChg1h > 0 ? "+" : "") + str.tostring(oiChg1h, "#.##") + "%") +
+              (na(curExt.rsi) ? "" : "  RSI" + str.tostring(curExt.rsi, "#")) +
+              (need > 0 ? "\n还差 " + str.tostring(need, "#.##") + "% 确认" : "\n确认边缘")
+if barstate.islast
+    if na(candLbl)
+        candLbl := label.new(curExt.barIdx, curExt.price, ctxt, xloc.bar_index, yloc.price,
+             color = color.new(color.orange, 15),
+             style = isTopCand ? label.style_label_down : label.style_label_up,
+             textcolor = color.black, size = size.small)
+    else
+        label.set_xy(candLbl, curExt.barIdx, curExt.price)
+        label.set_text(candLbl, ctxt)
+        label.set_style(candLbl, isTopCand ? label.style_label_down : label.style_label_up)
+
+var table dash = na
+if showHtfTableInput
+    if barstate.islast
+        if na(dash)
+            dash := table.new(position.top_right, 3, 11, bgcolor = color.new(#0b1c1a, 18),
+                 border_color = color.new(color.gray, 55), border_width = 1, frame_color = color.new(color.gray, 40), frame_width = 1)
+            table.merge_cells(dash, 0, 0, 2, 0)
+            table.merge_cells(dash, 1, 1, 2, 1)
+            table.merge_cells(dash, 1, 2, 2, 2)
+            table.merge_cells(dash, 1, 3, 2, 3)
+            table.merge_cells(dash, 1, 4, 2, 4)
+        table.cell(dash, 0, 0, "RevPoint  " + timeframe.period, text_color = color.white, text_halign = text.align_left, text_size = size.small)
+        table.cell(dash, 0, 1, isTopCand ? "候选顶" : "候选底", text_color = isTopCand ? color.orange : color.lime, text_halign = text.align_left, text_size = size.small)
+        table.cell(dash, 1, 1, str.tostring(curExt.price, format.mintick), text_color = color.white, text_halign = text.align_right, text_size = size.small)
+        table.cell(dash, 0, 2, "★ / 还差", text_color = color.new(color.silver, 0), text_halign = text.align_left, text_size = size.small)
+        table.cell(dash, 1, 2, starGlyphs(curExt.starCount(isTopCand)) + "  " + (need > 0 ? str.tostring(need, "#.##") + "%" : "边缘"), text_color = color.white, text_halign = text.align_right, text_size = size.small)
+        table.cell(dash, 0, 3, "OI1h", text_color = color.new(color.silver, 0), text_halign = text.align_left, text_size = size.small)
+        table.cell(dash, 1, 3, na(oiChg1h) ? "—" : ((oiChg1h > 0 ? "+" : "") + str.tostring(oiChg1h, "#.##") + "%"), text_color = na(oiChg1h) ? color.gray : (oiChg1h >= 0 ? color.orange : color.aqua), text_halign = text.align_right, text_size = size.small)
+        table.cell(dash, 0, 4, "RSI / 1H", text_color = color.new(color.silver, 0), text_halign = text.align_left, text_size = size.small)
+        table.cell(dash, 1, 4, str.tostring(rsi14, "#") + trendTag(isTopCand), text_color = color.white, text_halign = text.align_right, text_size = size.small)
+        table.cell(dash, 0, 5, "周期", text_color = color.new(color.silver, 0), text_halign = text.align_left, text_size = size.tiny)
+        table.cell(dash, 1, 5, "阻力 R", text_color = color.new(color.red, 20), text_halign = text.align_right, text_size = size.tiny)
+        table.cell(dash, 2, 5, "支撑 S", text_color = color.new(color.teal, 0), text_halign = text.align_right, text_size = size.tiny)
+        table.cell(dash, 0, 6, "15m", text_color = color.white, text_size = size.tiny)
+        table.cell(dash, 1, 6, tfCell(ok15, ph15), text_color = color.new(#e24b4a, 0), text_halign = text.align_right, text_size = size.tiny)
+        table.cell(dash, 2, 6, tfCell(ok15, pl15), text_color = color.new(#1aa38a, 0), text_halign = text.align_right, text_size = size.tiny)
+        table.cell(dash, 0, 7, "30m", text_color = color.white, text_size = size.tiny)
+        table.cell(dash, 1, 7, tfCell(ok30, ph30), text_color = color.new(#e24b4a, 0), text_halign = text.align_right, text_size = size.tiny)
+        table.cell(dash, 2, 7, tfCell(ok30, pl30), text_color = color.new(#1aa38a, 0), text_halign = text.align_right, text_size = size.tiny)
+        table.cell(dash, 0, 8, "1H", text_color = color.white, text_size = size.tiny)
+        table.cell(dash, 1, 8, tfCell(ok60, ph60), text_color = color.new(#e24b4a, 0), text_halign = text.align_right, text_size = size.tiny)
+        table.cell(dash, 2, 8, tfCell(ok60, pl60), text_color = color.new(#1aa38a, 0), text_halign = text.align_right, text_size = size.tiny)
+        table.cell(dash, 0, 9, "2H", text_color = color.white, text_size = size.tiny)
+        table.cell(dash, 1, 9, tfCell(ok2h, ph2h), text_color = color.new(#e24b4a, 0), text_halign = text.align_right, text_size = size.tiny)
+        table.cell(dash, 2, 9, tfCell(ok2h, pl2h), text_color = color.new(#1aa38a, 0), text_halign = text.align_right, text_size = size.tiny)
+        table.cell(dash, 0, 10, "4H", text_color = color.white, text_size = size.tiny)
+        table.cell(dash, 1, 10, tfCell(ok4h, ph4h), text_color = color.new(#e24b4a, 0), text_halign = text.align_right, text_size = size.tiny)
+        table.cell(dash, 2, 10, tfCell(ok4h, pl4h), text_color = color.new(#1aa38a, 0), text_halign = text.align_right, text_size = size.tiny)
+else if not na(dash)
+    table.delete(dash)
+    dash := na
+
+alertcondition(fineConfirmed, "细档反转确认",  "新阶段顶/底已确认")
+alertcondition(bigConfirmed,  "大周期反转确认", "大周期顶/底已确认")
+alertcondition(cDry and cGiant, "C类枯竭爆量",   "枯竭后方向性爆量bar出现")

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { flattenWalls } from '../src/client.js'
+import { buildMultiExchangeCgSymbols, flattenWalls } from '../src/client.js'
 import { renderLargeOrders } from '../src/format.js'
 import type { LargeOrdersSnapshot } from '../src/types.js'
 
@@ -269,5 +269,121 @@ describe('minUsd wall filter via getLargeOrders', () => {
     })
     expect(perpSnap.walls.every(w => w.market === 'perp')).toBe(true)
     expect(perpSnap.walls.map(w => w.price)).toEqual([81460, 80450, 70000, 82070, 90000])
+  })
+
+  it('builds multi-exchange symbol lists and deduplicates overlapping walls across responses', async () => {
+    const btcAll = buildMultiExchangeCgSymbols('BTCUSDT')
+    expect(btcAll).toEqual([
+      'Binance_BTCUSDT',
+      'Bybit_BTCUSDT',
+      'Bybit_SPOT_BTCUSDT',
+      'Hyperliquid_BTC-USD',
+      'Bitget_BTCUSDT_UMCBL',
+      'Bitget_SPOT_BTCUSDT',
+      'Gate_BTC_USDT',
+      'Gate_SPOT_BTC_USDT',
+      'Aster_BTCUSDT',
+      'Bitfinex_tBTCF0:USTF0',
+      'Bitfinex_SPOT_BTCUSD',
+      'Bitstamp_SPOT_BTCUSD',
+      'Kraken_SPOT_XBT/USD',
+    ])
+
+    const ethAll = buildMultiExchangeCgSymbols('ETHUSDT')
+    expect(ethAll[0]).toBe('Binance_ETHUSDT')
+    expect(ethAll).toContain('Kraken_SPOT_ETH/USD')
+    expect(ethAll).toContain('Hyperliquid_ETH-USD')
+
+    const btcPerp = buildMultiExchangeCgSymbols('BTCUSDT', { marketType: 'perp' })
+    expect(btcPerp).toEqual([
+      'Binance_BTCUSDT',
+      'Bybit_BTCUSDT',
+      'Hyperliquid_BTC-USD',
+      'Bitget_BTCUSDT_UMCBL',
+      'Gate_BTC_USDT',
+      'Aster_BTCUSDT',
+      'Bitfinex_tBTCF0:USTF0',
+    ])
+
+    const btcSpot = buildMultiExchangeCgSymbols('BTCUSDT', { marketType: 'spot' })
+    expect(btcSpot).toEqual([
+      'Binance_BTCUSDT',
+      'Bybit_SPOT_BTCUSDT',
+      'Bitget_SPOT_BTCUSDT',
+      'Gate_SPOT_BTC_USDT',
+      'Bitfinex_SPOT_BTCUSD',
+      'Bitstamp_SPOT_BTCUSD',
+      'Kraken_SPOT_XBT/USD',
+    ])
+
+    // Explicit overrides only query the relevant symbol(s)
+    expect(buildMultiExchangeCgSymbols('Bybit_BTCUSDT')).toEqual(['Bybit_BTCUSDT'])
+    expect(buildMultiExchangeCgSymbols('Hyperliquid_BTC-USD')).toEqual(['Hyperliquid_BTC-USD'])
+    expect(buildMultiExchangeCgSymbols('okx:BTCUSDT')).toEqual(['OKX_BTCUSDT'])
+    expect(buildMultiExchangeCgSymbols('BTCUSDT', { exchange: 'OKX' })).toEqual(['OKX_BTCUSDT'])
+    expect(buildMultiExchangeCgSymbols('BTCUSDT', { venue: 'Binance' })).toEqual(['Binance_BTCUSDT'])
+    expect(buildMultiExchangeCgSymbols('BTCUSDT', { venue: 'Bybit' })).toEqual([
+      'Bybit_BTCUSDT',
+      'Bybit_SPOT_BTCUSDT',
+    ])
+    expect(buildMultiExchangeCgSymbols('BTCUSDT', { venue: 'Bybit', marketType: 'perp' })).toEqual([
+      'Bybit_BTCUSDT',
+    ])
+
+    const { CoinglassCapi } = await import('../src/client.js')
+    const queriedSymbols: string[] = []
+    class MultiExchangeMock extends CoinglassCapi {
+      override async largeTakerOrder(cgSymbol: string): Promise<unknown> {
+        queriedSymbols.push(cgSymbol)
+        if (cgSymbol === 'Binance_BTCUSDT') {
+          return [
+            {
+              instrument: { exName: 'Binance', contractType: 'PERPETUAL', type: 1 },
+              list: [
+                { id: 'shared-id-1', side: 2, price: 80000, currentUsd: 2_000_000, state: 1, startTime: 1000 },
+                // Order without explicit id to test fallback key deduplication
+                { side: 1, price: 82000, currentUsd: 3_000_000, state: 1, startTime: 2000 },
+              ],
+            },
+          ]
+        }
+        if (cgSymbol === 'Bybit_BTCUSDT') {
+          return [
+            {
+              instrument: { exName: 'Binance', contractType: 'PERPETUAL', type: 1 },
+              list: [
+                // Duplicate by id
+                { id: 'shared-id-1', side: 2, price: 80000, currentUsd: 2_000_000, state: 1, startTime: 1000 },
+                // Duplicate by fallback key (venue:market:side:price:startTime)
+                { side: 1, price: 82000, currentUsd: 3_000_000, state: 1, startTime: 2000 },
+              ],
+            },
+            {
+              instrument: { exName: 'Bybit', contractType: 'PERPETUAL', type: 1 },
+              list: [
+                { id: 'bybit-1', side: 2, price: 79500, currentUsd: 1_800_000, state: 1, startTime: 3000 },
+              ],
+            },
+          ]
+        }
+        if (cgSymbol === 'Hyperliquid_BTC-USD') {
+          throw new Error('rate limited on secondary symbol')
+        }
+        return []
+      }
+      override async largeTakerOrderStatistics(): Promise<unknown> {
+        return []
+      }
+    }
+
+    const multiClient = new MultiExchangeMock()
+    const snap = await multiClient.getLargeOrders('BTCUSDT', { top: 20, balanced: false })
+    expect(queriedSymbols).toEqual(btcAll)
+    expect(snap.orderCount).toBe(3)
+    expect(snap.walls.map(w => ({ exchange: w.exchange, price: w.price }))).toEqual([
+      { exchange: 'Binance', price: 82000 },
+      { exchange: 'Binance', price: 80000 },
+      { exchange: 'Bybit', price: 79500 },
+    ])
   })
 })

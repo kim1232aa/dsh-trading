@@ -1,34 +1,132 @@
 /**
  * 反转点标注 RevPoint v6.5 overlay. All logic lives in
  * tool-market/src/revpoint.ts (shared with market_snapshot); this file only draws.
- * calcParams: [细档%, 粗档%, pivot腿, 15m, 30m, 1H, 2H, 4H, 最少★]
+ * calcParams:
+ *   [0..8]  : 细档%, 粗档%, pivot腿, 15m, 30m, 1H, 2H, 4H, 最少★ (legacy 9 slots)
+ *   [9..11] : showBig, showSwing, showC (确认阈值)
+ *   [12..15]: volLen, volThr, lookbackHours, oiExch (量能·OI)
+ *   [16..17]: needVol, confirmedOnly (过滤·显示)
+ *   [18..24]: showHtf, showHtfSlope, showHtfPlots, showHtfHoriz, showHtfTable, showHtfTags, showHtfDebug (多周期趋势线)
+ *   [25..27]: alertFine, alertBig, alertC (alertcondition)
  * extendData: provider derivative history (base-coin OI) for the OI1h star.
  */
-import { revPoint, REVPOINT_HTF, starGlyphs, linePriceAt } from '../../../../tool-market/src/revpoint.js'
-import type { RevPointResult, RpLine, RpTf } from '../../../../tool-market/src/revpoint.js'
+import { revPoint, REVPOINT_DEFAULTS, REVPOINT_HTF, starGlyphs, linePriceAt } from '../../../../tool-market/src/revpoint.js'
+import type { RevPointOpts, RevPointResult, RpLine, RpTf } from '../../../../tool-market/src/revpoint.js'
 import { formatPrice } from '../precision.js'
 import { statusTableRect, clampLabelBox, layoutEdgeTags, clipExtendX, tableMode } from './revpoint-layout.js'
 export { TABLE_W as REVPOINT_TABLE_W }
 
-type K = { open: number; high: number; low: number; close: number; volume?: number; timestamp: number }
+type K = { open: number; high: number; low: number; close: number; volume?: number; timestamp?: number; time?: string }
 type Row = { rp?: RevPointResult }
 
-export const REVPOINT_PARAM_DEFAULTS = [0.7, 2.0, 3, 0, 0, 1, 0, 1, 0]
+export const REVPOINT_OI_EXCHANGES = ['BINANCE', 'OKX', 'BYBIT'] as const
+
+export const REVPOINT_ALERTS = [
+  { key: 'fineConfirmed', title: '细档反转确认', cn: '细档反转确认', msg: 'RevPoint: 细档反转点已确认' },
+  { key: 'bigConfirmed', title: '大周期反转确认', cn: '大周期反转确认', msg: 'RevPoint: 大周期反转点已确认' },
+  { key: 'cFired', title: 'C类枯竭爆量', cn: 'C类枯竭爆量', msg: 'RevPoint: C类缩量后巨量反转K' },
+] as const
+
+export const REVPOINT_PARAM_DEFAULTS = [
+  0.7, 2.0, 3, 0, 0, 1, 0, 1, 0,
+  1, 1, 1,
+  20, 2.0, 24, 0,
+  0, 1,
+  1, 0, 0, 1, 1, 1, 0,
+  0, 0, 0,
+]
+
+export function migrateRevPointParams(raw: readonly unknown[]): number[] {
+  return REVPOINT_PARAM_DEFAULTS.map((d, i) => {
+    const v = raw[i]
+    return typeof v === 'number' && Number.isFinite(v) ? v : d
+  })
+}
+
 const FONT = '11px system-ui, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif'
 const TABLE_COLS = [56, 80, 80] as const
 const TABLE_W = TABLE_COLS[0] + TABLE_COLS[1] + TABLE_COLS[2]
 const ROW_H = 16
 
-export function revPointRows(list: readonly K[], p: readonly number[], ext?: unknown): Row[] {
-  const q = p.length === 9 ? p : REVPOINT_PARAM_DEFAULTS
+export function paramsToRevPointOpts(p: readonly unknown[]): Partial<RevPointOpts> {
+  const q = migrateRevPointParams(p)
+  const htf = Object.fromEntries(REVPOINT_HTF.map((d, i) => [d.key, q[3 + i] === 1])) as Record<RpTf, boolean>
+  const exIdx = Math.max(0, Math.min(2, Math.round(q[15]!)))
+  return {
+    thrPct: q[0]!,
+    thrBigPct: q[1]!,
+    pivotLeg: q[2]!,
+    htf,
+    minStars: q[8]!,
+    showBig: q[9] === 1,
+    showSwing: q[10] === 1,
+    showC: q[11] === 1,
+    volLen: q[12]!,
+    volThr: q[13]!,
+    lookbackHours: q[14]!,
+    oiExch: REVPOINT_OI_EXCHANGES[exIdx] ?? 'BINANCE',
+    needVol: q[16] === 1,
+    confirmedOnly: q[17] === 1,
+    showHtf: q[18] === 1,
+    showHtfSlope: q[19] === 1,
+    showHtfPlots: q[20] === 1,
+    showHtfHoriz: q[21] === 1,
+    showHtfTable: q[22] === 1,
+    showHtfTags: q[23] === 1,
+    showHtfDebug: q[24] === 1,
+    fmt: formatPrice,
+  }
+}
+
+export function revPointRows(list: readonly { open: number; high: number; low: number; close: number; volume?: number; timestamp: number }[], p: readonly number[], ext?: unknown): Row[] {
   const hist = Array.isArray(ext) ? ext as { time: string; openInterest: number | null }[] : []
   const oi = hist.flatMap(h => (typeof h.openInterest === 'number' ? [{ t: Date.parse(h.time), oi: h.openInterest }] : []))
-  const htf = Object.fromEntries(REVPOINT_HTF.map((d, i) => [d.key, q[3 + i] === 1])) as Record<RpTf, boolean>
-  const rp = revPoint(list.map(k => ({ t: k.timestamp, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume ?? 0 })),
-    oi, { thrPct: q[0]!, thrBigPct: q[1]!, pivotLeg: q[2]!, htf, minStars: q[8]!, fmt: formatPrice })
+  const rp = revPoint(
+    list.map(k => ({ t: k.timestamp, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume ?? 0 })),
+    oi,
+    paramsToRevPointOpts(p),
+  )
   const rows: Row[] = list.map(() => ({}))
   if (rows.length) rows[0] = { rp }
   return rows
+}
+
+export function revPointAlertEvents(
+  candles: readonly K[],
+  params?: readonly unknown[],
+  ext?: unknown,
+): { id: string; text: string }[] {
+  if (candles.length < 2) return []
+  const q = migrateRevPointParams(params ?? [])
+  const wantFine = q[25] === 1
+  const wantBig = q[26] === 1
+  const wantC = q[27] === 1
+  if (!wantFine && !wantBig && !wantC) return []
+  const norm = candles.map((c, idx) => ({
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+    volume: c.volume ?? 0,
+    timestamp: typeof c.timestamp === 'number' ? c.timestamp : (c.time ? Date.parse(c.time) : idx * 60_000),
+  }))
+  const rows = revPointRows(norm, q, ext)
+  const rp = rows[0]?.rp
+  if (!rp || rp.processed === 0) return []
+  const closedIdx = Math.min(norm.length - 2, rp.processed - 1)
+  if (closedIdx < 0) return []
+  const closedBar = norm[closedIdx]!
+  const out: { id: string; text: string }[] = []
+  if (wantFine && rp.barEvents.fineConfirmed[closedIdx]) {
+    out.push({ id: `${closedBar.timestamp}|rp.fineConfirmed`, text: `${REVPOINT_ALERTS[0].title} — ${REVPOINT_ALERTS[0].msg}` })
+  }
+  if (wantBig && rp.barEvents.bigConfirmed[closedIdx]) {
+    out.push({ id: `${closedBar.timestamp}|rp.bigConfirmed`, text: `${REVPOINT_ALERTS[1].title} — ${REVPOINT_ALERTS[1].msg}` })
+  }
+  if (wantC && rp.barEvents.cFired[closedIdx]) {
+    out.push({ id: `${closedBar.timestamp}|rp.cFired`, text: `${REVPOINT_ALERTS[2].title} — ${REVPOINT_ALERTS[2].msg}` })
+  }
+  return out
 }
 
 const DASH: Record<RpLine['style'], number[]> = { solid: [], dotted: [2, 3], dashed: [6, 4] }
@@ -71,7 +169,8 @@ export const revPointIndicator = {
   series: 'price',
   calcParams: [...REVPOINT_PARAM_DEFAULTS],
   figures: [],
-  calc: (list: K[], ind: { calcParams: number[]; extendData?: unknown }) => revPointRows(list, ind.calcParams, ind.extendData),
+  calc: (list: { open: number; high: number; low: number; close: number; volume?: number; timestamp: number }[], ind: { calcParams: number[]; extendData?: unknown }) =>
+    revPointRows(list, ind.calcParams, ind.extendData),
   createTooltipDataSource: ({ indicator, crosshair }: { indicator: { result: Row[] }; crosshair: { dataIndex?: number } }) => {
     const rp = indicator.result?.[0]?.rp
     const i = crosshair.dataIndex
@@ -88,10 +187,11 @@ export const revPointIndicator = {
     xAxis: { convertToPixel: (v: number) => number }
     yAxis: { convertToPixel: (v: number) => number }
     bounding: { width: number; height: number }
-    kLineDataList: K[]
+    kLineDataList: { open: number; high: number; low: number; close: number; volume?: number; timestamp: number }[]
   }) => {
     const rp = indicator.result?.[0]?.rp
     if (!rp) return false
+    const op = rp.opts ?? REVPOINT_DEFAULTS
     const X = (i: number) => xAxis.convertToPixel(i)
     const Y = (v: number) => yAxis.convertToPixel(v)
     const idxOfT = (t: number) => { let k = 0; for (let j = 0; j < kLineDataList.length; j++) if (kLineDataList[j]!.timestamp <= t) k = j; return k }
@@ -99,7 +199,8 @@ export const revPointIndicator = {
     const paneH = bounding.height
     const cd = rp.candidate
     const fullH = (6 + rp.htf.length) * ROW_H + 4
-    const mode = cd ? tableMode(paneH, fullH) : 'hidden'
+    const showTable = op.showHtf && op.showHtfTable
+    const mode = cd && showTable ? tableMode(paneH, fullH) : 'hidden'
     const table = mode === 'full' ? statusTableRect(paneW, TABLE_W, fullH)
       : mode === 'compact' ? statusTableRect(paneW, TABLE_W, 2 * ROW_H + 4) : null
     const shortPane = mode !== 'full'
@@ -136,36 +237,75 @@ export const revPointIndicator = {
     }
     ctx.setLineDash([])
 
+    // HTF stepline plots (when showHtf && showHtfPlots)
+    if (op.showHtf && op.showHtfPlots && rp.htfStepPlots) {
+      for (const h of rp.htf) {
+        if (!h.on) continue
+        const sp = rp.htfStepPlots[h.tf]
+        if (!sp) continue
+        const w = h.tf === '4H' ? 2 : 1
+        for (const [arr, col] of [[sp.r, h.color.r], [sp.s, h.color.s]] as const) {
+          if (!arr || arr.length === 0) continue
+          ctx.strokeStyle = col
+          ctx.lineWidth = w
+          ctx.beginPath()
+          let penDown = false
+          let prevY = 0
+          for (let i = 0; i < arr.length; i++) {
+            const v = arr[i] ?? null
+            if (v === null || !Number.isFinite(v)) {
+              penDown = false
+              continue
+            }
+            const x = X(i), y = Y(v)
+            if (!penDown) {
+              ctx.moveTo(x, y)
+              penDown = true
+            } else {
+              ctx.lineTo(x, prevY)
+              ctx.lineTo(x, y)
+            }
+            prevY = y
+          }
+          ctx.stroke()
+        }
+      }
+    }
+
     // HTF level lines (stop at pane edge / left of price axis)
     const lineRight = paneW - 1
-    for (const h of rp.htf) {
-      if (!h.on) continue
-      for (const [lv, isRes] of [[h.r, true], [h.s, false]] as const) {
-        const col = isRes ? h.color.r : h.color.s
-        if (lv.active) {
-          ctx.strokeStyle = col
-          ctx.lineWidth = h.tf === '4H' ? 3 : h.tf === '15m' ? 1 : 2
-          ctx.beginPath()
-          ctx.moveTo(X(idxOfT(lv.active.t1)), Y(lv.active.px1))
-          const ly = Y(lv.active.px2)
-          const underTable = table !== null && ly >= table.y && ly <= table.y + table.h
-          ctx.lineTo(underTable ? table!.x : lineRight, ly)
-          ctx.stroke()
+    if (op.showHtf) {
+      for (const h of rp.htf) {
+        if (!h.on) continue
+        for (const [lv, isRes] of [[h.r, true], [h.s, false]] as const) {
+          const col = isRes ? h.color.r : h.color.s
+          if (lv.active) {
+            ctx.strokeStyle = col
+            ctx.lineWidth = h.tf === '4H' ? 3 : h.tf === '15m' ? 1 : 2
+            ctx.beginPath()
+            ctx.moveTo(X(idxOfT(lv.active.t1)), Y(lv.active.px1))
+            const ly = Y(lv.active.px2)
+            const underTable = table !== null && ly >= table.y && ly <= table.y + table.h
+            ctx.lineTo(underTable ? table!.x : lineRight, ly)
+            ctx.stroke()
+          }
         }
       }
     }
 
     // Right-edge HTF R/S tags — laid out to avoid the status table and each other
     const edgeIns: { y: number; w: number; h: number; text: string; color: string; priority: number }[] = []
-    for (const h of rp.htf) {
-      if (!h.on) continue
-      for (const [lv, isRes] of [[h.r, true], [h.s, false]] as const) {
-        if (!Number.isFinite(lv.px)) continue
-        const text = `${h.tf}${isRes ? ' R ' : ' S '}${formatPrice(lv.px)}`
-        const w = ctx.measureText(text).width + 10
-        const pri = ({ '4H': 5, '2H': 4, '1H': 3, '30m': 2, '15m': 1 } as const)[h.tf]
-        if (shortPane && pri < 3) continue
-        edgeIns.push({ y: Y(lv.px), w, h: 16, text, color: isRes ? h.color.r : h.color.s, priority: pri })
+    if (op.showHtf && op.showHtfTags) {
+      for (const h of rp.htf) {
+        if (!h.on) continue
+        for (const [lv, isRes] of [[h.r, true], [h.s, false]] as const) {
+          if (!Number.isFinite(lv.px)) continue
+          const text = `${h.tf}${isRes ? ' R ' : ' S '}${formatPrice(lv.px)}`
+          const w = ctx.measureText(text).width + 10
+          const pri = ({ '4H': 5, '2H': 4, '1H': 3, '30m': 2, '15m': 1 } as const)[h.tf]
+          if (shortPane && pri < 3) continue
+          edgeIns.push({ y: Y(lv.px), w, h: 16, text, color: isRes ? h.color.r : h.color.s, priority: pri })
+        }
       }
     }
     if (rp.swingTag) {
@@ -215,6 +355,10 @@ export const revPointIndicator = {
     if (cd) {
       // drawn before the opaque table, so the table always wins on overlap
       drawLabel(ctx, X(cd.idx), Y(cd.price), cd.text, 'rgba(255,165,0,0.85)', '#000', cd.isTop ? 'down' : 'up', paneW, paneH)
+    }
+    if (op.showHtf && op.showHtfDebug && rp.htfDebugText && kLineDataList.length > 0) {
+      const li = kLineDataList.length - 1
+      drawLabel(ctx, X(li), Y(kLineDataList[li]!.high), rp.htfDebugText, 'rgba(30,30,30,0.92)', '#ff0', 'down', paneW, paneH)
     }
 
     // Status table — pinned top-right, semi-transparent, clear of the price axis

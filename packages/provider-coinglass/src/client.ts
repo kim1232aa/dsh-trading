@@ -61,11 +61,122 @@ type RawStats = {
   sellVolUsd?: number
 }
 
+const QUOTE_SUFFIXES = ['USDT', 'USDC', 'BUSD', 'FDUSD', 'USD'] as const
+
+function extractBaseAsset(pair: string): string {
+  for (const q of QUOTE_SUFFIXES) {
+    if (pair.length > q.length && pair.endsWith(q)) {
+      return pair.slice(0, -q.length)
+    }
+  }
+  return pair
+}
+
+type SecondarySymbolSpec = {
+  exchange: string
+  market: 'perp' | 'spot'
+  build: (base: string) => string
+}
+
+const SECONDARY_EXCHANGE_SPECS: readonly SecondarySymbolSpec[] = [
+  { exchange: 'Bybit', market: 'perp', build: base => `Bybit_${base}USDT` },
+  { exchange: 'Bybit', market: 'spot', build: base => `Bybit_SPOT_${base}USDT` },
+  { exchange: 'Hyperliquid', market: 'perp', build: base => `Hyperliquid_${base}-USD` },
+  { exchange: 'Bitget', market: 'perp', build: base => `Bitget_${base}USDT_UMCBL` },
+  { exchange: 'Bitget', market: 'spot', build: base => `Bitget_SPOT_${base}USDT` },
+  { exchange: 'Gate', market: 'perp', build: base => `Gate_${base}_USDT` },
+  { exchange: 'Gate', market: 'spot', build: base => `Gate_SPOT_${base}_USDT` },
+  { exchange: 'Aster', market: 'perp', build: base => `Aster_${base}USDT` },
+  { exchange: 'Bitfinex', market: 'perp', build: base => `Bitfinex_t${base}F0:USTF0` },
+  { exchange: 'Bitfinex', market: 'spot', build: base => `Bitfinex_SPOT_${base}USD` },
+  { exchange: 'Bitstamp', market: 'spot', build: base => `Bitstamp_SPOT_${base}USD` },
+  { exchange: 'Kraken', market: 'spot', build: base => `Kraken_SPOT_${base === 'BTC' ? 'XBT' : base}/USD` },
+]
+
+/**
+ * Build CoinGlass capi symbol keys across exchanges.
+ * - Custom cgSymbol with an underscore (e.g. 'Bybit_BTCUSDT'), explicit exchange prefix (e.g. 'okx:BTCUSDT'),
+ *   non-default opts.exchange, or specific opts.venue: only query the relevant symbol(s).
+ * - Standard pair (e.g. 'BTCUSDT' or 'ETHUSDT'): return primary ('Binance_BTCUSDT') plus secondary
+ *   exchange symbols (filtered by marketType if 'spot' or 'perp').
+ */
+export function buildMultiExchangeCgSymbols(
+  rawSymbol: string,
+  opts?: {
+    exchange?: string
+    market?: 'perp' | 'spot'
+    venue?: string
+    marketType?: 'all' | 'spot' | 'perp'
+  },
+): string[] {
+  const trimmed = rawSymbol.trim()
+
+  if (trimmed.includes('_')) {
+    if (/^(Binance|OKX|Bybit|Bitget|Coinbase|Huobi|Kraken)_(SPOT_)?([A-Z0-9]+)$/i.test(trimmed.replace(/\s+/g, ''))) {
+      return [toCgSymbol(trimmed).cgSymbol]
+    }
+    return [trimmed]
+  }
+
+  const exchangeOpt = opts?.exchange?.trim()
+  const hasNonDefaultExchange = Boolean(exchangeOpt && exchangeOpt.toLowerCase() !== 'binance')
+  const mapped = toCgSymbol(trimmed, {
+    exchange: exchangeOpt ?? 'Binance',
+    market: opts?.market ?? 'perp',
+  })
+
+  if (trimmed.includes(':') || hasNonDefaultExchange) {
+    return [mapped.cgSymbol]
+  }
+
+  const base = extractBaseAsset(mapped.pair)
+  const marketFilter = opts?.marketType === 'spot' || opts?.marketType === 'perp' ? opts.marketType : undefined
+
+  const venueOpt = opts?.venue?.trim()
+  if (venueOpt) {
+    const vLower = venueOpt.toLowerCase()
+    if (vLower === 'binance' || vLower === 'okx' || vLower === 'okex' || vLower === 'coinbase') {
+      return [mapped.cgSymbol]
+    }
+    const venueSpecs = SECONDARY_EXCHANGE_SPECS.filter(s => s.exchange.toLowerCase() === vLower)
+    if (venueSpecs.length > 0) {
+      const filtered = marketFilter ? venueSpecs.filter(s => s.market === marketFilter) : venueSpecs
+      const chosen = filtered.length > 0 ? filtered : venueSpecs
+      return chosen.map(s => s.build(base))
+    }
+    return [mapped.cgSymbol]
+  }
+
+  const secondarySpecs = marketFilter
+    ? SECONDARY_EXCHANGE_SPECS.filter(s => s.market === marketFilter)
+    : SECONDARY_EXCHANGE_SPECS
+  return [mapped.cgSymbol, ...secondarySpecs.map(s => s.build(base))]
+}
+
 function normalizeMarketType(inst: { contractType?: string | null; type?: string | number }): 'spot' | 'perp' {
   if (Number(inst.type) === 10 || String(inst.contractType ?? '').toUpperCase() === 'SPOT') {
     return 'spot'
   }
   return 'perp'
+}
+
+/** Deduplicate flattened walls by wall.id and fallback key. */
+export function deduplicateWalls(walls: LargeOrderWall[]): LargeOrderWall[] {
+  const seenIds = new Set<string>()
+  const seenFallbacks = new Set<string>()
+  const out: LargeOrderWall[] = []
+  for (const w of walls) {
+    const idKey = w.id !== undefined && w.id !== null && String(w.id) !== '' ? String(w.id) : undefined
+    const venue = (w as { venue?: string }).venue ?? w.exchange
+    const fallbackKey = `${venue}:${w.market}:${w.side}:${w.price}:${w.startTime}`
+    if ((idKey !== undefined && seenIds.has(idKey)) || seenFallbacks.has(fallbackKey)) {
+      continue
+    }
+    if (idKey !== undefined) seenIds.add(idKey)
+    seenFallbacks.add(fallbackKey)
+    out.push(w)
+  }
+  return out
 }
 
 /** Flatten venue groups into wall rows. side: 1=sell, 2=buy. */
@@ -76,14 +187,17 @@ export function flattenWalls(groups: unknown): LargeOrderWall[] {
     const inst = g.instrument ?? {}
     const market = normalizeMarketType(inst)
     const instrumentId = typeof inst.instrumentId === 'string' && inst.instrumentId ? inst.instrumentId : undefined
+    const exchange = String(inst.exName ?? '')
     for (const o of g.list ?? []) {
       const side = o.side === 1 ? 'sell' : o.side === 2 ? 'buy' : null
       if (side === null) continue
       const price = Number(o.price)
       if (!Number.isFinite(price) || price <= 0) continue
+      const startTime = Number(o.startTime) || 0
+      const fallbackKey = `${exchange}:${market}:${side}:${price}:${startTime}`
       rows.push({
-        id: o.id ?? `${inst.exName}-${price}-${o.startTime}`,
-        exchange: String(inst.exName ?? ''),
+        id: o.id ?? fallbackKey,
+        exchange,
         ...(inst.baseAsset !== undefined ? { baseAsset: String(inst.baseAsset) } : {}),
         market,
         ...(instrumentId !== undefined ? { instrumentId } : {}),
@@ -95,12 +209,12 @@ export function flattenWalls(groups: unknown): LargeOrderWall[] {
         currentAmount: Number(o.currentAmount) || 0,
         volUsd: Number(o.volUsd) || 0,
         state: Number(o.state) || 0,
-        startTime: Number(o.startTime) || 0,
+        startTime,
         currentTime: Number(o.currentTime) || 0,
       })
     }
   }
-  return rows
+  return deduplicateWalls(rows)
 }
 
 function flattenStats(raw: unknown): LargeOrderStatistics[] {
@@ -240,12 +354,30 @@ export class CoinglassCapi {
       exchange: this.defaultExchange,
       market: this.defaultMarket,
     })
+    const cgSymbols = buildMultiExchangeCgSymbols(symbol, {
+      exchange: this.defaultExchange,
+      market: this.defaultMarket,
+      ...(opts.venue !== undefined ? { venue: opts.venue } : {}),
+      ...(opts.marketType !== undefined ? { marketType: opts.marketType } : {}),
+    })
     const hours = opts.hours ?? 72
     const top = opts.top ?? 40
     const end = Math.floor(Date.now() / 1000)
     const start = end - Math.max(1, Math.floor(hours * 3600))
-    const raw = await this.largeTakerOrder(mapped.cgSymbol, start, end, opts.signal)
-    let walls = flattenWalls(raw)
+    const settled = await Promise.allSettled(
+      cgSymbols.map(sym => this.largeTakerOrder(sym, start, end, opts.signal)),
+    )
+    const primaryResult = settled[0]
+    if (!primaryResult || primaryResult.status === 'rejected') {
+      throw primaryResult ? primaryResult.reason : new Error(`coinglass fetch failed for ${mapped.cgSymbol}`)
+    }
+    const mergedGroups: unknown[] = []
+    for (const res of settled) {
+      if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+        mergedGroups.push(...res.value)
+      }
+    }
+    let walls = deduplicateWalls(flattenWalls(mergedGroups))
     if (opts.venue) {
       const v = opts.venue.toLowerCase()
       walls = walls.filter(w => w.exchange.toLowerCase() === v)

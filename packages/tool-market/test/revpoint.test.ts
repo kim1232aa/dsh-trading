@@ -116,4 +116,12 @@ describe("RevPoint HTF without lookahead", () => {
     expect(rep.htf.map(h => h.tf)).toEqual(["1H", "4H"])
     expect(renderRevPoint(rep)).toContain("RevPoint")
   })
+  it("supports showHtfPlots, showHtfDebug, and per-bar barEvents", () => {
+    const c = mk([100, 100.3, 100.6, 101, 100.7, 100.4, 100.2])
+    const r = revPoint(c, [], { ...past, showHtf: true, showHtfPlots: true, showHtfDebug: true })
+    expect(r.htfDebugText).toContain("HTF诊断 pivLen=3")
+    expect(r.barEvents.fineConfirmed).toHaveLength(c.length)
+    expect(r.barEvents.fineConfirmed.some(Boolean)).toBe(true)
+    expect(r.htfStepPlots["1H"].r).toHaveLength(c.length)
+  })
 })

@@ -20,21 +20,27 @@ export const REVPOINT_HTF = [
 ] as const
 export type RpTf = typeof REVPOINT_HTF[number]['key']
 
+export type RpOiExch = 'BINANCE' | 'OKX' | 'BYBIT'
+
 export type RevPointOpts = {
   thrPct: number; thrBigPct: number
   showBig: boolean; showSwing: boolean; showC: boolean
   volLen: number; volThr: number; lookbackHours: number
+  oiExch: RpOiExch
   minStars: number; needVol: boolean; confirmedOnly: boolean
   showHtf: boolean; htf: Record<RpTf, boolean>; pivotLeg: number
-  showHtfSlope: boolean; showHtfHoriz: boolean
+  showHtfSlope: boolean; showHtfPlots: boolean; showHtfHoriz: boolean
+  showHtfTable: boolean; showHtfTags: boolean; showHtfDebug: boolean
   chartSec?: number; nowMs?: number
   fmt?: (v: number) => string
 }
 export const REVPOINT_DEFAULTS: RevPointOpts = {
   thrPct: 0.7, thrBigPct: 2.0, showBig: true, showSwing: true, showC: true,
-  volLen: 20, volThr: 2.0, lookbackHours: 24, minStars: 0, needVol: false, confirmedOnly: true,
+  volLen: 20, volThr: 2.0, lookbackHours: 24, oiExch: 'BINANCE',
+  minStars: 0, needVol: false, confirmedOnly: true,
   showHtf: true, htf: { '15m': false, '30m': false, '1H': true, '2H': false, '4H': true }, pivotLeg: 3,
-  showHtfSlope: false, showHtfHoriz: true,
+  showHtfSlope: false, showHtfPlots: false, showHtfHoriz: true,
+  showHtfTable: true, showHtfTags: true, showHtfDebug: false,
 }
 
 export type RpLine = { x1: number; y1: number; x2: number; y2: number; extend: boolean; style: 'solid' | 'dotted' | 'dashed'; width: number; color: string }
@@ -47,13 +53,17 @@ export type RpCandidate = { isTop: boolean; idx: number; price: number; stars: n
 
 export type RevPointResult = {
   processed: number
+  opts: RevPointOpts
   fine: RpFineMark[]; big: RpBigMark[]; cBars: RpCBar[]
   lines: { fineUp: RpLine | null; fineDn: RpLine | null; upLn: RpLine | null; dnLn: RpLine | null }
   htf: RpHtfRow[]
+  htfStepPlots: Record<RpTf, { r: number[]; s: number[] }>
+  htfDebugText: string
   candidate: RpCandidate | null
   swingTag: { down: boolean; px: number; text: string } | null
   trendUp: boolean; oiChg1h: number; rsi14: number
   fineConfirmed: boolean; bigConfirmed: boolean; cFired: boolean
+  barEvents: { fineConfirmed: boolean[]; bigConfirmed: boolean[]; cFired: boolean[] }
 }
 
 const N = NaN
@@ -273,6 +283,9 @@ export function revPoint(all: readonly RpCandle[], oi: readonly RpOiPoint[] = []
   let topA: LP = { barIdx: N, price: N }, topB: LP = { ...topA }, botA: LP = { ...topA }, botB: LP = { ...topA }
   let lastC = -99
   let fineConfirmed = false, bigConfirmed = false, cFired = false
+  const barFine = new Array<boolean>(all.length).fill(false)
+  const barBig = new Array<boolean>(all.length).fill(false)
+  const barC = new Array<boolean>(all.length).fill(false)
   type Tl = { lastSeenPx: number; lastSeenT: number; aPx: number; aTime: number; bPx: number; bTime: number; active: RpHtfLevel['active'] }
   const newTl = (): Tl => ({ lastSeenPx: N, lastSeenT: N, aPx: N, aTime: N, bPx: N, bTime: N, active: null })
   const tfs = REVPOINT_HTF.map(d => ({ ...d, sec: d.min * 60, packs: [] as Pack[], r: newTl(), s: newTl(), on: false }))
@@ -369,6 +382,7 @@ export function revPoint(all: readonly RpCandle[], oi: readonly RpOiPoint[] = []
       applyPack(tf.r, p.h1, p.ht1, p.h2, p.ht2, b.t)
       applyPack(tf.s, p.l1, p.lt1, p.l2, p.lt2, b.t)
     }
+    barFine[i] = fineConfirmed; barBig[i] = bigConfirmed; barC[i] = cFired
   }
 
   const n = c.length, li = n - 1
@@ -398,8 +412,35 @@ export function revPoint(all: readonly RpCandle[], oi: readonly RpOiPoint[] = []
     const down = dir === 'down', px = down ? fTopB.price : fBotB.price
     if (!isNa(px)) swingTag = { down, px, text: (down ? '↓趋 ' : '↑趋 ') + fmt(px) }
   }
-  return { processed: n, fine, big, cBars, lines: { fineUp, fineDn, upLn, dnLn }, htf, candidate, swingTag,
-    trendUp: n > 0 && trendUpAt(li), oiChg1h: n > 0 ? oiChgAt(li) : N, rsi14: at(rsi14, li), fineConfirmed, bigConfirmed, cFired }
+  const htfStepPlots = {} as Record<RpTf, { r: number[]; s: number[] }>
+  for (const tf of tfs) {
+    const on = tf.on && op.showHtfPlots
+    const rArr = new Array<number>(all.length).fill(N)
+    const sArr = new Array<number>(all.length).fill(N)
+    if (on) {
+      for (let i = 0; i < tf.packs.length; i++) {
+        rArr[i] = tf.packs[i]!.h1
+        sArr[i] = tf.packs[i]!.l1
+      }
+    }
+    htfStepPlots[tf.key] = { r: rArr, s: sArr }
+  }
+  const dbgRow = (tf: typeof tfs[number], p: Pack) =>
+    `${tf.key}(${tf.on ? '开' : '关'}): R1=${isNa(p.h1) ? 'na' : fmt(p.h1)} R2=${isNa(p.h2) ? 'na' : fmt(p.h2)} | S1=${isNa(p.l1) ? 'na' : fmt(p.l1)} S2=${isNa(p.l2) ? 'na' : fmt(p.l2)}`
+  const htfDebugText = op.showHtf && op.showHtfDebug && n > 0
+    ? [
+        `HTF诊断 pivLen=${op.pivotLeg} 斜线=${op.showHtfSlope ? '开' : '关'} 水平=${op.showHtfHoriz ? '开' : '关'}`,
+        ...tfs.map(tf => dbgRow(tf, lastPack(tf))),
+      ].join('\n')
+    : ''
+
+  return {
+    processed: n, opts: op, fine, big, cBars, lines: { fineUp, fineDn, upLn, dnLn }, htf,
+    htfStepPlots, htfDebugText, candidate, swingTag,
+    trendUp: n > 0 && trendUpAt(li), oiChg1h: n > 0 ? oiChgAt(li) : N, rsi14: at(rsi14, li),
+    fineConfirmed, bigConfirmed, cFired,
+    barEvents: { fineConfirmed: barFine, bigConfirmed: barBig, cFired: barC },
+  }
 }
 
 export type RevPointReport = {

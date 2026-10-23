@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  KP_ALERT, KP_ALERTS, KP_BG_ON, KP_COLOR, KP_DEFAULTS, KP_FONT, KP_FORMING, KP_LAST, KP_MODE, KP_PLOTS, KP_SHOW, KP_THEME,
-  calculateKPatterns, drawKPatterns, kPatternIndicator, kpAlertEvents, kpHits,
+  KP_ALERT, KP_ALERTS, KP_BAIDU_CATALOG, KP_BAIDU_PLOTS, KP_BAIDU_SHOW, KP_BG_ON, KP_COLOR, KP_DEFAULTS, KP_FONT,
+  KP_FORMING, KP_LAST, KP_MODE, KP_PLOTS, KP_SHOW, KP_THEME,
+  calculateKPatterns, createKPatternTooltipDataSource, drawKPatterns, kPatternIndicator, kpAlertEvents, kpAllHits,
+  kpBaiduHits, kpHits, sanitizeKPatternParams,
   type KpCandle,
 } from '../src/client/indicators/aicoin-kpattern.js'
 import { EDITABLE, sanitizeSettings } from '../src/client/ChartCard.js'
@@ -10,10 +12,11 @@ import { EDITABLE, sanitizeSettings } from '../src/client/ChartCard.js'
 const base = (n: number): KpCandle[] => Array.from({ length: n }, () => ({ open: 100, high: 101, low: 99, close: 100 }))
 const bar = (open: number, high: number, low: number, close: number): KpCandle => ({ open, high, low, close })
 const hitsAtLast = (c: KpCandle[]) => kpHits(calculateKPatterns(c)[c.length - 1])
+const baiduHitsAtLast = (c: KpCandle[]) => kpBaiduHits(calculateKPatterns(c)[c.length - 1])
 
 describe('AiCoin K线形态 — each plotText condition, hand-computed', () => {
   it('neutral history fires nothing', () => {
-    expect(calculateKPatterns(base(30)).every(r => kpHits(r).length === 0)).toBe(true)
+    expect(calculateKPatterns(base(30)).every(r => kpAllHits(r).length === 0)).toBe(true)
   })
   it('锤子线: under 2.0>=2*0.4, ampl 2.5/100>0.005, low 98<lowest(low[1],10)=99, over 0.1<0.2', () => {
     expect(hitsAtLast([...base(11), bar(100, 100.5, 98, 100.4)])).toEqual(['hammer'])
@@ -89,6 +92,95 @@ describe('AiCoin K线形态 — each plotText condition, hand-computed', () => {
   })
 })
 
+describe('Baidu Finance / TradingCentral 24 形态目录与 19 扩展形态计算', () => {
+  it('KP_BAIDU_CATALOG has 24 items sorted by type id (70..123), reusing 5 AiCoin keys and 19 Baidu keys', () => {
+    expect(KP_BAIDU_CATALOG).toHaveLength(24)
+    expect(KP_BAIDU_CATALOG.map(item => item.type)).toEqual([
+      70, 71, 101, 102, 103, 104, 106, 107, 108, 109, 110, 111,
+      112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123,
+    ])
+    expect(KP_BAIDU_CATALOG.map(item => [item.type, item.title, item.key, item.direction])).toEqual([
+      [70, '圆弧顶', 'roundingTop', 'bear'],
+      [71, '圆弧底', 'roundingBottom', 'bull'],
+      [101, '跳空上涨', 'gapUp', 'bull'],
+      [102, '跳空下跌', 'gapDown', 'bear'],
+      [103, '岛形顶部', 'islandTop', 'bear'],
+      [104, '岛形底部', 'islandBottom', 'bull'],
+      [106, '射击之星', 'shootingStar', 'bear'],
+      [107, '吊人形态', 'hangingMan', 'bear'],
+      [108, '吞没线（看涨）', 'bullishEngulfing', 'bull'],
+      [109, '吞没线（看跌）', 'bearishEngulfing', 'bear'],
+      [110, '墓碑线（看涨）', 'gravestoneBull', 'bull'],
+      [111, '锤形线', 'hammer', 'bull'],
+      [112, '倒锤线', 'invertedHammer', 'bull'],
+      [113, '覆盖线（看涨）', 'outsideBull', 'bull'],
+      [114, '覆盖线（看跌）', 'outsideBear', 'bear'],
+      [115, '被覆盖线（看涨）', 'haramiBull', 'bull'],
+      [116, '被覆盖线（看跌）', 'haramiBear', 'bear'],
+      [117, '关键反转线（看跌）', 'keyRevBear', 'bear'],
+      [118, '关键反转线（看涨）', 'keyRevBull', 'bull'],
+      [119, '衰竭线（看跌）', 'exhaustionBear', 'bear'],
+      [120, '衰竭线（看涨）', 'exhaustionBull', 'bull'],
+      [121, '两线反转（看涨）', 'twoBarRevBull', 'bull'],
+      [122, '两线反转（看跌）', 'twoBarRevBear', 'bear'],
+      [123, '墓碑线（看跌）', 'gravestoneBear', 'bear'],
+    ])
+    expect(KP_BAIDU_CATALOG.every(item => item.meaning.length > 0 && item.description.length > 0)).toBe(true)
+    expect(KP_BAIDU_PLOTS).toHaveLength(19)
+  })
+
+  it('70 圆弧顶 & 71 圆弧底 over 10-bar window', () => {
+    const topArch = [
+      bar(99, 100, 98, 99.5), bar(99.5, 101, 99, 100.5), bar(100.5, 102, 100, 101.5),
+      bar(101.5, 104, 101, 103.5), bar(103.5, 105, 103, 104.5), bar(104.5, 105, 103, 104), bar(104, 104, 102.5, 103),
+      bar(103, 103, 101.5, 102), bar(102, 102, 100.5, 101), bar(101, 101, 98.5, 99),
+    ]
+    expect(baiduHitsAtLast(topArch)).toContain('roundingTop')
+
+    const bottomBowl = [
+      bar(101, 102, 100, 100.5), bar(100.5, 101, 99, 99.5), bar(99.5, 100, 98, 98.5),
+      bar(98.5, 99, 96, 96.5), bar(96.5, 97, 95, 95.5), bar(95.5, 97, 95, 96), bar(96, 97.5, 96, 97),
+      bar(97, 98.5, 97, 98), bar(98, 99.5, 98, 99), bar(99, 101.5, 99, 101),
+    ]
+    expect(baiduHitsAtLast(bottomBowl)).toContain('roundingBottom')
+  })
+
+  it('101 跳空上涨 & 102 跳空下跌 & 103 岛形顶部 & 104 岛形底部', () => {
+    expect(baiduHitsAtLast([...base(5), bar(102, 103, 101.5, 102.5)])).toEqual(['gapUp'])
+    expect(baiduHitsAtLast([...base(5), bar(98, 98.5, 97, 97.5)])).toEqual(['gapDown'])
+    expect(baiduHitsAtLast([...base(5), bar(102, 103, 101.5, 102.5), bar(100, 101, 99.5, 100)])).toEqual(['gapDown', 'islandTop'])
+    expect(baiduHitsAtLast([...base(5), bar(98, 98.5, 97, 97.5), bar(100, 100.5, 99, 100)])).toEqual(['gapUp', 'islandBottom'])
+  })
+
+  it('110 墓碑线(看涨) & 112 倒锤线 & 123 墓碑线(看跌)', () => {
+    expect(baiduHitsAtLast([...base(11), bar(98.1, 100, 98, 98.2)])).toEqual(['gravestoneBull'])
+    expect(baiduHitsAtLast([...base(11), bar(98.1, 99.6, 98, 98.5)])).toEqual(['invertedHammer'])
+    expect(baiduHitsAtLast([...base(11), bar(100.2, 102, 100, 100.1)])).toEqual(['gravestoneBear'])
+  })
+
+  it('113 覆盖线(看涨) & 114 覆盖线(看跌) & 115 被覆盖线(看涨) & 116 被覆盖线(看跌)', () => {
+    expect(baiduHitsAtLast([...base(10), bar(100, 100.2, 98.5, 99), bar(98.8, 100.5, 98.2, 100.2)])).toEqual(['outsideBull'])
+    expect(baiduHitsAtLast([...base(10), bar(100, 101.5, 99.8, 101), bar(101.2, 101.8, 99.5, 99.8)])).toEqual(['outsideBear'])
+    expect(baiduHitsAtLast([...base(10), bar(100, 100.2, 98, 98.2), bar(98.5, 99.5, 98.3, 99.2)])).toEqual(['haramiBull'])
+    expect(baiduHitsAtLast([...base(10), bar(100, 102, 99.8, 101.8), bar(101.5, 101.7, 100.5, 100.8)])).toEqual(['haramiBear'])
+  })
+
+  it('117 关键反转线(看跌) & 118 关键反转线(看涨)', () => {
+    expect(baiduHitsAtLast([...base(11), bar(100, 101.2, 99.8, 101), bar(101.5, 102, 99.5, 99.6)])).toContain('keyRevBear')
+    expect(baiduHitsAtLast([...base(11), bar(100, 100.2, 98.8, 99), bar(98.5, 100.5, 98, 100.4)])).toContain('keyRevBull')
+  })
+
+  it('119 衰竭线(看跌) & 120 衰竭线(看涨)', () => {
+    expect(baiduHitsAtLast([...base(10), bar(100, 101.5, 99.8, 101.2), bar(101.8, 102, 100.8, 101)])).toEqual(['exhaustionBear'])
+    expect(baiduHitsAtLast([...base(10), bar(100, 100.2, 98.5, 98.8), bar(98.2, 99.2, 98, 99)])).toEqual(['exhaustionBull'])
+  })
+
+  it('121 两线反转(看涨) & 122 两线反转(看跌)', () => {
+    expect(baiduHitsAtLast([...base(10), bar(100, 100.1, 98, 98.2), bar(98.3, 100.4, 98.2, 100.2)])).toEqual(['twoBarRevBull'])
+    expect(baiduHitsAtLast([...base(10), bar(100, 102, 99.9, 101.8), bar(101.7, 101.8, 99.6, 99.8)])).toEqual(['twoBarRevBear'])
+  })
+})
+
 describe('AiCoin K线形态 — plotText / alertcondition metadata', () => {
   it('15 plotText entries with source title/text/color/refSeries/placement', () => {
     expect(KP_PLOTS.map(p => [p.title, p.text, p.color, p.ref, p.placement])).toEqual([
@@ -115,15 +207,19 @@ describe('AiCoin K线形态 — plotText / alertcondition metadata', () => {
       '启明星:buy', '黄昏星:sell', '平头顶:sell', '平头底:buy', '顶分型:sell', '底分型:buy', '红三兵:buy', '黑三兵:sell',
     ])
   })
-  it('defaults: all shown, green #008000 / red #ff0000, fontSize 12, white bg, alerts off; plugin slots appended', () => {
-    expect(KP_DEFAULTS).toHaveLength(52)
-    expect(KP_DEFAULTS.slice(KP_THEME)).toEqual([1, 0, 1, 0])
-    expect([KP_THEME, KP_MODE, KP_FORMING, KP_LAST]).toEqual([48, 49, 50, 51])
+  it('defaults: all shown, green #008000 / red #ff0000, fontSize 12, white bg, alerts off; plugin + Baidu slots appended', () => {
+    expect(KP_DEFAULTS).toHaveLength(71)
+    expect(KP_DEFAULTS.slice(KP_THEME, KP_BAIDU_SHOW)).toEqual([1, 0, 1, 0])
+    expect(KP_DEFAULTS.slice(KP_BAIDU_SHOW)).toEqual(Array(19).fill(1))
+    expect([KP_THEME, KP_MODE, KP_FORMING, KP_LAST, KP_BAIDU_SHOW]).toEqual([48, 49, 50, 51, 52])
     expect(KP_DEFAULTS.slice(KP_SHOW, KP_SHOW + 15).every(v => v === 1)).toBe(true)
     expect(KP_DEFAULTS[KP_COLOR]).toBe(0x008000)
     expect(KP_DEFAULTS[KP_COLOR + 1]).toBe(0xff0000)
     expect(KP_DEFAULTS.slice(KP_FONT, KP_FONT + 3)).toEqual([12, 1, 0xffffff])
     expect(KP_DEFAULTS.slice(KP_ALERT, KP_THEME).every(v => v === 0)).toBe(true)
+    expect(sanitizeKPatternParams(KP_DEFAULTS.slice(0, 52)).baiduShow.every(v => !v)).toBe(true)
+    expect(sanitizeKPatternParams(undefined).baiduShow.every(Boolean)).toBe(true)
+    expect(sanitizeKPatternParams([]).baiduShow.every(Boolean)).toBe(true)
   })
 })
 
@@ -180,7 +276,7 @@ describe('AiCoin K线形态 — drawing', () => {
   }
   // evening star + top fractal on bar 12, then a closed neutral bar 13 (so bar 12 is not the forming bar)
   const star = [...base(10), bar(100, 103.1, 99.9, 103), bar(103.5, 104, 103.3, 103.4), bar(103, 103.1, 100.9, 101), bar(100, 101, 99, 100)]
-  const src = () => { const p = [...KP_DEFAULTS]; p[KP_THEME] = 0; return p }
+  const src = (theme = 0) => { const p = KP_DEFAULTS.slice(0, KP_BAIDU_SHOW); p[KP_THEME] = theme; return p }
 
   it('source colours: top placements stack above high in plotText order, red text on white plotText box', () => {
     const { texts, rects } = run(star, src())
@@ -198,7 +294,7 @@ describe('AiCoin K线形态 — drawing', () => {
     expect(rects).toEqual([])
   })
   it('theme mode uses the chart down colour as clean text without pill box/border and draws pointer stems', () => {
-    const { texts, rects, strokes, stems } = run(star, [...KP_DEFAULTS], { up: '#3ddc97', down: '#f47067', bg: 'rgba(13, 17, 23, 0.85)' })
+    const { texts, rects, strokes, stems } = run(star, src(1), { up: '#3ddc97', down: '#f47067', bg: 'rgba(13, 17, 23, 0.85)' })
     expect(texts.map(t => t.color)).toEqual(['#f47067', '#f47067'])
     expect(rects).toEqual([])
     expect(strokes).toEqual([])
@@ -206,7 +302,7 @@ describe('AiCoin K线形态 — drawing', () => {
     expect(stems[0]).toEqual({ color: '#f47067', x0: 120, y0: 894.9, x1: 120, y1: 887.9 })
   })
   it('theme mode without theme data falls back to the source colours', () => {
-    expect(run(star, [...KP_DEFAULTS]).texts.map(t => t.color)).toEqual(['#ff0000', '#ff0000'])
+    expect(run(star, src(1)).texts.map(t => t.color)).toEqual(['#ff0000', '#ff0000'])
   })
   it('TD reserve pushes labels further out', () => {
     const { texts } = run(star, src(), { up: '#0f0', down: '#f00', bg: '#000', reserve: 18 })
@@ -246,6 +342,17 @@ describe('AiCoin K线形态 — drawing', () => {
     p[KP_LAST] = 2
     expect(run(star, p).texts).toHaveLength(2)
   })
+  it('draws active KP_BAIDU_PLOTS and includes them in tooltip when baiduShow is enabled', () => {
+    const c = [...base(5), bar(102, 103, 101.5, 102.5), bar(100, 101, 99, 100)]
+    const p = [...KP_DEFAULTS]; p[KP_THEME] = 0
+    const { texts } = run(c, p)
+    expect(texts.map(t => t.text)).toEqual(['跳空涨', '跳空跌', '岛形顶'])
+    const tip = createKPatternTooltipDataSource({
+      indicator: { calcParams: p, result: calculateKPatterns(c) },
+      crosshair: { dataIndex: 6 },
+    })
+    expect(tip.values.map(v => v.title + v.value.text)).toEqual(['跳空下跌: 跳空跌', '岛形顶部: 岛形顶'])
+  })
   it('registers as a price-pane overlay with no figures (does not stretch the Y axis)', () => {
     expect(kPatternIndicator.name).toBe('AICOIN_KPATTERN')
     expect(kPatternIndicator.series).toBe('price')
@@ -256,10 +363,13 @@ describe('AiCoin K线形态 — drawing', () => {
 describe('AiCoin K线形态 — EDITABLE wiring', () => {
   it('params map 1:1 to defaults and survive sanitize', () => {
     const def = EDITABLE.find(d => d.name === 'AICOIN_KPATTERN')!
-    expect(def.params).toHaveLength(KP_DEFAULTS.length)
+    expect(def.params.length === 52 || def.params.length === KP_DEFAULTS.length).toBe(true)
     expect(def.defaults).toEqual([...KP_DEFAULTS])
     expect(def.params.slice(0, 15).map(p => p.label)).toEqual(KP_PLOTS.map(p => p.title))
     const p = [...KP_DEFAULTS]; p[KP_COLOR + 3] = 0x123456; p[KP_ALERT + 14] = 1
-    expect(sanitizeSettings({ AICOIN_KPATTERN: { params: p, visible: true } })['AICOIN_KPATTERN']).toEqual({ params: p, visible: true })
+    expect(sanitizeSettings({ AICOIN_KPATTERN: { params: p, visible: true } })['AICOIN_KPATTERN']).toEqual({
+      params: p.slice(0, def.params.length),
+      visible: true,
+    })
   })
 })

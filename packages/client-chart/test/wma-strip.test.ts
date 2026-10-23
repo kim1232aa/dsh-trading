@@ -12,6 +12,7 @@ import { DV_DEFAULTS } from '../src/client/indicators/dual-view-htf-patterns.js'
 import { NW_DEFAULTS } from '../src/client/indicators/nadaraya-watson.js'
 import { KP_DEFAULTS } from '../src/client/indicators/aicoin-kpattern.js'
 import { TD_DEFAULTS } from '../src/client/indicators/aicoin-td.js'
+import { REVPOINT_PARAM_DEFAULTS } from '../src/client/indicators/revpoint.js'
 
 describe('supertrend', () => {
   // Independent reference: TradingView's published ta.supertrend pseudo-code, line by line.
@@ -77,7 +78,7 @@ describe('sanitizeSettings', () => {
       AICOIN_TD: { params: [...TD_DEFAULTS], visible: false },
       OI_POSTURE: { params: [], visible: true },
       RSI_GRID: { params: [7, 30, 60, 10], visible: true },
-      REVPOINT: { params: [0.7, 2, 3, 0, 0, 1, 0, 1, 0], visible: true },
+      REVPOINT: { params: [...REVPOINT_PARAM_DEFAULTS], visible: true },
       LSR_RATIO: { params: [], visible: true },
       ENTRY_SIGNAL: { params: [60, 4], visible: false },
       LARGE_WALLS: { params: [100, 20, 8], visible: false },
@@ -93,6 +94,10 @@ describe('sanitizeSettings', () => {
     // pre-1:1 4-param layout migrates into lookback/bandwidth/h_mult/band_mult slots
     const old = sanitizeSettings({ NW_TREND: { params: [30, 6, 1.5, 2.5], visible: true } })['NW_TREND']!
     expect([old.params[3], old.params[4], old.params[5], old.params[8], old.visible]).toEqual([30, 6, 1.5, 2.5, true])
+    // legacy 9-param REVPOINT migrates into 28-param v6.5 defaults
+    const oldRp = sanitizeSettings({ REVPOINT: { params: [0.9, 2.5, 4, 1, 0, 1, 0, 1, 2], visible: true } })['REVPOINT']!
+    expect(oldRp.params.slice(0, 9)).toEqual([0.9, 2.5, 4, 1, 0, 1, 0, 1, 2])
+    expect(oldRp.params.length).toBe(REVPOINT_PARAM_DEFAULTS.length)
     expect(s['OI_POSTURE']).toEqual({ params: [], visible: true })
     expect(s['LSR_RATIO']).toEqual({ params: [], visible: true })
   })

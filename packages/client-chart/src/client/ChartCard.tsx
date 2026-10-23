@@ -34,8 +34,8 @@ import { dualViewHtfIndicator, DV_DEFAULTS, PATTERN_KEYS, PATTERN_CN, HTF_TF_LAB
 import { mtfSRZones, mtfSRIndicator, mtfSourceTimeframeSeconds } from './indicators/mtf-sr.js'
 import { entrySignalIndicator } from './indicators/entry-signal.js'
 import { rsiGridIndicator, rsiGridCumIndicator, rsiGridMarksIndicator } from './indicators/rsi-grid.js'
-import { revPointIndicator, REVPOINT_TABLE_W } from './indicators/revpoint.js'
-import { kPatternIndicator, KP_ALERT, KP_ALERTS, KP_BEAR_INDICES, KP_BG_COLOR, KP_BG_ON, KP_BULL_INDICES, KP_COLOR, KP_DEFAULTS, KP_FONT, KP_FORMING, KP_LABEL_MODES, KP_LAST, KP_MODE, KP_PLOTS, KP_SHOW, KP_THEME, kpAlertEvents } from './indicators/aicoin-kpattern.js'
+import { revPointIndicator, REVPOINT_TABLE_W, REVPOINT_PARAM_DEFAULTS, REVPOINT_OI_EXCHANGES, REVPOINT_ALERTS, migrateRevPointParams, revPointAlertEvents } from './indicators/revpoint.js'
+import { kPatternIndicator, KP_ALERT, KP_ALERTS, KP_BAIDU_BEAR_INDICES, KP_BAIDU_BULL_INDICES, KP_BAIDU_PLOTS, KP_BAIDU_SHOW, KP_BEAR_INDICES, KP_BG_COLOR, KP_BG_ON, KP_BULL_INDICES, KP_COLOR, KP_DEFAULTS, KP_FONT, KP_FORMING, KP_LABEL_MODES, KP_LAST, KP_MODE, KP_PLOTS, KP_SHOW, KP_THEME, kpAlertEvents } from './indicators/aicoin-kpattern.js'
 import { aicoinTdIndicator, aicoinTdMarksIndicator, migrateTdParams, TD_DEFAULTS, TD_MARK_RESERVE, TD_MODES, tdAlertEvents, tdWantsMarks, tdWantsPane } from './indicators/aicoin-td.js'
 import { ohlcOffsetRightForTopLeft } from './indicators/revpoint-layout.js'
 import { detectPricePrecision, formatPrice } from './precision.js'
@@ -333,8 +333,8 @@ export const EDITABLE: {
     boolP('提醒:HTF形态'),
   ] },
   { name: 'MTF_SR', title: '多周期支撑阻力(Syndicate)', defaults: [5], defaultVisible: false, params: [period('Pivot周期')] },
-  // 1:1 with the AiCoin K线形态 script: one show+colour per plotText (source order), plotText fontSize/bgColor, one toggle per alertcondition.
-  { name: 'AICOIN_KPATTERN', title: 'K线形态(AiCoin)', defaults: [...KP_DEFAULTS], defaultVisible: false, params: [
+  // 1:1 with the AiCoin K线形态 script + Baidu Finance / TradingCentral 24 candlestick patterns.
+  { name: 'AICOIN_KPATTERN', title: 'K线形态(AiCoin+百度股市通)', defaults: [...KP_DEFAULTS], defaultVisible: false, params: [
     ...KP_PLOTS.map(p => boolP(p.title)),
     ...KP_PLOTS.map(p => colorP(p.title + '色')),
     { label: '字号', min: 6, max: 40, step: 1 }, boolP('文字背景'), colorP('背景色'),
@@ -342,6 +342,8 @@ export const EDITABLE: {
     // Plugin-side display (not in the AiCoin script): theme colours, collision-avoiding labels, forming bar, showLast.
     boolP('跟随主题配色'), { label: '标签模式', min: 0, max: KP_LABEL_MODES.length - 1, step: 1, kind: 'select', options: [...KP_LABEL_MODES] },
     boolP('标注未收盘K线'), { label: '只看最近N根(0全部)', min: 0, max: 5000, step: 1 },
+    // Baidu Finance / TradingCentral additional candlestick patterns (slots 52..70).
+    ...KP_BAIDU_PLOTS.map(p => boolP(p.title)),
   ] },
   // AiCoin TD: 显示面板对齐 AiCoin 原生（仅显示9和13、回落点(卖出结构)#26a380、反弹点(买入结构)#cf3e3e）。
   { name: 'AICOIN_TD', title: 'TD计数(AiCoin)', pane: 'pane_aicoin_td', defaults: [...TD_DEFAULTS], defaultVisible: false, params: [
@@ -352,7 +354,23 @@ export const EDITABLE: {
     boolP('提醒:计数9'), boolP('提醒:计数13'),
   ] },
   { name: 'RSI_GRID', title: 'RSI网格（多空）', pane: 'pane_rsi_grid', defaults: [7, 30, 60, 10], params: [period('RSI周期'), period('多入阈值'), period('多平阈值'), period('累计阈值')] },
-  { name: 'REVPOINT', title: '反转点标注 RevPoint', defaults: [0.7, 2.0, 3, 0, 0, 1, 0, 1, 0], params: [{ label: '细档确认阈值%', min: 0.1, max: 10, step: 0.1 }, { label: '粗档(大周期)阈值%', min: 0.5, max: 20, step: 0.1 }, { label: '多周期pivot左右bar数', min: 1, max: 10, step: 1 }, { label: '15m(0/1)', min: 0, max: 1, step: 1 }, { label: '30m(0/1)', min: 0, max: 1, step: 1 }, { label: '1H(0/1)', min: 0, max: 1, step: 1 }, { label: '2H(0/1)', min: 0, max: 1, step: 1 }, { label: '4H(0/1)', min: 0, max: 1, step: 1 }, { label: '细档最少★数', min: 0, max: 4, step: 1 }] },
+  // 1:1 with pine/revpoint.pine v6.5 inputs (4 groups: 确认阈值 / 量能·OI / 过滤·显示 / 多周期趋势线) + 3 alertconditions.
+  { name: 'REVPOINT', title: '反转点标注 RevPoint', defaults: [...REVPOINT_PARAM_DEFAULTS], params: [
+    { label: '细档确认阈值 %', min: 0.1, max: 10, step: 0.1 },
+    { label: '粗档(大周期)阈值 %', min: 0.5, max: 20, step: 0.1 },
+    { label: '多周期pivot左右bar数', min: 1, max: 10, step: 1 },
+    boolP('15m'), boolP('30m'), boolP('1H'), boolP('2H'), boolP('4H'),
+    { label: '细档最少★数(0=全部)', min: 0, max: 3, step: 1 },
+    boolP('显示大周期顶底'), boolP('显示结构趋势线(虚=细 实=粗)'), boolP('显示C类(缩量后巨量反转K)'),
+    { label: '量均线周期', min: 5, max: 100, step: 1 },
+    { label: '爆量倍数(≥均值×N)', min: 1.2, max: 5, step: 0.1 },
+    { label: '极值回看小时数(★条件)', min: 0, max: 168, step: 1 },
+    { label: 'OI交易所', min: 0, max: REVPOINT_OI_EXCHANGES.length - 1, step: 1, kind: 'select', options: [...REVPOINT_OI_EXCHANGES] },
+    boolP('细档必须有量能配合'), boolP('仅K线收盘后确认(不闪)'),
+    boolP('开启多周期高/低点连线'), boolP('画斜向连线'), boolP('同时画水平折线(对照)'), boolP('从最新点向右画水平延伸线'),
+    boolP('右上角显示高周期R/S状态表'), boolP('右侧挂高周期价格签'), boolP('图上显示HTF诊断气泡'),
+    ...REVPOINT_ALERTS.map(a => boolP(`提醒:${a.cn}`)),
+  ] },
   { name: 'OI_POSTURE', title: '合约OI', pane: 'pane_oi_posture', defaults: [], params: [] },
   { name: 'LSR_RATIO', title: '多空比', pane: 'pane_lsr', defaults: [], params: [] },
   { name: 'ENTRY_SIGNAL', title: '多空观察信号(未验证)', defaults: [60, 4], defaultVisible: false, params: [period('ST周期'), { label: 'ST倍数', min: 0.1, max: 20, step: 0.1 }] },
@@ -373,7 +391,7 @@ export function sanitizeSettings(raw: unknown): IndicatorSettings {
     const entry = typeof e === 'object' && e !== null ? e as { params?: unknown; visible?: unknown } : {}
     const raw: unknown[] = Array.isArray(entry.params) ? entry.params : []
     // NW_TREND used to store [lookback, bandwidth, h_mult, band_mult]; AICOIN_TD used to store 0xffffff.
-    const given = def.name === 'NW_TREND' ? migrateNwParams(raw) : def.name === 'AICOIN_TD' ? migrateTdParams(raw) : raw
+    const given = def.name === 'NW_TREND' ? migrateNwParams(raw) : def.name === 'AICOIN_TD' ? migrateTdParams(raw) : def.name === 'REVPOINT' ? migrateRevPointParams(raw) : raw
     const params = def.params.map((spec, i) => {
       const v = given[i]
       return typeof v === 'number' && v >= spec.min && v <= spec.max && (spec.step !== 1 || Number.isInteger(v))
@@ -1685,7 +1703,9 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     if (kp?.visible) fired.push(...kpAlertEvents(data.candles, kp.params))
     const td = settings['AICOIN_TD']
     if (td?.visible) fired.push(...tdAlertEvents(data.candles, td.params))
-    if (fired.length === 0 && !(vb?.visible || dv?.visible || nw?.visible || kp?.visible || td?.visible)) { vbSeen.current = null; return }
+    const rp = settings['REVPOINT']
+    if (rp?.visible) fired.push(...revPointAlertEvents(data.candles, rp.params))
+    if (fired.length === 0 && !(vb?.visible || dv?.visible || nw?.visible || kp?.visible || td?.visible || rp?.visible)) { vbSeen.current = null; return }
     if (vbSeen.current === null) { vbSeen.current = new Set(fired.map(f => f.id)); return }
     const fresh = fired.filter(f => !vbSeen.current!.has(f.id))
     if (fresh.length === 0) return
@@ -2417,6 +2437,21 @@ function ParamEditor({ settings, palette, onClose }: {
                           ))}
                         </div>
                       ))}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: 6, border: `1px solid ${palette.line}`, borderRadius: 4 }}>
+                        <span style={{ color: '#539bf5', fontWeight: 'bold' }}>
+                          百度股市通 / TradingCentral 形态 ({KP_BAIDU_PLOTS.filter((_, n) => s.params[KP_BAIDU_SHOW + n] === 1).length}/{KP_BAIDU_PLOTS.length})
+                        </span>
+                        {([['全选看涨', KP_BAIDU_BULL_INDICES, 1], ['全选看跌', KP_BAIDU_BEAR_INDICES, 1], ['全开', KP_BAIDU_PLOTS.map((_, n) => n), 1], ['全关', KP_BAIDU_PLOTS.map((_, n) => n), 0]] as const).map(([text, list, v]) => (
+                          <button key={text} style={{ background: 'transparent', color: palette.faint, border: `1px solid ${palette.line}`, borderRadius: 3, fontSize: 10, cursor: 'pointer', padding: '1px 6px' }} onClick={() => {
+                            const next = [...s.params]
+                            for (const n of list) next[KP_BAIDU_SHOW + n] = v
+                            setSettings(sanitizeSettings({ ...settings, [def.name]: { ...s, params: next } }))
+                          }}>{text}</button>
+                        ))}
+                        {KP_BAIDU_PLOTS.map((_, n) =>
+                          renderControl(def.name, def.params[KP_BAIDU_SHOW + n]!, KP_BAIDU_SHOW + n, s.params[KP_BAIDU_SHOW + n]!, s.params, commit, setSettings, settings, palette, input)
+                        )}
+                      </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
                         {KP_ALERTS.map((_, k) => renderControl(def.name, def.params[KP_ALERT + k]!, KP_ALERT + k, s.params[KP_ALERT + k]!, s.params, commit, setSettings, settings, palette, input))}
                       </div>
@@ -2444,6 +2479,38 @@ function ParamEditor({ settings, palette, onClose }: {
                           renderControl(def.name, def.params[idx]!, idx, s.params[idx]!, s.params, commit, setSettings, settings, palette, input)
                         )}
                       </div>
+                    </div>
+                  ) : def.name === 'NW_TREND' ? (
+                    /* Nadaraya-Watson Trend [QuantAlgo] — grouped 1:1 with TradingView Pine v6 dialog */
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {([
+                        ['预设', [0]],
+                        ['核回归设置 (Kernel Settings)', [1, 2, 3, 4, 5, 6]],
+                        ['通道与信号 (Bands & Signals)', [7, 8, 9, 10]],
+                        ['配色与视觉 (Coloring & Visuals)', [11, 12, 13, 14, 15, 16, 17]],
+                        ['警报条件 (Alert Conditions)', [18, 19, 20, 21, 22]],
+                      ] as const).map(([groupTitle, indices]) => (
+                        <div key={groupTitle} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '5px 8px', border: `1px solid ${palette.line}`, borderRadius: 4, background: 'rgba(255,255,255,0.015)' }}>
+                          <span style={{ color: palette.text, fontWeight: 600, marginRight: 4 }}>{groupTitle}</span>
+                          {indices.map(idx => renderControl(def.name, def.params[idx]!, idx, s.params[idx]!, s.params, commit, setSettings, settings, palette, input))}
+                        </div>
+                      ))}
+                    </div>
+                  ) : def.name === 'REVPOINT' ? (
+                    /* 反转点标注 RevPoint v6.5 — grouped 1:1 with TradingView Pine v6 dialog */
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {([
+                        ['确认阈值', [0, 1, 9, 10, 11]],
+                        ['量能 · OI', [12, 13, 14, 15]],
+                        ['过滤 · 显示', [8, 16, 17]],
+                        ['多周期趋势线 (自动高低点)', [18, 3, 4, 5, 6, 7, 2, 19, 20, 21, 22, 23, 24]],
+                        ['警报条件 (Alert Conditions)', [25, 26, 27]],
+                      ] as const).map(([groupTitle, indices]) => (
+                        <div key={groupTitle} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '5px 8px', border: `1px solid ${palette.line}`, borderRadius: 4, background: 'rgba(255,255,255,0.015)' }}>
+                          <span style={{ color: palette.text, fontWeight: 600, marginRight: 4 }}>{groupTitle}</span>
+                          {indices.map(idx => renderControl(def.name, def.params[idx]!, idx, s.params[idx]!, s.params, commit, setSettings, settings, palette, input))}
+                        </div>
+                      ))}
                     </div>
                   ) : def.name === 'RSI_GRID' ? (
                     /* Custom Layout for Dual-Direction RSI Grid */
