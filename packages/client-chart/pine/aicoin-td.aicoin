@@ -1,0 +1,12 @@
+// AiCoin TD — source as provided by the user (2026-10-23). Ported 1:1 in src/client/indicators/aicoin-td.ts.
+// 该指标由 AiCoin研究院 创建，如遇任何使用问题，可加入指标社群咨询
+
+// @version=2
+oup = close > close[4] ? nz(oup[1]) + 1 : 0
+odn = close < close[4] ? nz(odn[1]) - 1 : 0
+
+up = oup > 0 ? oup : nan
+dn = odn < 0 ? -odn : nan
+
+plot(up, title = "UP")
+plot(dn, title = "Down")

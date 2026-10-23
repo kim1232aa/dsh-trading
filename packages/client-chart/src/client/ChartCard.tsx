@@ -35,6 +35,8 @@ import { mtfSRZones, mtfSRIndicator, mtfSourceTimeframeSeconds } from './indicat
 import { entrySignalIndicator } from './indicators/entry-signal.js'
 import { rsiGridIndicator, rsiGridCumIndicator, rsiGridMarksIndicator } from './indicators/rsi-grid.js'
 import { revPointIndicator, REVPOINT_TABLE_W } from './indicators/revpoint.js'
+import { kPatternIndicator, KP_ALERTS, KP_DEFAULTS, KP_PLOTS, kpAlertEvents } from './indicators/aicoin-kpattern.js'
+import { aicoinTdIndicator, TD_DEFAULTS } from './indicators/aicoin-td.js'
 import { ohlcOffsetRightForTopLeft } from './indicators/revpoint-layout.js'
 import { detectPricePrecision, formatPrice } from './precision.js'
 import { createAnnotationOverlays } from './annotation-overlays.js'
@@ -309,6 +311,18 @@ export const EDITABLE: {
     boolP('提醒:HTF形态'),
   ] },
   { name: 'MTF_SR', title: '多周期支撑阻力(Syndicate)', defaults: [5], defaultVisible: false, params: [period('Pivot周期')] },
+  // 1:1 with the AiCoin K线形态 script: one show+colour per plotText (source order), plotText fontSize/bgColor, one toggle per alertcondition.
+  { name: 'AICOIN_KPATTERN', title: 'K线形态(AiCoin)', defaults: [...KP_DEFAULTS], defaultVisible: false, params: [
+    ...KP_PLOTS.map(p => boolP(p.title)),
+    ...KP_PLOTS.map(p => colorP(p.title + '色')),
+    { label: '字号', min: 6, max: 40, step: 1 }, boolP('文字背景'), colorP('背景色'),
+    ...KP_ALERTS.map(a => boolP('提醒:' + a.title + (a.direction === 'buy' ? '(买)' : '(卖)'))),
+  ] },
+  // 1:1 with the AiCoin TD script: plot(up,"UP") / plot(dn,"Down") — display, color, linewidth.
+  { name: 'AICOIN_TD', title: 'TD计数(AiCoin)', pane: 'pane_aicoin_td', defaults: [...TD_DEFAULTS], defaultVisible: false, params: [
+    boolP('显示UP'), colorP('UP色'), { label: 'UP线宽', min: 1, max: 10, step: 1 },
+    boolP('显示Down'), colorP('Down色'), { label: 'Down线宽', min: 1, max: 10, step: 1 },
+  ] },
   { name: 'RSI_GRID', title: 'RSI网格（多空）', pane: 'pane_rsi_grid', defaults: [7, 30, 60, 10], params: [period('RSI周期'), period('多入阈值'), period('多平阈值'), period('累计阈值')] },
   { name: 'REVPOINT', title: '反转点标注 RevPoint', defaults: [0.7, 2.0, 3, 0, 0, 1, 0, 1, 0], params: [{ label: '细档确认阈值%', min: 0.1, max: 10, step: 0.1 }, { label: '粗档(大周期)阈值%', min: 0.5, max: 20, step: 0.1 }, { label: '多周期pivot左右bar数', min: 1, max: 10, step: 1 }, { label: '15m(0/1)', min: 0, max: 1, step: 1 }, { label: '30m(0/1)', min: 0, max: 1, step: 1 }, { label: '1H(0/1)', min: 0, max: 1, step: 1 }, { label: '2H(0/1)', min: 0, max: 1, step: 1 }, { label: '4H(0/1)', min: 0, max: 1, step: 1 }, { label: '细档最少★数', min: 0, max: 4, step: 1 }] },
   { name: 'OI_POSTURE', title: '合约OI', pane: 'pane_oi_posture', defaults: [], params: [] },
@@ -976,6 +990,8 @@ function ensureRegistered(): void {
   registerIndicator(rsiGridCumIndicator as never)
   registerIndicator(rsiGridMarksIndicator as never)
   registerIndicator(revPointIndicator as never)
+registerIndicator(kPatternIndicator as never)
+registerIndicator(aicoinTdIndicator as never)
   // Overlay shapes for the draw primitives. extendData: { color, dashed, label }.
   // Register exactly the callbacks exercised by the overlay regression tests.
   for (const overlay of createAnnotationOverlays(FONT_FAMILY, (text, style) =>
@@ -1618,7 +1634,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     }
   }, [data, active, seriesKey, dark])
 
-  // Indicator alertconditions (VB + NW + Dual View HTF): fire once per id; first eval seeds.
+  // Indicator alertconditions (VB + NW + Dual View HTF + AiCoin K线形态): fire once per id; first eval seeds.
   const vbSeen = useRef<Set<string> | null>(null)
   const [vbToasts, setVbToasts] = useState<{ id: string; text: string }[]>([])
   useEffect(() => {
@@ -1632,7 +1648,9 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       const rows = data.candles.map(c => ({ ...c, timestamp: Date.parse(c.time) }))
       fired.push(...dvAlertEvents(rows, dv.params, data.timeframe))
     }
-    if (fired.length === 0 && !(vb?.visible || dv?.visible || nw?.visible)) { vbSeen.current = null; return }
+    const kp = settings['AICOIN_KPATTERN']
+    if (kp?.visible) fired.push(...kpAlertEvents(data.candles, kp.params))
+    if (fired.length === 0 && !(vb?.visible || dv?.visible || nw?.visible || kp?.visible)) { vbSeen.current = null; return }
     if (vbSeen.current === null) { vbSeen.current = new Set(fired.map(f => f.id)); return }
     const fresh = fired.filter(f => !vbSeen.current!.has(f.id))
     if (fresh.length === 0) return
@@ -2109,8 +2127,8 @@ function AxisMenu({
 const CATEGORIES: { id: string; label: string; names?: string[] }[] = [
   { id: 'all', label: '全部' },
   { id: 'trend', label: '趋势与通道', names: ['WMA', 'SUPERTREND', 'EVASIVE_ST', 'NW_TREND', 'VB_PRO_READ'] },
-  { id: 'pattern', label: '形态与结构', names: ['DUAL_VIEW_HTF', 'OB_BB', 'MTF_SR'] },
-  { id: 'oscillator', label: '震荡与网格', names: ['RSI_GRID', 'REVPOINT', 'ENTRY_SIGNAL'] },
+  { id: 'pattern', label: '形态与结构', names: ['DUAL_VIEW_HTF', 'AICOIN_KPATTERN', 'OB_BB', 'MTF_SR'] },
+  { id: 'oscillator', label: '震荡与网格', names: ['RSI_GRID', 'AICOIN_TD', 'REVPOINT', 'ENTRY_SIGNAL'] },
   { id: 'deriv', label: '主力与衍生品', names: ['OI_POSTURE', 'LSR_RATIO', 'LARGE_WALLS'] },
 ]
 
