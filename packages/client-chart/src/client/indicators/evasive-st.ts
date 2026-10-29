@@ -249,7 +249,7 @@ export const evasiveSuperTrendIndicator = {
     const row = indicator.result[crosshair.dataIndex ?? indicator.result.length - 1]
     const v = row?.stBand ?? row?.up ?? row?.dn
     return {
-      name: 'Evasive ST',
+      name: '避险ST',
       calcParamsText: `(${indicator.calcParams.join(', ')})`,
       legends: v === undefined ? [] : [
         { title: '', value: { text: formatPrice(v), color: row?.trend === 1 ? EVASIVE_ST_DEFAULTS.bullColor : EVASIVE_ST_DEFAULTS.bearColor } },

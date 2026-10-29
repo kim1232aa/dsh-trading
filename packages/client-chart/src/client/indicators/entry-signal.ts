@@ -80,7 +80,7 @@ export const entrySignalIndicator = {
     const precision = row?.precision ?? 2
     const c = s?.side === 'long' ? LONG : SHORT
     return {
-      name: '入场信号',
+      name: '信号观察',
       calcParamsText: `(${indicator.calcParams.join(', ')})`,
       legends: [
         ...s === undefined ? [] : [
@@ -138,26 +138,20 @@ export const entrySignalIndicator = {
       ctx.textAlign = 'center'
       ctx.fillText(label, x, y)
     }
-    // Latest signal levels to the right edge — including closed ones (muted).
-    // On daily charts ST(60,4) signals are rare and often already target2/stopped
-    // far left of the viewport; gating on open/target1 left the pane blank.
+    // Latest signal still in play: entry / stop / T1 / T2 out to the right edge.
     let last = -1
     for (let i = res.length - 1; i >= 0; i--) if (res[i]?.signal) { last = i; break }
     const s = last >= 0 ? res[last]!.signal! : undefined
-    const status = last >= 0 ? (res[last]!.status ?? 'open') : undefined
-    if (s !== undefined && status !== undefined) {
-      const closed = status === 'stopped' || status === 'target2'
+    const status = last >= 0 ? res[last]!.status : undefined
+    if (s !== undefined && (status === 'open' || status === 'target1')) {
       const precision = signalPrecision(s, basePrecision)
       const x0 = Math.max(0, xAxis.convertToPixel(last))
-      const side = s.side === 'long' ? '多' : '空'
       const lines: [number, string, string][] = [
-        [s.entry, s.side === 'long' ? LONG : SHORT, `${side}参考 ${formatSignalPrice(s.entry, precision)}`],
+        [s.entry, s.side === 'long' ? LONG : SHORT, `${s.side === 'long' ? '多' : '空'}参考 ${formatSignalPrice(s.entry, precision)}`],
         [s.stop, '#a475e0', `止损 ${formatSignalPrice(s.stop, precision)}`],
         [s.target1, '#539bf5', `T1 ${formatSignalPrice(s.target1, precision)}`],
         [s.target2, '#539bf5', `T2 ${formatSignalPrice(s.target2, precision)}`],
       ]
-      ctx.save()
-      if (closed) ctx.globalAlpha = 0.45
       ctx.textAlign = 'right'
       for (const [price, color, text] of lines) {
         const y = yAxis.convertToPixel(price)
@@ -170,9 +164,6 @@ export const entrySignalIndicator = {
         ctx.stroke()
         ctx.fillText(text, bounding.width - 4, y - 7)
       }
-      ctx.fillStyle = closed ? '#ffa726' : (s.side === 'long' ? LONG : SHORT)
-      ctx.fillText(STATUS_ZH[status], bounding.width - 4, yAxis.convertToPixel(s.entry) + 12)
-      ctx.restore()
     }
     ctx.restore()
     return false

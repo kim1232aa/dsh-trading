@@ -115,34 +115,3 @@ describe('entry signal indicator confirmation and historical display', () => {
     if (scale === 0.0003) expect(texts.join(' ')).not.toMatch(/\d+\.\d{9,}/)
   })
 })
-
-  it('draws latest signal levels even when closed and off-screen', () => {
-    // Daily BTC with ST(60,4): last signal is often far left and already target2/stopped.
-    // Visible window has no triangles; we still must paint entry/stop/T1/T2 to the right edge.
-    const rows = signalRows(list, 10, 3, CLOSED)
-    const lastIdx = [...rows].map((r, i) => r.signal ? i : -1).filter(i => i >= 0).at(-1)
-    expect(lastIdx).toBeTypeOf('number')
-    const last = rows[lastIdx!]!
-    // Force a closed status so the old open/target1 gate would hide lines.
-    last.status = 'target2'
-    const strokes: number[] = []
-    const texts: string[] = []
-    const ctx = {
-      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), closePath: vi.fn(),
-      fill: vi.fn(), fillRect: vi.fn(), stroke: () => { strokes.push(1) }, setLineDash: vi.fn(),
-      measureText: (text: string) => ({ width: text.length * 6 }),
-      fillText: (text: string) => texts.push(text),
-    } as unknown as CanvasRenderingContext2D
-    const from = Math.min(rows.length - 1, lastIdx! + 5)
-    entrySignalIndicator.draw({
-      ctx,
-      chart: mockChart({ visibleRange: { from, to: rows.length }, kLineDataList: list }),
-      indicator: { result: rows },
-      xAxis: { convertToPixel: v => v * 3 },
-      yAxis: { convertToPixel: v => v },
-      bounding: { width: 1000 },
-    })
-    expect(strokes.length).toBeGreaterThanOrEqual(4)
-    expect(texts.some(t => /参考|止损|T1|T2/.test(t))).toBe(true)
-  })
-

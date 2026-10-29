@@ -364,7 +364,7 @@ export function createNadarayaWatsonTooltipDataSource({ indicator, crosshair }: 
     }
   }
   return {
-    name: 'NW Trend',
+    name: '核回归趋势',
     calcParamsText: '(' + [P.preset, P.source, P.kernel, P.lookback, P.bandwidth, P.hMult].join(', ') + ')',
     legends,
     features: [],
