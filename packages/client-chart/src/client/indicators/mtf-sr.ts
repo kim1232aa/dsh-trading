@@ -149,6 +149,44 @@ export function getTimeframeLabel(sec: number): string {
   return `S${sec}`
 }
 
+
+/** Default Pine slots: 30/60/120/240 minutes. */
+export const MTF_SR_DEFAULT_TIMEFRAMES: (string | number)[] = ['30', '60', '120', '240']
+
+/**
+ * HTF ladder used when the chart TF is coarser than every default slot
+ * (e.g. 1d chart cannot resample 30m/1h/2h/4h from daily OHLC).
+ */
+export function adaptiveTimeframesAbove(sourceSec: number): (string | number)[] {
+  if (sourceSec >= 604800) return ['1W', '1M']
+  if (sourceSec >= 259200) return ['3d', '1W', '1M']
+  if (sourceSec >= 86400) return ['1d', '3d', '1W']
+  if (sourceSec >= 43200) return ['12h', '1d', '1W']
+  if (sourceSec >= 14400) return ['240', '1d', '1W']
+  if (sourceSec >= 7200) return ['120', '240', '1d']
+  if (sourceSec >= 3600) return ['60', '240', '1d']
+  if (sourceSec >= 1800) return ['30', '60', '240']
+  return [...MTF_SR_DEFAULT_TIMEFRAMES]
+}
+
+/**
+ * Pick MTF slots that are at or above the chart's native period.
+ * - Defaults: filter 30/60/120/240 to ≥ source; if none remain, climb to D/W.
+ * - Explicit list: only keep ≥ source; never invent slots the caller did not ask for
+ *   (finer-only requests stay empty so we do not fabricate HTF from coarse OHLC).
+ */
+export function resolveMtfTimeframes(
+  requested: (string | number)[] | undefined,
+  sourceTimeframeSeconds: number,
+): (string | number)[] {
+  const usingDefaults = requested === undefined
+  const inputs = requested ?? MTF_SR_DEFAULT_TIMEFRAMES
+  if (!(sourceTimeframeSeconds > 0)) return [...inputs]
+  const kept = inputs.filter(tf => parseTimeframeSeconds(tf) >= sourceTimeframeSeconds)
+  if (kept.length > 0) return kept
+  return usingDefaults ? adaptiveTimeframesAbove(sourceTimeframeSeconds) : []
+}
+
 export function getTimeframeWeight(sec: number): number {
   if (sec >= 14400) return 1.0
   if (sec >= 3600) return 0.78
@@ -628,9 +666,12 @@ export function calculateMtfSR(
   const keepSessions = options.sessionsToKeep ?? 3
   const capSession = options.maxZonesPerSession ?? 14
 
-  // Timeframe slots configuration
-  const defaultTfs: (string | number)[] = ['30', '60', '120', '240']
-  const tfInputs = options.timeframes ?? defaultTfs
+  // Timeframe slots: drop anything finer than the chart TF; auto-ladder defaults on daily+.
+  const sourceSec = options.sourceTimeframeSeconds
+  const sourceTimeframeSeconds = sourceSec !== undefined && Number.isFinite(sourceSec) && sourceSec > 0 ? sourceSec : 0
+  const tfInputs = options.sourceTimeframe === '1M'
+    ? []
+    : resolveMtfTimeframes(options.timeframes, sourceTimeframeSeconds)
   const simBuckets = options.simulatedBuckets
 
   // ponytail: MTF slots capped to 8 concurrent streams; add dynamic router when tick streaming requires >8.
@@ -648,10 +689,9 @@ export function calculateMtfSR(
   // Collect all confirmed pivot events from all MTF slots
   const allEventsByBaseBar = new Map<number, PivotEvent[]>()
   const closedCandles = options.lastBarClosed === false ? candles.slice(0, -1) : candles
-  const sourceSec = options.sourceTimeframeSeconds
-  const sourceTimeframeSeconds = sourceSec !== undefined && Number.isFinite(sourceSec) && sourceSec > 0 ? sourceSec : 0
   for (const slot of slots) {
-    if (options.sourceTimeframe === '1M' || sourceTimeframeSeconds > slot.sec) continue
+    // resolveMtfTimeframes already dropped finer slots; keep a guard for safety.
+    if (sourceTimeframeSeconds > slot.sec) continue
     const htfBars = resampleCandles(closedCandles, slot.sec, slot.bucket, sourceTimeframeSeconds)
     const events = computePivotsForHTF(
       htfBars,

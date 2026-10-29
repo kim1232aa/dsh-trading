@@ -11,6 +11,7 @@ import {
   mtfSourceTimeframeSeconds,
   mtfSRZones,
   parseTimeframeSeconds,
+  resolveMtfTimeframes,
   type Candle,
 } from '../src/client/indicators/mtf-sr.js'
 
@@ -439,7 +440,51 @@ describe('MTF S/R Zones - Intraday MTF SR Pine Script v6 Port', () => {
       expect(rows.every(r => r.res === undefined && r.sup === undefined)).toBe(true)
     })
 
-    it('maintains compatibility with legacy mtfSRZones function', () => {
+    it('auto-ladders default slots when chart TF is coarser than 30/60/120/240', () => {
+      // Daily crypto charts: default intraday slots are all finer than 1d and used to
+      // produce an empty series (no green/purple zones). Defaults must climb to D/W.
+      const n = 120
+      const bars: Candle[] = Array.from({ length: n }, (_, i) => {
+        const wave = Math.sin(i / 8) * 8
+        const base = 100 + wave
+        return {
+          open: base, close: base + 0.5, high: base + 3, low: base - 3,
+          timestamp: Date.UTC(2024, 0, 1) + i * 86_400_000,
+        }
+      })
+      // Put a clear swing high / low so pivots exist on the daily ladder.
+      bars[40]!.high = 130
+      bars[40]!.close = 125
+      bars[80]!.low = 70
+      bars[80]!.close = 75
+      const emptyLegacy = calculateMtfSR(bars, {
+        sourceTimeframe: '1d', sourceTimeframeSeconds: 86_400, lastBarClosed: false,
+        timeframes: ['30', '60', '120', '240'], pivotLeft: 2, pivotRight: 2,
+      })
+      expect(emptyLegacy.series.every(s => s.res === undefined && s.sup === undefined)).toBe(true)
+
+      const viaDefaults = calculateMtfSR(bars, {
+        sourceTimeframe: '1d', sourceTimeframeSeconds: 86_400, lastBarClosed: false,
+        pivotLeft: 2, pivotRight: 2,
+      })
+      const hits = viaDefaults.series.filter(s => s.res !== undefined || s.sup !== undefined).length
+      expect(hits).toBeGreaterThan(0)
+
+      const viaCalc = mtfSRIndicator.calc(bars, {
+        calcParams: [2, 2, 0.35],
+        extendData: { sourceTimeframe: '1d', sourceTimeframeSeconds: 86_400 },
+      })
+      expect(viaCalc.filter(s => s.res !== undefined || s.sup !== undefined).length).toBeGreaterThan(0)
+    })
+
+    it('resolveMtfTimeframes keeps explicit finer-only requests empty', () => {
+      expect(resolveMtfTimeframes(['1'], 300)).toEqual([])
+      expect(resolveMtfTimeframes(undefined, 86_400)).toEqual(['1d', '3d', '1W'])
+      expect(resolveMtfTimeframes(undefined, 300)).toEqual(['30', '60', '120', '240'])
+      expect(resolveMtfTimeframes(undefined, 3600)).toEqual(['60', '120', '240'])
+    })
+
+        it('maintains compatibility with legacy mtfSRZones function', () => {
       const bars = makeBars(25, 100)
       const out = mtfSRZones(bars, 5)
       expect(Array.isArray(out)).toBe(true)
