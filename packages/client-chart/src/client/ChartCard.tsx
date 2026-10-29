@@ -1733,7 +1733,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   // Drawing bar is 52px (Pro DrawingBar width); keep chart canvas to its right.
   const drawBarW = chartReady > 0 ? 52 : 0
   return (
-    <div style={{ position: 'relative', width: '100%', ...(fill ? { flex: '1 1 auto', minHeight: 240 } : { height: baseHeight + paneCount * PANE_HEIGHT }) }}>
+    <div style={{ position: 'relative', width: '100%', overflow: 'visible', ...(fill ? { flex: '1 1 auto', minHeight: 240 } : { height: baseHeight + paneCount * PANE_HEIGHT }) }}>
       <div ref={el} style={{ position: 'absolute', left: drawBarW, right: 0, top: 0, bottom: 0, width: 'auto', height: 'auto' }} />
       {chartReady > 0 ? <ChartTools chart={chartRef.current} dark={dark} /> : null}
       {vbToasts.length > 0 && (

@@ -124,7 +124,7 @@ function PopoverList({
         position: 'absolute',
         top: 0,
         left: 'calc(100% + 1px)',
-        zIndex: 99,
+        zIndex: 10050,
         margin: 0,
         padding: '4px 0',
         listStyle: 'none',
@@ -420,7 +420,7 @@ export function ChartTools({
         left: 0,
         top: 0,
         bottom: 0,
-        zIndex: 12,
+        zIndex: 10040,
         width: BAR_W,
         boxSizing: 'border-box',
         display: 'flex',
@@ -430,10 +430,9 @@ export function ChartTools({
         background: barBg,
         borderRight: `1px solid ${border}`,
         color: fg,
-        overflowY: 'auto',
-        overflowX: 'visible',
+        // overflowY:auto forces overflowX clip in browsers — keep visible so Pro submenus aren't cut.
+        overflow: 'visible',
         pointerEvents: 'auto',
-        scrollbarWidth: 'thin',
       }}
     >
       <style>{`
