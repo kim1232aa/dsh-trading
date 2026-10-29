@@ -1730,9 +1730,11 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   // above keeps klinecharts in step; `minHeight` is the floor below which a
   // candlestick chart stops being a chart. Indicator panes then divide the
   // available height rather than extending the card downward.
+  // Drawing bar is 52px (Pro DrawingBar width); keep chart canvas to its right.
+  const drawBarW = chartReady > 0 ? 52 : 0
   return (
     <div style={{ position: 'relative', width: '100%', ...(fill ? { flex: '1 1 auto', minHeight: 240 } : { height: baseHeight + paneCount * PANE_HEIGHT }) }}>
-      <div ref={el} style={{ width: '100%', height: '100%' }} />
+      <div ref={el} style={{ position: 'absolute', left: drawBarW, right: 0, top: 0, bottom: 0, width: 'auto', height: 'auto' }} />
       {chartReady > 0 ? <ChartTools chart={chartRef.current} dark={dark} /> : null}
       {vbToasts.length > 0 && (
         <div role="status" aria-label="指标提醒" style={{ position: 'absolute', right: 70, top: 8, zIndex: 5, display: 'flex', flexDirection: 'column', gap: 4, pointerEvents: 'auto' }}>

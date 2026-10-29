@@ -1,19 +1,33 @@
 /**
- * Thin React toolbar over klinecharts 10 core APIs (no @klinecharts/pro).
- * Hand-draw overlays, magnet, clear; timezone; pane max/min; multi Y-axis;
- * programmatic scroll/zoom; theme switch via registerStyles names.
+ * Left drawing toolbar styled like KLineChart Pro DrawingBar:
+ * icon groups + popover submenus, magnet / lock / visible / clear.
+ * Wires to klinecharts 10 core createOverlay / removeOverlay / overrideOverlay.
+ * Extra pane/theme/timezone/scroll controls sit below a split (not in Pro bar).
+ *
+ * Icon paths adapted from @klinecharts/pro (Apache-2.0).
  */
-import { useCallback, useEffect, useState } from 'react'
-import type { CSSProperties, ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { CSSProperties, ReactElement, ReactNode } from 'react'
 import type { Chart, OverlayMode, PaneState } from 'klinecharts'
 import {
-  USER_DRAW_GROUP,
   clearUserDrawings,
   createUserDrawing,
+  setUserDrawLock,
   setUserDrawMagnet,
+  setUserDrawVisible,
   toggleLeftYAxis,
   zoomByFactor,
 } from './kline-v10.js'
+import {
+  DRAW_ICON_MAP,
+  IconChevron,
+  IconCursor,
+  IconLock,
+  IconRemove,
+  IconUnlock,
+  IconInvisible,
+  IconVisible,
+} from './drawing-icons.js'
 
 export type DrawToolName =
   | 'segment'
@@ -33,25 +47,38 @@ export type DrawToolName =
   | 'simpleAnnotation'
   | 'simpleTag'
 
-const DRAW_TOOLS: { name: DrawToolName; label: string; title: string }[] = [
-  { name: 'segment', label: '线', title: '线段' },
-  { name: 'rayLine', label: '射', title: '射线' },
-  { name: 'straightLine', label: '直', title: '直线' },
-  { name: 'horizontalStraightLine', label: '─', title: '水平直线' },
-  { name: 'verticalStraightLine', label: '│', title: '垂直直线' },
-  { name: 'priceLine', label: '价', title: '价格线' },
-  { name: 'priceChannelLine', label: '通', title: '价格通道' },
-  { name: 'parallelStraightLine', label: '平', title: '平行直线' },
-  { name: 'fibonacciLine', label: '斐', title: '斐波那契回调' },
-  { name: 'brush', label: '刷', title: '笔刷' },
-  { name: 'simpleAnnotation', label: '注', title: '简单标注' },
-  { name: 'simpleTag', label: '标', title: '简单标签' },
+type ToolItem = { key: DrawToolName; text: string }
+
+const SINGLE_LINE: ToolItem[] = [
+  { key: 'horizontalStraightLine', text: '水平直线' },
+  { key: 'horizontalRayLine', text: '水平射线' },
+  { key: 'horizontalSegment', text: '水平线段' },
+  { key: 'verticalStraightLine', text: '垂直直线' },
+  { key: 'verticalRayLine', text: '垂直射线' },
+  { key: 'verticalSegment', text: '垂直线段' },
+  { key: 'straightLine', text: '直线' },
+  { key: 'rayLine', text: '射线' },
+  { key: 'segment', text: '线段' },
+  { key: 'priceLine', text: '价格线' },
 ]
 
-const MAGNETS: { mode: OverlayMode; label: string; title: string }[] = [
-  { mode: 'normal', label: '无', title: '无磁吸' },
-  { mode: 'weak_magnet', label: '弱', title: '弱磁吸' },
-  { mode: 'strong_magnet', label: '强', title: '强磁吸' },
+const MORE_LINE: ToolItem[] = [
+  { key: 'priceChannelLine', text: '价格通道线' },
+  { key: 'parallelStraightLine', text: '平行直线' },
+]
+
+const FIBONACCI: ToolItem[] = [
+  { key: 'fibonacciLine', text: '斐波那契回调直线' },
+]
+
+const ANNOTATION: ToolItem[] = [
+  { key: 'simpleAnnotation', text: '简单标注' },
+  { key: 'simpleTag', text: '简单标签' },
+]
+
+const MAGNETS: { key: OverlayMode; text: string }[] = [
+  { key: 'weak_magnet', text: '弱磁模式' },
+  { key: 'strong_magnet', text: '强磁模式' },
 ]
 
 const TIMEZONES = [
@@ -61,23 +88,231 @@ const TIMEZONES = [
   { id: 'America/New_York', label: '纽约' },
 ]
 
-const btnBase: CSSProperties = {
-  width: 28,
-  height: 26,
-  padding: 0,
-  margin: 0,
-  border: '1px solid rgba(128,128,128,0.35)',
-  borderRadius: 4,
-  background: 'rgba(22,27,34,0.92)',
-  color: '#c9d1d9',
-  fontSize: 11,
-  lineHeight: '24px',
-  textAlign: 'center',
-  cursor: 'pointer',
-  userSelect: 'none',
+const BAR_W = 52
+
+function iconOf(name: string, style?: CSSProperties): ReactElement {
+  const Comp = DRAW_ICON_MAP[name] ?? IconCursor
+  return <Comp style={style} />
 }
 
-function ToolBtn({
+function useClickOutside(open: string, onClose: () => void): React.RefObject<HTMLDivElement> {
+  const ref = useRef<HTMLDivElement>(null!)
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open, onClose])
+  return ref
+}
+
+function PopoverList({
+  dark,
+  items,
+  onPick,
+}: {
+  dark: boolean
+  items: { key: string; text: string; icon?: string }[]
+  onPick: (key: string) => void
+}): ReactElement {
+  return (
+    <ul
+      role="menu"
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 'calc(100% + 1px)',
+        zIndex: 99,
+        margin: 0,
+        padding: '4px 0',
+        listStyle: 'none',
+        minWidth: 168,
+        maxHeight: 320,
+        overflowY: 'auto',
+        whiteSpace: 'nowrap',
+        background: dark ? '#1c1c1f' : '#ffffff',
+        color: dark ? '#929AA5' : '#76808F',
+        boxShadow: '0 6px 12px 0 rgba(0,0,0,.3)',
+        borderRadius: 2,
+      }}
+    >
+      {items.map(it => (
+        <li key={it.key} role="none">
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => onPick(it.key)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              width: '100%',
+              padding: '6px 16px 6px 12px',
+              border: 'none',
+              background: 'transparent',
+              color: 'inherit',
+              cursor: 'pointer',
+              textAlign: 'left',
+              fontSize: 13,
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = dark ? 'rgba(22,119,255,0.15)' : 'rgba(22,119,255,0.12)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+          >
+            <span style={{ display: 'inline-flex', width: 22, height: 22, color: 'inherit' }}>
+              {iconOf(it.icon ?? it.key)}
+            </span>
+            {it.text}
+          </button>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function GroupItem({
+  dark,
+  selected,
+  iconName,
+  title,
+  open,
+  onMainClick,
+  onArrowClick,
+  children,
+}: {
+  dark: boolean
+  selected: boolean
+  iconName: string
+  title: string
+  open: boolean
+  onMainClick: () => void
+  onArrowClick: () => void
+  children?: ReactNode
+}): ReactElement {
+  const hoverBg = dark ? 'rgba(22,119,255,0.15)' : 'rgba(22,119,255,0.12)'
+  const selectedBg = 'rgba(22,119,255,0.22)'
+  const selectedFg = '#1677ff'
+  const fg = dark ? '#929AA5' : '#76808F'
+  return (
+    <div
+      className="dsh-draw-item"
+      style={{
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '100%',
+        marginTop: 8,
+        color: selected ? selectedFg : fg,
+        fill: 'currentColor',
+      }}
+    >
+      <button
+        type="button"
+        title={title}
+        aria-label={title}
+        aria-pressed={selected}
+        onClick={onMainClick}
+        style={{
+          width: 32,
+          height: 32,
+          padding: 0,
+          border: 'none',
+          borderRadius: 2,
+          background: selected ? selectedBg : 'transparent',
+          color: 'inherit',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+        onMouseEnter={e => { if (!selected) e.currentTarget.style.background = hoverBg }}
+        onMouseLeave={e => { e.currentTarget.style.background = selected ? selectedBg : 'transparent' }}
+      >
+        {iconOf(iconName)}
+      </button>
+      <button
+        type="button"
+        title="展开"
+        aria-label={`${title}菜单`}
+        aria-expanded={open}
+        onClick={onArrowClick}
+        style={{
+          position: 'absolute',
+          top: 0,
+          right: 0,
+          width: 10,
+          height: 32,
+          padding: 0,
+          border: 'none',
+          borderRadius: '2px 0 0 2px',
+          background: open ? hoverBg : 'transparent',
+          color: 'inherit',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          opacity: open ? 1 : undefined,
+        }}
+        className="dsh-draw-arrow"
+      >
+        <IconChevron open={open} />
+      </button>
+      {children}
+    </div>
+  )
+}
+
+function SoloItem({
+  dark,
+  selected,
+  title,
+  onClick,
+  children,
+}: {
+  dark: boolean
+  selected?: boolean
+  title: string
+  onClick: () => void
+  children: ReactNode
+}): ReactElement {
+  const hoverBg = dark ? 'rgba(22,119,255,0.15)' : 'rgba(22,119,255,0.12)'
+  const selectedBg = 'rgba(22,119,255,0.22)'
+  const selectedFg = '#1677ff'
+  const fg = dark ? '#929AA5' : '#76808F'
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', width: '100%', marginTop: 8, color: selected ? selectedFg : fg }}>
+      <button
+        type="button"
+        title={title}
+        aria-label={title}
+        aria-pressed={selected === true}
+        onClick={onClick}
+        style={{
+          width: 32,
+          height: 32,
+          padding: 0,
+          border: 'none',
+          borderRadius: 2,
+          background: selected ? selectedBg : 'transparent',
+          color: 'inherit',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+        onMouseEnter={e => { if (!selected) e.currentTarget.style.background = hoverBg }}
+        onMouseLeave={e => { e.currentTarget.style.background = selected ? selectedBg : 'transparent' }}
+      >
+        {children}
+      </button>
+    </div>
+  )
+}
+
+function MiniBtn({
   title,
   active,
   onClick,
@@ -89,7 +324,7 @@ function ToolBtn({
   onClick: () => void
   children: ReactNode
   wide?: boolean
-}): JSX.Element {
+}): ReactElement {
   return (
     <button
       type="button"
@@ -98,24 +333,20 @@ function ToolBtn({
       aria-pressed={active === true}
       onClick={onClick}
       style={{
-        ...btnBase,
-        width: wide ? 52 : 28,
-        background: active ? 'rgba(56,189,248,0.25)' : btnBase.background,
-        borderColor: active ? 'rgba(56,189,248,0.7)' : 'rgba(128,128,128,0.35)',
-        color: active ? '#7dd3fc' : '#c9d1d9',
+        width: wide ? 44 : 28,
+        height: 22,
+        padding: 0,
+        margin: 0,
+        border: '1px solid rgba(128,128,128,0.3)',
+        borderRadius: 3,
+        background: active ? 'rgba(22,119,255,0.22)' : 'transparent',
+        color: active ? '#1677ff' : 'inherit',
+        fontSize: 10,
+        cursor: 'pointer',
       }}
     >
       {children}
     </button>
-  )
-}
-
-function Section({ label, children }: { label: string; children: ReactNode }): JSX.Element {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'center' }}>
-      <div style={{ fontSize: 9, color: '#8b949e', letterSpacing: 0.5 }}>{label}</div>
-      {children}
-    </div>
   )
 }
 
@@ -126,16 +357,25 @@ export function ChartTools({
 }: {
   chart: Chart | null
   dark: boolean
-  /** Optional: parent can sync OS/theme state when user picks a named style. */
   onThemeChange?: (name: 'dsh-dark' | 'dsh-light') => void
 }): JSX.Element | null {
-  const [magnet, setMagnet] = useState<OverlayMode>('normal')
+  const [magnetMode, setMagnetMode] = useState<OverlayMode>('normal')
+  const [magnetIcon, setMagnetIcon] = useState<'weak_magnet' | 'strong_magnet'>('weak_magnet')
+  const [lock, setLock] = useState(false)
+  const [visible, setVisible] = useState(true)
   const [activeTool, setActiveTool] = useState<DrawToolName | null>(null)
+  const [singleIcon, setSingleIcon] = useState<DrawToolName>('horizontalStraightLine')
+  const [moreIcon, setMoreIcon] = useState<DrawToolName>('priceChannelLine')
+  const [annoIcon, setAnnoIcon] = useState<DrawToolName>('simpleAnnotation')
+  const [popover, setPopover] = useState('')
   const [tz, setTz] = useState('Asia/Tokyo')
   const [leftY, setLeftY] = useState(false)
   const [paneState, setPaneState] = useState<PaneState>('normal')
   const [theme, setTheme] = useState<'dsh-dark' | 'dsh-light'>(dark ? 'dsh-dark' : 'dsh-light')
   const [coordHint, setCoordHint] = useState('')
+
+  const closePopover = useCallback(() => setPopover(''), [])
+  const barRef = useClickOutside(popover, closePopover)
 
   useEffect(() => {
     setTheme(dark ? 'dsh-dark' : 'dsh-light')
@@ -149,150 +389,338 @@ export function ChartTools({
   const startDraw = useCallback((name: DrawToolName) => {
     if (!chart) return
     setActiveTool(name)
-    createUserDrawing(chart, name, magnet)
-  }, [chart, magnet])
+    createUserDrawing(chart, name, {
+      mode: magnetMode,
+      lock,
+      visible,
+    })
+  }, [chart, magnetMode, lock, visible])
 
-  const applyMagnet = useCallback((mode: OverlayMode) => {
-    setMagnet(mode)
-    if (chart) setUserDrawMagnet(chart, mode)
-  }, [chart])
-
-  const clearDraw = useCallback(() => {
-    if (!chart) return
-    clearUserDrawings(chart)
-    setActiveTool(null)
-  }, [chart])
-
-  const setTimezone = useCallback((id: string) => {
-    if (!chart) return
-    chart.setTimezone(id)
-    setTz(id)
-  }, [chart])
-
-  const cyclePane = useCallback(() => {
-    if (!chart) return
-    const next: PaneState = paneState === 'normal' ? 'maximize' : paneState === 'maximize' ? 'minimize' : 'normal'
-    try {
-      chart.setPaneOptions({ id: 'candle_pane', state: next })
-      setPaneState(next)
-    } catch (e) {
-      console.warn('[client-chart] setPaneOptions failed', e)
-    }
-  }, [chart, paneState])
-
-  const toggleY = useCallback(() => {
-    if (!chart) return
-    const on = toggleLeftYAxis(chart, !leftY)
-    setLeftY(on)
-  }, [chart, leftY])
-
-  const applyTheme = useCallback((name: 'dsh-dark' | 'dsh-light') => {
-    if (!chart) return
-    try {
-      chart.setStyles(name)
-      setTheme(name)
-      onThemeChange?.(name)
-    } catch (e) {
-      console.warn('[client-chart] setStyles(theme) failed', e)
-    }
-  }, [chart, onThemeChange])
-
-  const sampleConvert = useCallback(() => {
-    if (!chart) return
-    const list = chart.getDataList()
-    const last = list[list.length - 1]
-    if (!last) { setCoordHint('无数据'); return }
-    const px = chart.convertToPixel({ timestamp: last.timestamp, value: last.close })
-    const p = (Array.isArray(px) ? px[0] : px) as { x?: number; y?: number } | undefined
-    const back = chart.convertFromPixel([{ x: p?.x ?? 0, y: p?.y ?? 0 }])
-    const b = (Array.isArray(back) ? back[0] : back) as { value?: number } | undefined
-    setCoordHint(`px(${Math.round(p?.x ?? 0)},${Math.round(p?.y ?? 0)}) ← ${typeof b?.value === 'number' ? b.value.toFixed(2) : '—'}`)
-  }, [chart])
+  const togglePopover = useCallback((key: string) => {
+    setPopover(prev => (prev === key ? '' : key))
+  }, [])
 
   if (!chart) return null
+
+  const border = dark ? '#292929' : '#ebedf1'
+  const barBg = dark ? '#131316' : '#f5f6f8'
+  const fg = dark ? '#929AA5' : '#76808F'
 
   const paneLabel = paneState === 'normal' ? '窗' : paneState === 'maximize' ? '大' : '小'
 
   return (
     <div
+      ref={barRef}
       role="toolbar"
-      aria-label="图表工具"
+      aria-label="画线工具栏"
       data-testid="chart-tools"
+      data-pro-style="drawing-bar"
       style={{
         position: 'absolute',
-        left: 6,
-        top: 6,
-        bottom: 28,
+        left: 0,
+        top: 0,
+        bottom: 0,
         zIndex: 12,
+        width: BAR_W,
+        boxSizing: 'border-box',
         display: 'flex',
         flexDirection: 'column',
-        gap: 8,
-        padding: '6px 4px',
-        borderRadius: 6,
-        background: 'rgba(13,17,23,0.78)',
-        border: '1px solid rgba(128,128,128,0.3)',
-        backdropFilter: 'blur(4px)',
+        alignItems: 'center',
+        padding: '4px 0 8px',
+        background: barBg,
+        borderRight: `1px solid ${border}`,
+        color: fg,
         overflowY: 'auto',
-        maxHeight: '100%',
+        overflowX: 'visible',
         pointerEvents: 'auto',
+        scrollbarWidth: 'thin',
       }}
     >
-      <Section label="画线">
-        {DRAW_TOOLS.map(t => (
-          <ToolBtn key={t.name} title={t.title} active={activeTool === t.name} onClick={() => startDraw(t.name)}>
-            {t.label}
-          </ToolBtn>
-        ))}
-        <ToolBtn title="清除手动画线" onClick={clearDraw}>清</ToolBtn>
-      </Section>
+      <style>{`
+        [data-testid="chart-tools"] .dsh-draw-arrow { opacity: 0; transition: opacity .15s; }
+        [data-testid="chart-tools"] .dsh-draw-item:hover .dsh-draw-arrow { opacity: 1; }
+      `}</style>
 
-      <Section label="磁吸">
-        {MAGNETS.map(m => (
-          <ToolBtn key={m.mode} title={m.title} active={magnet === m.mode} onClick={() => applyMagnet(m.mode)}>
-            {m.label}
-          </ToolBtn>
-        ))}
-      </Section>
+      {/* Cursor — cancel interactive draw (Pro demos often show this first) */}
+      <SoloItem
+        dark={dark}
+        selected={activeTool === null}
+        title="选择（取消画线）"
+        onClick={() => { setActiveTool(null); setPopover('') }}
+      >
+        <IconCursor />
+      </SoloItem>
 
-      <Section label="视窗">
-        <ToolBtn title="向左滚动" onClick={() => chart.scrollByDistance(-120, 200)}>←</ToolBtn>
-        <ToolBtn title="向右滚动" onClick={() => chart.scrollByDistance(120, 200)}>→</ToolBtn>
-        <ToolBtn title="回到最新" onClick={() => chart.scrollToRealTime(200)}>新</ToolBtn>
-        <ToolBtn title="放大" onClick={() => zoomByFactor(chart, 1.2)}>＋</ToolBtn>
-        <ToolBtn title="缩小" onClick={() => zoomByFactor(chart, 1 / 1.2)}>－</ToolBtn>
-        <ToolBtn title="柱宽加大" onClick={() => { try { chart.setBarSpace(chart.getBarSpace().bar + 2) } catch { /* */ } }}>宽</ToolBtn>
-        <ToolBtn title="柱宽减小" onClick={() => { try { chart.setBarSpace(Math.max(2, chart.getBarSpace().bar - 2)) } catch { /* */ } }}>窄</ToolBtn>
-      </Section>
+      {/* Single-line family */}
+      <GroupItem
+        dark={dark}
+        selected={SINGLE_LINE.some(t => t.key === activeTool)}
+        iconName={singleIcon}
+        title={SINGLE_LINE.find(t => t.key === singleIcon)?.text ?? '线'}
+        open={popover === 'singleLine'}
+        onMainClick={() => startDraw(singleIcon)}
+        onArrowClick={() => togglePopover('singleLine')}
+      >
+        {popover === 'singleLine' ? (
+          <PopoverList
+            dark={dark}
+            items={SINGLE_LINE}
+            onPick={(key) => {
+              const k = key as DrawToolName
+              setSingleIcon(k)
+              startDraw(k)
+              setPopover('')
+            }}
+          />
+        ) : null}
+      </GroupItem>
 
-      <Section label="窗格">
-        <ToolBtn title={`主图窗格：${paneState}（点击切换 普通/最大化/最小化）`} active={paneState !== 'normal'} onClick={cyclePane}>
-          {paneLabel}
-        </ToolBtn>
-      </Section>
+      {/* Channel / parallel — matches Pro「价格通道线 / 平行直线」 */}
+      <GroupItem
+        dark={dark}
+        selected={MORE_LINE.some(t => t.key === activeTool)}
+        iconName={moreIcon}
+        title={MORE_LINE.find(t => t.key === moreIcon)?.text ?? '通道'}
+        open={popover === 'moreLine'}
+        onMainClick={() => startDraw(moreIcon)}
+        onArrowClick={() => togglePopover('moreLine')}
+      >
+        {popover === 'moreLine' ? (
+          <PopoverList
+            dark={dark}
+            items={MORE_LINE}
+            onPick={(key) => {
+              const k = key as DrawToolName
+              setMoreIcon(k)
+              startDraw(k)
+              setPopover('')
+            }}
+          />
+        ) : null}
+      </GroupItem>
 
-      <Section label="Y轴">
-        <ToolBtn title="切换左侧副Y轴" active={leftY} onClick={toggleY}>双</ToolBtn>
-      </Section>
+      {/* Fibonacci */}
+      <SoloItem
+        dark={dark}
+        selected={activeTool === 'fibonacciLine'}
+        title="斐波那契回调直线"
+        onClick={() => startDraw('fibonacciLine')}
+      >
+        {iconOf('fibonacciLine')}
+      </SoloItem>
 
-      <Section label="主题">
-        <ToolBtn title="深色主题 dsh-dark" active={theme === 'dsh-dark'} onClick={() => applyTheme('dsh-dark')}>暗</ToolBtn>
-        <ToolBtn title="浅色主题 dsh-light" active={theme === 'dsh-light'} onClick={() => applyTheme('dsh-light')}>亮</ToolBtn>
-      </Section>
+      {/* Brush */}
+      <SoloItem
+        dark={dark}
+        selected={activeTool === 'brush'}
+        title="笔刷"
+        onClick={() => startDraw('brush')}
+      >
+        {iconOf('brush')}
+      </SoloItem>
 
-      <Section label="时区">
-        {TIMEZONES.map(t => (
-          <ToolBtn key={t.id} title={`时区 ${t.id}`} active={tz === t.id} wide onClick={() => setTimezone(t.id)}>
-            {t.label}
-          </ToolBtn>
-        ))}
-      </Section>
+      {/* Annotation family */}
+      <GroupItem
+        dark={dark}
+        selected={ANNOTATION.some(t => t.key === activeTool)}
+        iconName={annoIcon}
+        title={ANNOTATION.find(t => t.key === annoIcon)?.text ?? '标注'}
+        open={popover === 'annotation'}
+        onMainClick={() => startDraw(annoIcon)}
+        onArrowClick={() => togglePopover('annotation')}
+      >
+        {popover === 'annotation' ? (
+          <PopoverList
+            dark={dark}
+            items={ANNOTATION}
+            onPick={(key) => {
+              const k = key as DrawToolName
+              setAnnoIcon(k)
+              startDraw(k)
+              setPopover('')
+            }}
+          />
+        ) : null}
+      </GroupItem>
 
-      <Section label="坐标">
-        <ToolBtn title="演示 convertToPixel / convertFromPixel" wide onClick={sampleConvert}>换算</ToolBtn>
-        {coordHint
-          ? <div style={{ maxWidth: 56, fontSize: 9, color: '#8b949e', wordBreak: 'break-all', textAlign: 'center' }}>{coordHint}</div>
-          : null}
-      </Section>
+      <div style={{ width: '100%', height: 1, background: border, marginTop: 8 }} />
+
+      {/* Magnet */}
+      <GroupItem
+        dark={dark}
+        selected={magnetMode !== 'normal'}
+        iconName={magnetIcon}
+        title={magnetMode === 'normal' ? '磁吸（关）' : MAGNETS.find(m => m.key === magnetMode)?.text ?? '磁吸'}
+        open={popover === 'magnet'}
+        onMainClick={() => {
+          // Pro: click icon toggles between normal and last magnet mode
+          const next: OverlayMode = magnetMode === 'normal' ? magnetIcon : 'normal'
+          setMagnetMode(next)
+          setUserDrawMagnet(chart, next)
+        }}
+        onArrowClick={() => togglePopover('magnet')}
+      >
+        {popover === 'magnet' ? (
+          <PopoverList
+            dark={dark}
+            items={MAGNETS.map(m => ({ key: m.key, text: m.text, icon: m.key }))}
+            onPick={(key) => {
+              const mode = key as OverlayMode
+              setMagnetIcon(mode === 'strong_magnet' ? 'strong_magnet' : 'weak_magnet')
+              setMagnetMode(mode)
+              setUserDrawMagnet(chart, mode)
+              setPopover('')
+            }}
+          />
+        ) : null}
+      </GroupItem>
+
+      <SoloItem
+        dark={dark}
+        selected={lock}
+        title={lock ? '解锁画线' : '锁定画线'}
+        onClick={() => {
+          const next = !lock
+          setLock(next)
+          setUserDrawLock(chart, next)
+        }}
+      >
+        {lock ? <IconLock /> : <IconUnlock />}
+      </SoloItem>
+
+      <SoloItem
+        dark={dark}
+        selected={!visible}
+        title={visible ? '隐藏画线' : '显示画线'}
+        onClick={() => {
+          const next = !visible
+          setVisible(next)
+          setUserDrawVisible(chart, next)
+        }}
+      >
+        {visible ? <IconVisible /> : <IconInvisible />}
+      </SoloItem>
+
+      <SoloItem
+        dark={dark}
+        title="清除手动画线"
+        onClick={() => {
+          clearUserDrawings(chart)
+          setActiveTool(null)
+        }}
+      >
+        <IconRemove />
+      </SoloItem>
+
+      <div style={{ width: '100%', height: 1, background: border, marginTop: 8 }} />
+
+      {/* Extra core APIs — compact, below Pro-like drawing section */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'center', marginTop: 8, width: '100%', padding: '0 4px', boxSizing: 'border-box' }}>
+        <div style={{ fontSize: 9, opacity: 0.75 }}>视窗</div>
+        <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'center' }}>
+          <MiniBtn title="向左滚动" onClick={() => chart.scrollByDistance(-120, 200)}>←</MiniBtn>
+          <MiniBtn title="向右滚动" onClick={() => chart.scrollByDistance(120, 200)}>→</MiniBtn>
+          <MiniBtn title="回到最新" onClick={() => chart.scrollToRealTime(200)}>新</MiniBtn>
+          <MiniBtn title="放大" onClick={() => zoomByFactor(chart, 1.2)}>＋</MiniBtn>
+          <MiniBtn title="缩小" onClick={() => zoomByFactor(chart, 1 / 1.2)}>－</MiniBtn>
+        </div>
+        <div style={{ fontSize: 9, opacity: 0.75, marginTop: 4 }}>窗格/轴</div>
+        <div style={{ display: 'flex', gap: 2 }}>
+          <MiniBtn
+            title={`主图窗格：${paneState}`}
+            active={paneState !== 'normal'}
+            onClick={() => {
+              const next: PaneState = paneState === 'normal' ? 'maximize' : paneState === 'maximize' ? 'minimize' : 'normal'
+              try {
+                chart.setPaneOptions({ id: 'candle_pane', state: next })
+                setPaneState(next)
+              } catch (e) {
+                console.warn('[client-chart] setPaneOptions failed', e)
+              }
+            }}
+          >
+            {paneLabel}
+          </MiniBtn>
+          <MiniBtn
+            title="切换左侧副Y轴"
+            active={leftY}
+            onClick={() => setLeftY(toggleLeftYAxis(chart, !leftY))}
+          >
+            双Y
+          </MiniBtn>
+        </div>
+        <div style={{ fontSize: 9, opacity: 0.75, marginTop: 4 }}>主题</div>
+        <div style={{ display: 'flex', gap: 2 }}>
+          <MiniBtn
+            title="深色 dsh-dark"
+            active={theme === 'dsh-dark'}
+            onClick={() => {
+              try {
+                chart.setStyles('dsh-dark')
+                setTheme('dsh-dark')
+                onThemeChange?.('dsh-dark')
+              } catch (e) {
+                console.warn('[client-chart] setStyles failed', e)
+              }
+            }}
+          >
+            暗
+          </MiniBtn>
+          <MiniBtn
+            title="浅色 dsh-light"
+            active={theme === 'dsh-light'}
+            onClick={() => {
+              try {
+                chart.setStyles('dsh-light')
+                setTheme('dsh-light')
+                onThemeChange?.('dsh-light')
+              } catch (e) {
+                console.warn('[client-chart] setStyles failed', e)
+              }
+            }}
+          >
+            亮
+          </MiniBtn>
+        </div>
+        <div style={{ fontSize: 9, opacity: 0.75, marginTop: 4 }}>时区</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
+          {TIMEZONES.map(t => (
+            <MiniBtn
+              key={t.id}
+              title={`时区 ${t.id}`}
+              active={tz === t.id}
+              wide
+              onClick={() => {
+                chart.setTimezone(t.id)
+                setTz(t.id)
+              }}
+            >
+              {t.label}
+            </MiniBtn>
+          ))}
+        </div>
+        <div style={{ fontSize: 9, opacity: 0.75, marginTop: 4 }}>坐标</div>
+        <MiniBtn
+          title="演示 convertToPixel / convertFromPixel"
+          wide
+          onClick={() => {
+            const list = chart.getDataList()
+            const last = list[list.length - 1]
+            if (!last) { setCoordHint('无数据'); return }
+            const px = chart.convertToPixel({ timestamp: last.timestamp, value: last.close })
+            const p = (Array.isArray(px) ? px[0] : px) as { x?: number; y?: number } | undefined
+            const back = chart.convertFromPixel([{ x: p?.x ?? 0, y: p?.y ?? 0 }])
+            const b = (Array.isArray(back) ? back[0] : back) as { value?: number } | undefined
+            setCoordHint(`px(${Math.round(p?.x ?? 0)},${Math.round(p?.y ?? 0)})`)
+            void b
+          }}
+        >
+          换算
+        </MiniBtn>
+        {coordHint ? (
+          <div style={{ maxWidth: 48, fontSize: 9, wordBreak: 'break-all', textAlign: 'center', opacity: 0.8 }}>{coordHint}</div>
+        ) : null}
+      </div>
     </div>
   )
 }

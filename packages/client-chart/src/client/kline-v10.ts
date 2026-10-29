@@ -228,11 +228,24 @@ export function assertCalcArray<T>(rows: T[]): T[] {
 
 // ── Hand-draw / magnet / clear ──────────────────────────────────────────────
 
-export function createUserDrawing(chart: Chart, name: string, mode: OverlayMode = 'normal'): string | null {
+export type UserDrawOpts = {
+  mode?: OverlayMode
+  lock?: boolean
+  visible?: boolean
+}
+
+export function createUserDrawing(
+  chart: Chart,
+  name: string,
+  modeOrOpts: OverlayMode | UserDrawOpts = 'normal',
+): string | null {
+  const opts: UserDrawOpts = typeof modeOrOpts === 'string' ? { mode: modeOrOpts } : modeOrOpts
   const id = chart.createOverlay({
     name,
     groupId: USER_DRAW_GROUP,
-    mode,
+    mode: opts.mode ?? 'normal',
+    lock: opts.lock ?? false,
+    visible: opts.visible ?? true,
     // no points → interactive click-draw
   })
   return typeof id === 'string' ? id : Array.isArray(id) ? (id[0] ?? null) : null
@@ -249,6 +262,22 @@ export function clearUserDrawings(chart: Chart): boolean {
 export function setUserDrawMagnet(chart: Chart, mode: OverlayMode): boolean {
   try {
     return chart.overrideOverlay({ groupId: USER_DRAW_GROUP, mode })
+  } catch {
+    return false
+  }
+}
+
+export function setUserDrawLock(chart: Chart, lock: boolean): boolean {
+  try {
+    return chart.overrideOverlay({ groupId: USER_DRAW_GROUP, lock })
+  } catch {
+    return false
+  }
+}
+
+export function setUserDrawVisible(chart: Chart, visible: boolean): boolean {
+  try {
+    return chart.overrideOverlay({ groupId: USER_DRAW_GROUP, visible })
   } catch {
     return false
   }
