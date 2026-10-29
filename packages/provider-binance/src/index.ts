@@ -651,7 +651,7 @@ export function postureOf(pricePct: number, oiPct: number, long: boolean, factor
 
 /**
  * Account ratio counts heads. Position ratio counts size of the top 20% by margin.
- * Binance long/short ratio > 1 is net long. The same 1.15 / 0.87 cuts as positionReadings
+ * A ratio > 1 means more long accounts or long position size within that sample. The same 1.15 / 0.87 cuts as positionReadings
  * decide 偏多 / 偏空. A still-long whale ratio is not short, even if it is below 1.6.
  */
 export function crowdVsWhaleOf(globalRatio: number | null, topPosRatio: number | null): string | null {
@@ -747,7 +747,7 @@ export function basisPct(mark: number | null, index: number | null): number | nu
 }
 
 /**
- * Descriptive chips for the series Binance actually returns. Not a direction call.
+ * Descriptive chips for the provider series. Not a direction call.
  * Account ratios count accounts, not size. Taker is this bucket's aggressor flow.
  * Funding and basis are omitted when absent, so a 5m history bar does not inherit the live snapshot.
  */
@@ -767,7 +767,7 @@ export function positionReadings(input: {
     out.push({
       id: 'accounts',
       label: ratioWord(accounts, 1.15, 0.87, '人数偏多', '人数均衡', '人数偏空'),
-      note: '全市场账户数多空比，>1净多账户；非持仓量。',
+      note: '本数据源该合约多头账户数÷空头账户数；>1表示多头账户更多，非持仓量，也不代表价格方向。',
       tone: 'neutral',
     })
   }
@@ -775,7 +775,7 @@ export function positionReadings(input: {
     out.push({
       id: 'top-positions',
       label: ratioWord(positions, 1.15, 0.87, '大户仓偏多', '大户仓均衡', '大户仓偏空'),
-      note: '大户持仓量多空比，>1净多仓；非账户数。',
+      note: '本数据源大户样本的多头持仓量÷空头持仓量；样本筛选因交易所而异，非账户数或全市场净仓。',
       tone: 'neutral',
     })
   }
@@ -783,7 +783,7 @@ export function positionReadings(input: {
     out.push({
       id: 'top-accounts',
       label: ratioWord(topAccounts, 1.15, 0.87, '大户户偏多', '大户户均衡', '大户户偏空'),
-      note: '大户账户数比；与持仓比背离时更大仓在另一侧。',
+      note: '本数据源大户样本的多头账户数÷空头账户数；样本筛选因交易所而异，账户计数与仓量加权口径不同。',
       tone: 'neutral',
     })
   }
@@ -796,9 +796,9 @@ export function positionReadings(input: {
   }
   if (topAccounts !== null && topAccounts !== undefined && positions !== null && positions !== undefined) {
     if (topAccounts >= 1.15 && positions <= 0.87) {
-      out.push({ id: 'whale-split', label: '头部仓位在空', note: '大户账户数偏多，但大户持仓量偏空。更大的仓在空头。', tone: 'warn' })
+      out.push({ id: 'whale-split', label: '大户账户偏多·仓量偏空', note: '大户样本的账户比与仓量比方向不同；只能描述样本差异，不能据此判断资金流向或价格。', tone: 'warn' })
     } else if (topAccounts <= 0.87 && positions >= 1.15) {
-      out.push({ id: 'whale-split', label: '头部仓位在多', note: '大户账户数偏空，但大户持仓量偏多。更大的仓在多头。', tone: 'warn' })
+      out.push({ id: 'whale-split', label: '大户账户偏空·仓量偏多', note: '大户样本的账户比与仓量比方向不同；只能描述样本差异，不能据此判断资金流向或价格。', tone: 'warn' })
     }
   }
   const taker = input.takerBuySellRatio

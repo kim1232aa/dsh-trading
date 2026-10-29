@@ -132,6 +132,28 @@ export interface PanelLargeOrders {
   walls: PanelLargeOrderWall[]
 }
 
+/** Pill on the large-wall strip. `all` is the unfiltered book. */
+export type WallMarketFilter = 'all' | 'spot' | 'perp'
+
+/**
+ * Spot books from CoinGlass. `10` is the raw instrument type the capi still
+ * returns on some paths; everything else (including a missing tag) is treated
+ * as a contract book, matching the 现货/合约 caption drawn on the chart.
+ */
+export function isSpotWallMarket(market: string | undefined | null): boolean {
+  const m = (market ?? '').trim().toLowerCase()
+  return m === 'spot' || m === '10'
+}
+
+/** Keep walls that belong to the selected book. Order is preserved. */
+export function filterWallsByMarket<T extends { market?: string | null }>(
+  walls: readonly T[],
+  filter: WallMarketFilter,
+): T[] {
+  if (filter === 'all') return walls.slice()
+  return walls.filter(w => filter === 'spot' ? isSpotWallMarket(w.market) : !isSpotWallMarket(w.market))
+}
+
 export interface PanelPositionReading {
   id: string
   label: string
@@ -154,8 +176,54 @@ export interface PanelDerivativeBar {
   readings?: PanelPositionReading[]
 }
 
+/**
+ * Match a derivative history bar to a candle open time.
+ * - No interval (or ≤15m): latest snapshot at or before the candle open, no more than 15 minutes old.
+ * - Larger candles (1h/4h/1d): the LAST snapshot inside [open, open+interval) —
+ *   a 1d candle otherwise almost never lines up with a 5m snapshot.
+ */
+export function matchDerivativeHistory(
+  history: PanelDerivativeBar[],
+  timestampMs: number,
+  intervalMs?: number,
+): PanelDerivativeBar | undefined {
+  if (intervalMs !== undefined && intervalMs > 900_000) {
+    let best: PanelDerivativeBar | undefined
+    let bestT = -Infinity
+    for (const h of history) {
+      const t = Date.parse(h.time)
+      if (!Number.isFinite(t) || t < timestampMs || t >= timestampMs + intervalMs) continue
+      if (t > bestT) { bestT = t; best = h }
+    }
+    return best
+  }
+  const kSec = Math.floor(timestampMs / 1000)
+  let bestDiff = Infinity
+  let matched: PanelDerivativeBar | undefined
+  for (const h of history) {
+    const sec = Math.floor(Date.parse(h.time) / 1000)
+    if (!Number.isFinite(sec)) continue
+    const diff = kSec - sec
+    if (diff >= 0 && diff < bestDiff && diff <= 900) {
+      bestDiff = diff
+      matched = h
+    }
+  }
+  return matched
+}
+
+/** Select historical data even when a hovered candle has no matching snapshot. */
+export function derivativesForTime(
+  live: PanelDerivatives | undefined,
+  timestampMs: number | null | undefined,
+  intervalMs?: number,
+): PanelDerivatives | HistoricalDerivatives | undefined {
+  if (!live || timestampMs == null || !Number.isFinite(timestampMs)) return live
+  return derivativesAtBar(live, matchDerivativeHistory(live.history ?? [], timestampMs, intervalMs), timestampMs)
+}
+
 /** What the strip shows while the crosshair sits on a historical bar. */
-export interface HistoricalDerivatives extends Omit<PanelDerivatives, 'history' | 'readings'> {
+export interface HistoricalDerivatives extends Omit<PanelDerivatives, 'history'> {
   isHistorical: true
 }
 
@@ -164,22 +232,24 @@ export interface HistoricalDerivatives extends Omit<PanelDerivatives, 'history' 
  * bar alone — a missing value stays null ("—"), never the live snapshot,
  * otherwise the flat line comes back. Funding / next funding are snapshot-only.
  */
-export function derivativesAtBar(live: PanelDerivatives | undefined, bar: PanelDerivativeBar): HistoricalDerivatives {
+export function derivativesAtBar(live: PanelDerivatives | undefined, bar: PanelDerivativeBar | undefined, timestampMs?: number): HistoricalDerivatives {
   return {
     source: live?.source ?? '',
-    openInterest: bar.openInterest ?? null,
-    openInterestValue: bar.openInterestValue ?? null,
+    ...(live?.longShortRatioKind ? { longShortRatioKind: live.longShortRatioKind } : {}),
+    readings: bar?.readings ?? [],
+    openInterest: bar?.openInterest ?? null,
+    openInterestValue: bar?.openInterestValue ?? null,
     fundingRate: live?.fundingRate ?? null,
     nextFundingTime: live?.nextFundingTime ?? null,
-    longShortRatio: bar.longShortRatio ?? null,
-    takerBuySellRatio: bar.takerBuySellRatio ?? null,
-    topPositionRatio: bar.topPositionRatio ?? null,
-    topAccountRatio: bar.topAccountRatio ?? null,
-    crowdVsWhale: bar.crowdVsWhale ?? null,
-    time: bar.time,
-    posture: bar.posture ?? null,
-    quadrant: bar.quadrant ?? null,
-    quadrantNote: bar.quadrantNote ?? null,
+    longShortRatio: bar?.longShortRatio ?? null,
+    takerBuySellRatio: bar?.takerBuySellRatio ?? null,
+    topPositionRatio: bar?.topPositionRatio ?? null,
+    topAccountRatio: bar?.topAccountRatio ?? null,
+    crowdVsWhale: bar?.crowdVsWhale ?? null,
+    time: bar?.time ?? (timestampMs !== undefined ? new Date(timestampMs).toISOString() : ''),
+    posture: bar?.posture ?? null,
+    quadrant: bar?.quadrant ?? null,
+    quadrantNote: bar?.quadrantNote ?? null,
     oiChangePct1h: null,
     priceChangePct1h: null,
     isHistorical: true,

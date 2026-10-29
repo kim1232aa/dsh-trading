@@ -21,7 +21,8 @@ import { publishLatestChart } from './latest.js'
 import { annotationDigest, contentText, readChartPayload } from './payload.js'
 import type { ChartAnnotation, ChartPayload, ChartScenario, ChartTimeframeData } from './payload.js'
 import type { PanelDerivativeBar, PanelDerivatives, PanelLargeOrders } from './market-client.js'
-import { contractOpenInterest, postureColor } from './market-client.js'
+import { contractOpenInterest, filterWallsByMarket, isSpotWallMarket, matchDerivativeHistory, postureColor } from './market-client.js'
+import type { WallMarketFilter } from './market-client.js'
 import { regimeSnapshot } from '../../../tool-market/src/regime.js'
 import { rsiGridStateText } from '../../../tool-market/src/rsi-grid.js'
 import type { RsiGridReport } from '../../../tool-market/src/rsi-grid.js'
@@ -37,6 +38,7 @@ import { rsiGridIndicator, rsiGridCumIndicator, rsiGridMarksIndicator } from './
 import { revPointIndicator, REVPOINT_TABLE_W, REVPOINT_PARAM_DEFAULTS, REVPOINT_OI_EXCHANGES, REVPOINT_ALERTS, migrateRevPointParams, revPointAlertEvents } from './indicators/revpoint.js'
 import { kPatternIndicator, KP_ALERT, KP_ALERTS, KP_BAIDU_BEAR_INDICES, KP_BAIDU_BULL_INDICES, KP_BAIDU_PLOTS, KP_BAIDU_SHOW, KP_BEAR_INDICES, KP_BG_COLOR, KP_BG_ON, KP_BULL_INDICES, KP_COLOR, KP_DEFAULTS, KP_FONT, KP_FORMING, KP_LABEL_MODES, KP_LAST, KP_MODE, KP_PLOTS, KP_SHOW, KP_THEME, kpAlertEvents } from './indicators/aicoin-kpattern.js'
 import { aicoinTdIndicator, aicoinTdMarksIndicator, migrateTdParams, TD_DEFAULTS, TD_MARK_RESERVE, TD_MODES, tdAlertEvents, tdWantsMarks, tdWantsPane } from './indicators/aicoin-td.js'
+import { volTierIndicator } from './indicators/vol-tier.js'
 import { ohlcOffsetRightForTopLeft } from './indicators/revpoint-layout.js'
 import { detectPricePrecision, formatPrice } from './precision.js'
 import { createAnnotationOverlays } from './annotation-overlays.js'
@@ -371,8 +373,8 @@ export const EDITABLE: {
     boolP('右上角显示高周期R/S状态表'), boolP('右侧挂高周期价格签'), boolP('图上显示HTF诊断气泡'),
     ...REVPOINT_ALERTS.map(a => boolP(`提醒:${a.cn}`)),
   ] },
+  { name: 'VOL_TIER', title: '量比分档量能', pane: 'pane_vol', defaults: [4], defaultVisible: true, params: [period('量比周期')] },
   { name: 'OI_POSTURE', title: '合约OI', pane: 'pane_oi_posture', defaults: [], params: [] },
-  { name: 'LSR_RATIO', title: '多空比', pane: 'pane_lsr', defaults: [], params: [] },
   { name: 'ENTRY_SIGNAL', title: '多空观察信号(未验证)', defaults: [60, 4], defaultVisible: false, params: [period('ST周期'), { label: 'ST倍数', min: 0.1, max: 20, step: 0.1 }] },
   { name: 'LARGE_WALLS', title: '大单墙(CoinGlass)', defaults: [100, 20, 8], defaultVisible: false, params: [
     { label: '最低金额(万)', min: 0, max: 3000, step: 1 },
@@ -580,41 +582,7 @@ const FOLD = {
 let registered = false
 
 
-/**
- * Match a derivative history bar to a candle open time.
- * - No interval (or ≤15m): nearest 5m snapshot within 15 minutes.
- * - Larger candles (1h/4h/1d): the LAST snapshot inside [open, open+interval) —
- *   a 1d candle otherwise almost never lines up with a 5m snapshot.
- */
-export function matchDerivativeHistory(
-  history: PanelDerivativeBar[],
-  timestampMs: number,
-  intervalMs?: number,
-): PanelDerivativeBar | undefined {
-  if (intervalMs !== undefined && intervalMs > 900_000) {
-    let best: PanelDerivativeBar | undefined
-    let bestT = -Infinity
-    for (const h of history) {
-      const t = Date.parse(h.time)
-      if (!Number.isFinite(t) || t < timestampMs || t >= timestampMs + intervalMs) continue
-      if (t > bestT) { bestT = t; best = h }
-    }
-    return best
-  }
-  const kSec = Math.floor(timestampMs / 1000)
-  let bestDiff = Infinity
-  let matched: PanelDerivativeBar | undefined
-  for (const h of history) {
-    const sec = Math.floor(Date.parse(h.time) / 1000)
-    if (!Number.isFinite(sec)) continue
-    const diff = Math.abs(sec - kSec)
-    if (diff < bestDiff && diff <= 900) {
-      bestDiff = diff
-      matched = h
-    }
-  }
-  return matched
-}
+export { matchDerivativeHistory } from './market-client.js'
 
 /** Candle spacing from the first two bars; undefined when it cannot be read. */
 export function inferIntervalMs(kLineDataList: { timestamp?: number }[]): number | undefined {
@@ -630,7 +598,7 @@ export type OiPostureRow = {
   bar?: PanelDerivativeBar
 }
 
-/** OI_POSTURE subplot series: coin OI + MA. Ratios live in tooltip/chips and LSR_RATIO pane. */
+/** OI_POSTURE subplot series: coin OI + MA. Ratios live in the tooltip and top strip. */
 export function calcOiPostureRows(
   kLineDataList: { timestamp?: number }[],
   history: PanelDerivativeBar[],
@@ -681,46 +649,7 @@ export function calcOiPostureRows(
   })
 }
 
-export type LsrRatioRow = {
-  lsr?: number
-  topPos?: number
-  topAcc?: number
-  mid?: number
-  bar?: PanelDerivativeBar
-}
-
-/**
- * LSR_RATIO subplot: account long/short ratio + top-trader position ratio + top-trader account ratio.
- * mid=1 is the net-long / net-short boundary (>1 净多).
- */
-export function calcLsrRatioRows(
-  kLineDataList: { timestamp?: number }[],
-  history: PanelDerivativeBar[],
-): LsrRatioRow[] {
-  if (!Array.isArray(history) || history.length === 0) {
-    return kLineDataList.map(() => ({}))
-  }
-  return kLineDataList.map(k => {
-    const ts = k.timestamp
-    if (ts === undefined) return {}
-    const bar = matchDerivativeHistory(history, ts, inferIntervalMs(kLineDataList))
-    if (!bar) return {}
-    const row: LsrRatioRow = { mid: 1, bar }
-    if (bar.longShortRatio != null && Number.isFinite(bar.longShortRatio)) {
-      row.lsr = bar.longShortRatio
-    }
-    if (bar.topPositionRatio != null && Number.isFinite(bar.topPositionRatio)) {
-      row.topPos = bar.topPositionRatio
-    }
-    if (bar.topAccountRatio != null && Number.isFinite(bar.topAccountRatio)) {
-      row.topAcc = bar.topAccountRatio
-    }
-    if (row.lsr === undefined && row.topPos === undefined && row.topAcc === undefined) return {}
-    return row
-  })
-}
-
-const DERIV_HISTORY_INDICATORS = new Set(['OI_POSTURE', 'LSR_RATIO', 'REVPOINT'])
+const DERIV_HISTORY_INDICATORS = new Set(['OI_POSTURE', 'REVPOINT'])
 
 
 /** Distinct, non-gray subplot palette (works on dark + light; up/down match candles). */
@@ -919,105 +848,6 @@ function ensureRegistered(): void {
     },
   } as never)
 
-  registerIndicator({
-    name: 'LSR_RATIO',
-    shortName: '多空比',
-    series: 'normal',
-    precision: 2,
-    shouldFormatBigNumber: false,
-    calcParams: [],
-    figures: [
-      {
-        key: 'lsr',
-        title: '账户人数比: ',
-        type: 'line',
-        styles: () => ({ color: '#58a6ff', size: 1.5 }),
-      },
-      {
-        key: 'topPos',
-        title: '大户持仓比: ',
-        type: 'line',
-        styles: () => ({ color: '#ffa726', size: 1.5 }),
-      },
-      {
-        key: 'topAcc',
-        title: '大户账户比: ',
-        type: 'line',
-        styles: () => ({ color: '#b083f0', size: 1.5 }),
-      },
-    ],
-    styles: {
-      lines: [
-        { color: '#58a6ff', size: 1.5, style: 'solid', smooth: false, dashedValue: [2, 2] },
-        { color: '#ffa726', size: 1.5, style: 'solid', smooth: false, dashedValue: [2, 2] },
-        { color: '#b083f0', size: 1.5, style: 'solid', smooth: false, dashedValue: [2, 2] },
-      ],
-    },
-    calc: (kLineDataList: { timestamp?: number }[], indicator: { extendData?: unknown }) => {
-      const history = (indicator.extendData ?? []) as PanelDerivativeBar[]
-      return calcLsrRatioRows(kLineDataList, history)
-    },
-    createTooltipDataSource: ({ indicator, crosshair, kLineDataList }: {
-      indicator: { extendData?: unknown; result?: Record<string, unknown>[] }
-      crosshair: { dataIndex?: number; kLineData?: { timestamp?: number } }
-      kLineDataList: { timestamp?: number }[]
-    }) => {
-      const res = indicator.result ?? []
-      const history = (indicator.extendData ?? []) as PanelDerivativeBar[]
-      if (!Array.isArray(history) || history.length === 0) {
-        return { name: '多空比', calcParamsText: '', values: [] }
-      }
-      const dataIndex = crosshair.dataIndex ?? (kLineDataList.length - 1)
-      const row = res[dataIndex] as LsrRatioRow | undefined
-      const ts = crosshair.kLineData?.timestamp ?? kLineDataList[dataIndex]?.timestamp
-      let target: PanelDerivativeBar | undefined = row?.bar
-      if (!target && ts !== undefined) target = matchDerivativeHistory(history, ts, inferIntervalMs(kLineDataList))
-      if (!target && dataIndex >= kLineDataList.length - 1) target = history[history.length - 1]
-      if (!target) {
-        return {
-          name: '多空比',
-          calcParamsText: '',
-          values: [{ title: '说明: ', value: { text: '无历史比值', color: '#8b949e' } }],
-        }
-      }
-      const ratioTag = (v: number | null | undefined) => {
-        if (v == null || !Number.isFinite(v)) return ''
-        if (v > 1) return '(>1净多)'
-        if (v < 1) return '(<1净空)'
-        return '(=1)'
-      }
-      const lsr = target.longShortRatio
-      const topPos = target.topPositionRatio
-      const topAcc = target.topAccountRatio
-      const values: { title: string; value: { text: string; color: string } }[] = [
-        {
-          title: '账户人数比: ',
-          value: {
-            text: lsr != null ? `${lsr.toFixed(2)}${ratioTag(lsr)}` : '—',
-            color: '#58a6ff',
-          },
-        },
-        {
-          title: '大户持仓比: ',
-          value: {
-            text: topPos != null ? `${topPos.toFixed(2)}${ratioTag(topPos)}` : '—',
-            color: '#ffa726',
-          },
-        },
-      ]
-      if (topAcc != null) {
-        values.push({
-          title: '大户账户比: ',
-          value: {
-            text: `${topAcc.toFixed(2)}${ratioTag(topAcc)}`,
-            color: '#b083f0',
-          },
-        })
-      }
-      values.push({ title: '中性线: ', value: { text: '1.00', color: '#768390' } })
-      return { name: '多空比', calcParamsText: '', values }
-    },
-  } as never)
   registerIndicator(evasiveSuperTrendIndicator as never)
   registerIndicator(nadarayaWatsonIndicator as never)
   registerIndicator(orderBlockIndicator as never)
@@ -1032,6 +862,8 @@ function ensureRegistered(): void {
 registerIndicator(kPatternIndicator as never)
 registerIndicator(aicoinTdIndicator as never)
 registerIndicator(aicoinTdMarksIndicator as never)
+  registerIndicator(volTierIndicator as never)
+  registerIndicator({ ...volTierIndicator, name: 'VOL' } as never)
   // Overlay shapes for the draw primitives. extendData: { color, dashed, label }.
   // Register exactly the callbacks exercised by the overlay regression tests.
   for (const overlay of createAnnotationOverlays(FONT_FAMILY, (text, style) =>
@@ -1169,7 +1001,7 @@ export function zhState(s: string): string {
 const CHIP_DEFS: ChipDef[] = [
   {
     id: 'vol',
-    indicator: { name: 'VOL', figures: {}, builtIn: true },
+    indicator: { name: 'VOL_TIER', figures: {}, builtIn: true },
     label: ind => {
       const v = ind['structure'] as Record<string, unknown> | undefined
       const vr = v?.['volume'] as Record<string, unknown> | undefined
@@ -1319,7 +1151,7 @@ export function planChipSync(active: readonly string[], mounted: ReadonlyMap<str
   return { add: [...want].filter(id => !have.has(id)), remove: [...have].filter(id => !want.has(id)) }
 }
 
-function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSettings, onEditParams, derivatives, largeWalls, onCrosshairHover, history, baseHeight = CHART_HEIGHT, fill = false }: {
+function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSettings, onEditParams, derivatives, largeWalls, wallMarket = 'all', onCrosshairHover, history, baseHeight = CHART_HEIGHT, fill = false }: {
   data: ChartTimeframeData
   /** Older-bar paging for klinecharts loadMore; absent on agent cards. */
   history?: ChartHistory | undefined
@@ -1328,6 +1160,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   onEditParams: () => void
   derivatives?: PanelDerivatives | null | undefined
   largeWalls?: PanelLargeOrders | null | undefined
+  /** Same pill as the wall strip. The overlay must use it or 现货 still draws 合约 lines. */
+  wallMarket?: WallMarketFilter
   onCrosshairHover?: ((timestamp: number | null) => void) | undefined
   scenarios: ChartScenario[]
   dark: boolean
@@ -1370,7 +1204,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   historyRef.current = history
   // 默认只收起主图指标行，副图名称和数值保持可见。
   const foldRef = useRef(true)
-  const paneCount = active.filter(id => CHIP_DEFS.find(d => d.id === id)?.indicator?.overlay !== true).length
+  const paneCount = active.filter(id => id !== 'vol' && CHIP_DEFS.find(d => d.id === id)?.indicator?.overlay !== true).length
     + EDITABLE.filter(d => d.pane !== undefined && settings[d.name]?.visible && (d.name !== 'AICOIN_TD' || tdWantsPane(settings[d.name]!.params))).length
     // RSI_GRID also mounts the 累计差值 pane under it.
     + (settings['RSI_GRID']?.visible ? 1 : 0)
@@ -1408,7 +1242,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       const s = settingsRef.current[def.name]!
       const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivativesRef.current?.history
         : def.name === 'MTF_SR' || def.name === 'DUAL_VIEW_HTF' ? { sourceTimeframe: data.timeframe, sourceTimeframeSeconds: mtfSourceTimeframeSeconds(data.timeframe) }
-        : def.name === 'AICOIN_KPATTERN' ? kpThemeExt(dark, settingsRef.current) : undefined
+        : def.name === 'AICOIN_KPATTERN' ? kpThemeExt(dark, settingsRef.current)
+        : def.name === 'VOL_TIER' ? { dark } : undefined
       if (def.name === 'AICOIN_TD') { syncAicoinTd(chart, s, dark); continue }
       if (def.pane !== undefined) {
         // Own pane: created only when shown, so a hidden one doesn't leave a blank strip.
@@ -1551,7 +1386,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       const s = settings[def.name]!
       const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivatives?.history
         : def.name === 'MTF_SR' || def.name === 'DUAL_VIEW_HTF' ? { sourceTimeframe: data.timeframe, sourceTimeframeSeconds: mtfSourceTimeframeSeconds(data.timeframe) }
-        : def.name === 'AICOIN_KPATTERN' ? kpThemeExt(dark, settings) : undefined
+        : def.name === 'AICOIN_KPATTERN' ? kpThemeExt(dark, settings)
+        : def.name === 'VOL_TIER' ? { dark } : undefined
       if (def.name === 'AICOIN_TD') { syncAicoinTd(chart, s, dark); continue }
       if (def.pane !== undefined) {
         const exists = chart.getIndicatorByPaneId(def.pane, def.name) != null
@@ -1597,7 +1433,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     const last = data.candles[data.candles.length - 1]
     const curP = last?.close
 
-    let walls = largeWalls.walls.filter(w => w.currentUsd >= minUsd)
+    let walls = filterWallsByMarket(largeWalls.walls, wallMarket).filter(w => w.currentUsd >= minUsd)
     if (typeof curP === 'number' && curP > 0) {
       walls = walls.filter(w => Math.abs(w.price - curP) / curP <= maxDistPct)
     }
@@ -1628,7 +1464,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       const distStr = typeof curP === 'number' && curP > 0
         ? ` (${w.price >= curP ? '+' : ''}${(((w.price - curP) / curP) * 100).toFixed(1)}%)`
         : ''
-      const mTag = (w.market === 'spot' || w.market === '10' || w.market === 'SPOT') ? '现货' : '合约'
+      const mTag = isSpotWallMarket(w.market) ? '现货' : '合约'
       const label = `${w.exchange}${mTag} ${w.side === 'buy' ? '买' : '卖'} $${fmt(w.currentUsd)}${distStr}`
       const id = chart.createOverlay({
         name: 'tm_hline',
@@ -1638,7 +1474,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       })
       if (typeof id === 'string' && id) wallOverlayIds.current.push(id)
     }
-  }, [settings, largeWalls, seriesKey, data.candles.length])
+  }, [settings, largeWalls, wallMarket, seriesKey, data.candles.length])
 
   // Live tail: push the newest bar into the existing plot. klinecharts updates
   // the last bar in place, or appends when the timestamp has moved on, so the
@@ -1653,7 +1489,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     const plan = planChipSync(active, mountedChips.current, id => {
       const def = CHIP_DEFS.find(d => d.id === id)
       if (!def?.indicator) return false
-      if (def.indicator.builtIn === true) return def.indicator.name !== 'RSI_GRID'
+      if (def.indicator.builtIn === true) return def.indicator.name !== 'RSI_GRID' && def.indicator.name !== 'VOL_TIER'
       return hasSeries(data, def.indicator.figures)
     })
     for (const id of plan.remove) {
@@ -2184,7 +2020,7 @@ const CATEGORIES: { id: string; label: string; names?: string[] }[] = [
   { id: 'trend', label: '趋势与通道', names: ['WMA', 'SUPERTREND', 'EVASIVE_ST', 'NW_TREND', 'VB_PRO_READ'] },
   { id: 'pattern', label: '形态与结构', names: ['DUAL_VIEW_HTF', 'AICOIN_KPATTERN', 'OB_BB', 'MTF_SR'] },
   { id: 'oscillator', label: '震荡与网格', names: ['RSI_GRID', 'AICOIN_TD', 'REVPOINT', 'ENTRY_SIGNAL'] },
-  { id: 'deriv', label: '主力与衍生品', names: ['OI_POSTURE', 'LSR_RATIO', 'LARGE_WALLS'] },
+  { id: 'deriv', label: '主力与衍生品', names: ['VOL_TIER', 'OI_POSTURE', 'LARGE_WALLS'] },
 ]
 
 const HTF_BULLISH_INDICES = [21, 23, 24, 27, 29, 30, 32, 34, 35, 37]
@@ -2628,7 +2464,7 @@ function getInitialActiveChips(): string[] {
   return ['vol']
 }
 
-export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, fill = false, prose = true, derivatives, largeWalls, onCrosshairHover, history }: {
+export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, fill = false, prose = true, derivatives, largeWalls, wallMarket = 'all', onCrosshairHover, history }: {
   payload: ChartPayload
   history?: ChartHistory | undefined
   chartHeight?: number
@@ -2637,6 +2473,7 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
   prose?: boolean
   derivatives?: PanelDerivatives | null
   largeWalls?: PanelLargeOrders | null
+  wallMarket?: WallMarketFilter
   onCrosshairHover?: (timestamp: number | null) => void
 }): JSX.Element {
   const dark = useDark()
@@ -2684,6 +2521,11 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
       setSettings({ ...settings, RSI_GRID: { ...cur, visible: !cur.visible } })
       return
     }
+    if (id === 'vol') {
+      const cur = settings['VOL_TIER']
+      if (cur) setSettings({ ...settings, VOL_TIER: { ...cur, visible: !cur.visible } })
+      return
+    }
     setActiveChips(prev => {
       let next: string[]
       if (prev.includes(id)) {
@@ -2700,7 +2542,7 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
     const { text, state } = def.label(tf.indicators!)
     if (typeof state !== 'string' || state === '') return []
     const togglable = def.indicator !== undefined && (def.indicator.builtIn === true || hasSeries(tf, def.indicator.figures))
-    return [{ id: def.id, text: `${text} · ${zhState(state)}`, togglable, on: def.id === 'rsi' ? (settings['RSI_GRID']?.visible ?? false) : activeChips.includes(def.id) }]
+    return [{ id: def.id, text: `${text} · ${zhState(state)}`, togglable, on: def.id === 'rsi' ? (settings['RSI_GRID']?.visible ?? false) : def.id === 'vol' ? (settings['VOL_TIER']?.visible ?? false) : activeChips.includes(def.id) }]
   })
 
   const rows = (tf.annotations ?? [])
@@ -2801,6 +2643,7 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
         axisSettings={axisSettings}
         derivatives={derivatives}
         largeWalls={largeWalls}
+        wallMarket={wallMarket}
         onCrosshairHover={onCrosshairHover}
         history={historyForKline}
         onEditParams={() => setEditing(true)}

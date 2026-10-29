@@ -19,13 +19,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
 import type { ChartOwnerProps } from '@dsh-trading/client-frame/client'
-import { ChartBody, ChartErrorBoundary, matchDerivativeHistory, peekSettings, subscribeSettings } from './ChartCard.js'
+import { ChartBody, ChartErrorBoundary, peekSettings, subscribeSettings } from './ChartCard.js'
 import type { ChartHistory } from './ChartCard.js'
-import { derivativesAtBar } from './market-client.js'
+import { derivativesForTime } from './market-client.js'
 import { getLatestChart, subscribeLatestChart } from './latest.js'
 import { decideFollow } from './follow.js'
-import { combineMarks, mergeMarks, mergeTail, PANEL_TIMEFRAMES, postureColor, readMarks, recallMarks, rememberMarks, timeframesForSource, withCandles } from './market-client.js'
-import type { ChartMarks, MarketClient, PanelDerivatives, PanelLargeOrders, PanelMoneyFlow } from './market-client.js'
+import { combineMarks, filterWallsByMarket, isSpotWallMarket, mergeMarks, mergeTail, PANEL_TIMEFRAMES, postureColor, readMarks, recallMarks, rememberMarks, timeframesForSource, withCandles } from './market-client.js'
+import type { ChartMarks, MarketClient, PanelDerivatives, PanelLargeOrders, PanelMoneyFlow, WallMarketFilter } from './market-client.js'
 import type { ChartPayload } from './payload.js'
 import type { FundamentalsPackage, Orderbook } from '@dsh-trading/market-data'
 
@@ -339,11 +339,8 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
     }
   }, [market, symbol, providerId, live])
 
-  // Crosshair hover: same 15m window as ChartCard.matchDerivativeHistory (not 5m chips).
-  const historyBar = useMemo(() => {
-    if (!hoveredTime || !data?.history || data.history.length === 0) return null
-    return matchDerivativeHistory(data.history, hoveredTime, intervalMs) ?? null
-  }, [hoveredTime, data, intervalMs])
+  const target = useMemo(() => derivativesForTime(data ?? undefined, hoveredTime, intervalMs), [data, hoveredTime, intervalMs])
+  const hist = target !== undefined && 'isHistorical' in target && target.isHistorical === true
 
   if (providerId === 'cn' || data === null) return null
   if (failed !== null && data === undefined) {
@@ -351,16 +348,12 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
     return <div style={STRIP} title={failed}>合约数据获取失败（{failed.slice(0, 80)}），{DERIV_MS / 1000}s 后重试</div>
   }
 
-  // Historical hover: per-bar values only; missing → '—', never the live value.
-  const target = historyBar ? derivativesAtBar(data, historyBar) : data
-  const hist = historyBar !== null
-
   const show = (v: number | null | undefined, f: (n: number) => string): string =>
     v === null || v === undefined ? '—' : f(v)
   const countdown = target?.nextFundingTime ? formatCountdown(target.nextFundingTime, Date.now()) : ''
-  const shownReadings = historyBar
+  const shownReadings = hist
     ? [
-        ...(historyBar.readings ?? []),
+        ...(target?.readings ?? []),
         ...(data?.readings ?? []).filter(r => r.id === 'funding' || r.id === 'basis'),
       ]
     : (data?.readings ?? [])
@@ -371,44 +364,47 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
       title={failed !== null ? `刷新失败，显示的是旧数据：${failed}` : target ? `${target.source} USDT 永续 · ${new Date(target.time).toLocaleTimeString()}` : '加载中'}
     >
       {target ? <span>{target.source}</span> : null}
-      {historyBar ? (
+      {hist && target ? (
         <span style={{ background: 'rgba(255,167,38,0.2)', color: '#ffa726', padding: '0 4px', borderRadius: 3, fontWeight: 'bold' }}>
-          K线 {new Date(historyBar.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          历史 {new Date(target.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </span>
       ) : null}
       <span title="未平仓名义USDT=币数×标记价。跨所并列比，勿混口径。">OI名义<span style={VALUE}>{show(target?.openInterestValue, formatUsdtCn)}</span></span>
       <span title="未平仓币数；Δ%按币数算，避免价涨价跌伪装成平仓。">币数<span style={VALUE}>{show(target?.openInterest, n => compact.format(n))}</span></span>
       <span title="每8h结算。中性≈+0.01%/8h≈年化10.95%，不是看多。">
-        费率<span style={VALUE}>{show(target?.fundingRate, r => `${formatFunding(r)}/8h`)}</span>
+        {hist ? '当前费率' : '费率'}<span style={VALUE}>{show(target?.fundingRate, r => `${formatFunding(r)}/8h`)}</span>
         {data?.fundingRateAnnualizedPct != null ? <span style={{ marginLeft: 3, opacity: 0.85 }}>年化{data.fundingRateAnnualizedPct}%</span> : null}
         {data?.fundingLabel ? <span style={{ marginLeft: 3, opacity: 0.85 }}>{data.fundingLabel}</span> : null}
         {countdown !== '' ? <span style={{ marginLeft: 4 }}>{countdown}</span> : null}
       </span>
       {hist || target?.longShortRatio != null ? (
-        <span title="全市场账户数多空比。>1=净多账户，不是仓位。">账户人数比<span style={VALUE}>{show(target?.longShortRatio, n => n.toFixed(2))}</span></span>
+        <span title="本数据源指定合约的多头账户数÷空头账户数；>1仅表示多头账户更多，不能推断持仓量或价格方向。">账户人数比<span style={VALUE}>{show(target?.longShortRatio, n => n.toFixed(2))}</span></span>
       ) : null}
       {hist || target?.topPositionRatio != null ? (
-        <span title="大户持仓量多空比。>1=净多仓。">大户持仓比<span style={VALUE}>{show(target?.topPositionRatio, n => n.toFixed(2))}</span></span>
+        <span title="本数据源大户样本的多头持仓量÷空头持仓量；Binance样本为保证金余额前20%的用户。只代表样本内仓量，不代表全市场净仓或价格方向。">大户持仓比<span style={VALUE}>{show(target?.topPositionRatio, n => n.toFixed(2))}</span></span>
       ) : null}
       {hist || target?.topAccountRatio != null ? (
-        <span title="大户账户数比；与持仓比背离时更大仓在另一侧。">大户账户比<span style={VALUE}>{show(target?.topAccountRatio, n => n.toFixed(2))}</span></span>
+        <span title="本数据源大户样本的多头账户数÷空头账户数；按账户计数，不按仓量加权，不能直接推断资金去向。">大户账户比<span style={VALUE}>{show(target?.topAccountRatio, n => n.toFixed(2))}</span></span>
       ) : null}
       {hist || target?.takerBuySellRatio != null ? (
         <span title="主动买/卖量比（成交口径）">主动买卖<span style={VALUE}>{show(target?.takerBuySellRatio, n => n.toFixed(2))}</span></span>
       ) : null}
       {data?.cvd1h != null ? (
-        <span title={`近1h主动买卖差（币数，非USDT）。${data.cvdNote ?? ''} 仅描述背离，非信号。`}>CVD1h<span style={VALUE}>{compact.format(data.cvd1h)}</span>{data.cvdNote ? <span style={{ marginLeft: 3, opacity: 0.85 }}>{data.cvdNote}</span> : null}</span>
+        <span title={`近1h主动买卖差（币数，非USDT）。${data.cvdNote ?? ''} 仅描述背离，非信号。`}>{hist ? '当前CVD1h' : 'CVD1h'}<span style={VALUE}>{compact.format(data.cvd1h)}</span>{data.cvdNote ? <span style={{ marginLeft: 3, opacity: 0.85 }}>{data.cvdNote}</span> : null}</span>
       ) : null}
       {data?.basisPct != null ? (
-        <span title="标记相对指数；正=升水。">基差<span style={VALUE}>{`${data.basisPct >= 0 ? '+' : ''}${data.basisPct.toFixed(3)}%`}</span></span>
+        <span title="标记相对指数；正=升水。">{hist ? '当前基差' : '基差'}<span style={VALUE}>{`${data.basisPct >= 0 ? '+' : ''}${data.basisPct.toFixed(3)}%`}</span></span>
       ) : null}
       {data?.liquidationSummary ? (
-        <span title={data.liquidationSource && data.liquidationSource !== (data.source ?? '') ? `来源${data.liquidationSource}，与主所不同仅参考` : '近1h多/空爆仓名义'}>{data.liquidationSummary}</span>
+        <span title={data.liquidationSource && data.liquidationSource !== (data.source ?? '') ? `来源${data.liquidationSource}，与主所不同仅参考` : '近1h多/空爆仓名义'}>{hist ? '当前 ' : ''}{data.liquidationSummary}</span>
       ) : data && data.source && !data.liquidationSummary ? (
         <span style={{ opacity: 0.7 }} title="本所近1h爆仓暂无">爆仓 –</span>
       ) : null}
+      {hist && (target?.quadrant || target?.posture) ? (
+        <span title={target.quadrantNote ?? '该历史快照相对前一快照的价与持仓变化'}>当根 {target.quadrant ?? target.posture}</span>
+      ) : null}
       {hist && !target?.quadrant && !target?.posture ? <span title="该K线无姿态数据">姿态 —</span> : null}
-      {target?.quadrant || target?.posture ? (
+      {!hist && (target?.quadrant || target?.posture) ? (
         <span
           title={`价×仓姿态(按币数Δ)。1h价 ${target.priceChangePct1h != null ? (target.priceChangePct1h > 0 ? '+' : '') + target.priceChangePct1h.toFixed(2) + '%' : '—'} 仓 ${target.oiChangePct1h != null ? (target.oiChangePct1h > 0 ? '+' : '') + target.oiChangePct1h.toFixed(2) + '%' : '—'}；4h仓 ${data?.oiChangePct4h != null ? (data.oiChangePct4h > 0 ? '+' : '') + data.oiChangePct4h.toFixed(2) + '%' : '—'}；24h仓 ${data?.oiChangePct24h != null ? (data.oiChangePct24h > 0 ? '+' : '') + data.oiChangePct24h.toFixed(2) + '%' : '—'}。涨+增仓=新仓推动；涨+减仓=空头回补。${target.quadrantNote ?? target.posture ?? ''}`}
           style={{
@@ -430,24 +426,10 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
           ) : null}
         </span>
       ) : null}
-      {historyBar?.quadrant || historyBar?.posture ? (
-        <span
-          title={historyBar.quadrantNote ? `这一根：${historyBar.quadrant}（${historyBar.quadrantNote}）` : '这一根相对上一根的价与持仓，不是近1小时'}
-          style={{
-            fontWeight: 600,
-            padding: '0 4px',
-            borderRadius: 3,
-            background: postureColor(historyBar.quadrant ?? historyBar.posture).bg,
-            color: postureColor(historyBar.quadrant ?? historyBar.posture).color,
-          }}
-        >
-          当根 {historyBar.quadrant ?? historyBar.posture}
-        </span>
-      ) : null}
       {shownReadings.map(r => (
         <span
           key={r.id}
-          title={(historyBar && (r.id === 'funding' || r.id === 'basis') ? '当前，不是这一根。' : '') + r.note}
+          title={(hist && (r.id === 'funding' || r.id === 'basis') ? '当前，不是这一根。' : '') + r.note}
           style={{
             fontSize: 10.5,
             padding: '1px 5px',
@@ -457,7 +439,7 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
             color: r.tone === 'warn' ? '#ffa726' : 'inherit',
           }}
         >
-          {r.label}
+          {hist && (r.id === 'funding' || r.id === 'basis') ? '当前 ' : ''}{r.label}
         </span>
       ))}
       {target?.crowdVsWhale ? (
@@ -497,32 +479,28 @@ function formatWallAge(startTime: number, currentTime?: number): string {
 
 function marketBadgeText(market?: string): string {
   if (!market) return ''
-  const m = market.toLowerCase()
-  if (m === 'spot' || m === '10') return '现货'
-  return '合约'
+  return isSpotWallMarket(market) ? '现货' : '合约'
 }
 
 function LargeWallsStrip({
   wallsData,
   currentPrice,
+  marketFilter,
+  onMarketFilter,
   onRefresh,
 }: {
   wallsData: PanelLargeOrders | null
   currentPrice?: number | undefined
+  marketFilter: WallMarketFilter
+  onMarketFilter: (next: WallMarketFilter) => void
   onRefresh?: () => void
 }): JSX.Element | null {
   const [bookOpen, setBookOpen] = useState(false)
-  const [marketFilter, setMarketFilter] = useState<'all' | 'spot' | 'perp'>('all')
   const [sideFilter, setSideFilter] = useState<'all' | 'buy' | 'sell'>('all')
 
   if (!wallsData || !wallsData.walls || wallsData.walls.length === 0) return null
 
-  const filteredWalls = wallsData.walls.filter(w => {
-    if (marketFilter === 'all') return true
-    const m = (w.market ?? '').toLowerCase()
-    const isSpot = m === 'spot' || m === '10'
-    return marketFilter === 'spot' ? isSpot : !isSpot
-  })
+  const filteredWalls = filterWallsByMarket(wallsData.walls, marketFilter)
 
   const buys = filteredWalls
     .filter(w => w.side === 'buy')
@@ -577,7 +555,7 @@ function LargeWallsStrip({
         </span>
         <span style={{ display: 'inline-flex', gap: 3 }}>
           {([['all', '全部'], ['perp', '合约'], ['spot', '现货']] as const).map(([k, label]) => (
-            <button key={k} type="button" style={pillBtn(marketFilter === k)} onClick={() => setMarketFilter(k)}>
+            <button key={k} type="button" style={pillBtn(marketFilter === k)} onClick={() => onMarketFilter(k)}>
               {label}
             </button>
           ))}
@@ -980,6 +958,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
   const [panelDerivatives, setPanelDerivatives] = useState<PanelDerivatives | null>(null)
   const [panelLargeWalls, setPanelLargeWalls] = useState<PanelLargeOrders | null>(null)
   const [largeWallsOn, setLargeWallsOn] = useState(() => peekSettings()['LARGE_WALLS']?.visible ?? false)
+  const [wallMarket, setWallMarket] = useState<WallMarketFilter>('all')
   const [hoveredTime, setHoveredTime] = useState<number | null>(null)
   const followTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const inflight = useRef<AbortController | null>(null)
@@ -1665,6 +1644,8 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
                 key="large-walls-strip"
                 wallsData={panelLargeWalls}
                 currentPrice={payload.timeframes[0]?.candles[payload.timeframes[0].candles.length - 1]?.close}
+                marketFilter={wallMarket}
+                onMarketFilter={setWallMarket}
                 onRefresh={() => pullLargeWallsRef.current?.()}
               />
             ) : null}
@@ -1743,7 +1724,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
             : payload !== null
               ? (
                 <ChartErrorBoundary>
-                  <ChartBody payload={payload} history={payload === own || payload === merged?.payload ? history : undefined} shell={PANEL_SHELL} fill prose={false} derivatives={panelDerivatives} largeWalls={panelLargeWalls} onCrosshairHover={setHoveredTime} />
+                  <ChartBody payload={payload} history={payload === own || payload === merged?.payload ? history : undefined} shell={PANEL_SHELL} fill prose={false} derivatives={panelDerivatives} largeWalls={panelLargeWalls} wallMarket={wallMarket} onCrosshairHover={setHoveredTime} />
                 </ChartErrorBoundary>
               )
               : (

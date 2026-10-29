@@ -76,10 +76,10 @@ describe('sanitizeSettings', () => {
       MTF_SR: { params: [5], visible: false },
       AICOIN_KPATTERN: { params: [...KP_DEFAULTS], visible: false },
       AICOIN_TD: { params: [...TD_DEFAULTS], visible: false },
+      VOL_TIER: { params: [4], visible: true },
       OI_POSTURE: { params: [], visible: true },
       RSI_GRID: { params: [7, 30, 60, 10], visible: true },
       REVPOINT: { params: [...REVPOINT_PARAM_DEFAULTS], visible: true },
-      LSR_RATIO: { params: [], visible: true },
       ENTRY_SIGNAL: { params: [60, 4], visible: false },
       LARGE_WALLS: { params: [100, 20, 8], visible: false },
     })
@@ -99,7 +99,12 @@ describe('sanitizeSettings', () => {
     expect(oldRp.params.slice(0, 9)).toEqual([0.9, 2.5, 4, 1, 0, 1, 0, 1, 2])
     expect(oldRp.params.length).toBe(REVPOINT_PARAM_DEFAULTS.length)
     expect(s['OI_POSTURE']).toEqual({ params: [], visible: true })
-    expect(s['LSR_RATIO']).toEqual({ params: [], visible: true })
+    expect(s).not.toHaveProperty('LSR_RATIO')
+  })
+  it('discards a saved enabled LSR pane while keeping OI available', () => {
+    const s = sanitizeSettings({ LSR_RATIO: { params: [], visible: true } })
+    expect(s).not.toHaveProperty('LSR_RATIO')
+    expect(s['OI_POSTURE']?.visible).toBe(true)
   })
   it('LARGE_WALLS defaults to 100万 and clamps out-of-range', () => {
     expect(sanitizeSettings(null)['LARGE_WALLS']).toEqual({ params: [100, 20, 8], visible: false })

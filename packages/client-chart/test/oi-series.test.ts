@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { contractOpenInterest, postureColor } from '../src/client/market-client.js'
 import type { PanelDerivativeBar } from '../src/client/market-client.js'
 import {
-  calcLsrRatioRows,
   calcOiPostureRows,
   matchDerivativeHistory,
 } from '../src/client/ChartCard.js'
@@ -32,7 +31,7 @@ function bar(partial: Partial<PanelDerivativeBar> & { time: string }): PanelDeri
   }
 }
 
-describe('OI_POSTURE / LSR_RATIO series', () => {
+describe('OI_POSTURE series', () => {
   const t0 = Date.parse('2026-10-15T00:00:00Z')
   const history: PanelDerivativeBar[] = [
     bar({
@@ -60,10 +59,15 @@ describe('OI_POSTURE / LSR_RATIO series', () => {
     { timestamp: t0 + 30 * 60_000 }, // no match within 15m of a sparsely spaced hist? 30m from last is 15m - borderline
   ]
 
-  it('matchDerivativeHistory picks the nearest bar within 15 minutes', () => {
+  it('matchDerivativeHistory picks the latest preceding bar within 15 minutes', () => {
     expect(matchDerivativeHistory(history, t0)?.openInterest).toBe(90_000)
     expect(matchDerivativeHistory(history, t0 + 15 * 60_000)?.longShortRatio).toBe(1.42)
     expect(matchDerivativeHistory(history, t0 + 40 * 60_000)).toBeUndefined()
+  })
+
+  it('never uses a future snapshot even when it is closer to a small candle', () => {
+    expect(matchDerivativeHistory(history, t0 + 14 * 60_000, 60_000)?.openInterest).toBe(90_000)
+    expect(matchDerivativeHistory(history, t0 - 60_000, 60_000)).toBeUndefined()
   })
 
   it('OI_POSTURE draws coin OI + MA only (ratios are not figure keys)', () => {
@@ -98,18 +102,8 @@ describe('OI_POSTURE / LSR_RATIO series', () => {
     },
   )
 
-  it('LSR_RATIO draws account ratio + top position ratio with mid=1 boundary', () => {
-    const rows = calcLsrRatioRows(candles.slice(0, 2), history)
-    expect(rows[0]).toEqual(expect.objectContaining({ lsr: 1.40, topPos: 1.55, topAcc: 1.48, mid: 1 }))
-    expect(rows[1]).toEqual(expect.objectContaining({ lsr: 1.42, topPos: 0.95, topAcc: 1.50, mid: 1 }))
-    // >1 net-long / <1 net-short is a display convention on the drawn values
-    expect(rows[0]!.lsr!).toBeGreaterThan(1)
-    expect(rows[1]!.topPos!).toBeLessThan(1)
-  })
-
-  it('empty history yields empty rows for both indicators', () => {
+  it('empty history yields empty OI rows', () => {
     expect(calcOiPostureRows(candles, [], 14)).toEqual([{}, {}, {}])
-    expect(calcLsrRatioRows(candles, [])).toEqual([{}, {}, {}])
   })
 })
 
