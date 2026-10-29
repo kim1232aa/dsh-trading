@@ -19,6 +19,7 @@ import type { Chart, KLineData } from 'klinecharts'
 import {
   createCandleDataLoader,
   createIndicatorInPane,
+  ensureChartThemes,
   hasIndicator,
   overrideIndicator as overrideInd,
   periodFromTimeframe,
@@ -28,6 +29,7 @@ import {
   yAxisNameForCoord,
 } from './kline-v10.js'
 import type { BarSubscriber } from './kline-v10.js'
+import { ChartTools } from './ChartTools.js'
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 import { publishLatestChart } from './latest.js'
 import { annotationDigest, contentText, readChartPayload } from './payload.js'
@@ -1146,6 +1148,9 @@ export interface ChartHistory {
   load: (beforeMs: number) => Promise<ChartTimeframeData['candles']>
   /** Merge the bars the canvas just prepended into the payload's series. */
   commit: (older: ChartTimeframeData['candles']) => void
+  /** Optional: bars strictly newer than `afterMs` (DataLoader type=backward). */
+  loadNewer?: (afterMs: number) => Promise<ChartTimeframeData['candles']>
+  commitNewer?: (newer: ChartTimeframeData['candles']) => void
 }
 
 /**
@@ -1194,6 +1199,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   // already unmounted. One id per mount.
   const chartDomId = useRef(`dsh-kline-${++chartDomSeq}`)
   const chartRef = useRef<Chart | null>(null)
+  const [chartReady, setChartReady] = useState(0)
   /** Live-bar sink from DataLoader.subscribeBar (klinecharts 10). */
   const barSubscribeRef = useRef<BarSubscriber>(null)
   const ohlcParkCleanup = useRef<(() => void) | null>(null)
@@ -1228,6 +1234,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     const palette = dark ? DARK : LIGHT
     const chart = init(container, {
       locale: 'zh-CN',
+      timezone: 'Asia/Tokyo',
       layout: {
         pane: { height: PANE_HEIGHT, minHeight: 40 },
         yAxis: { position: 'right', inside: false, scrollZoomEnabled: true },
@@ -1235,8 +1242,14 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     })
     if (chart === null) return
     chartRef.current = chart
+    setChartReady(n => n + 1)
     const applyFold = createMainPaneTooltipFold(chart, FOLD_EXEMPT)
     const data = latest.current
+    // Named themes for toolbar switch (registerStyles); initial paint still uses object styles.
+    ensureChartThemes({
+      dark: klineStyles(DARK, axisSettings.coordType) as never,
+      light: klineStyles(LIGHT, axisSettings.coordType) as never,
+    })
     chart.setStyles(klineStyles(palette, axisSettings.coordType))
     const applyOhlcPark = () => chart.setStyles(ohlcTooltipAvoidTable(settingsRef.current['REVPOINT']?.visible ?? false, chart.getSize('candle_pane', 'main' as never)?.width ?? 0))
     applyOhlcPark()
@@ -1260,6 +1273,10 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     if (historyRef.current) {
       loaderOpts.loadOlder = (beforeMs) => historyRef.current!.load(beforeMs)
       loaderOpts.commitOlder = (rows) => { historyRef.current?.commit(rows as typeof latest.current.candles) }
+      if (historyRef.current.loadNewer) {
+        loaderOpts.loadNewer = (afterMs) => historyRef.current!.loadNewer!(afterMs)
+        loaderOpts.commitNewer = (rows) => { historyRef.current?.commitNewer?.(rows as typeof latest.current.candles) }
+      }
     }
     chart.setDataLoader(createCandleDataLoader(loaderOpts))
     for (const def of EDITABLE) {
@@ -1309,6 +1326,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     return () => {
       observer.disconnect()
       chartRef.current = null
+      setChartReady(0)
       barSubscribeRef.current = null
       mountedChips.current = new Map()
       annotationOverlayIds.current = []
@@ -1715,6 +1733,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   return (
     <div style={{ position: 'relative', width: '100%', ...(fill ? { flex: '1 1 auto', minHeight: 240 } : { height: baseHeight + paneCount * PANE_HEIGHT }) }}>
       <div ref={el} style={{ width: '100%', height: '100%' }} />
+      {chartReady > 0 ? <ChartTools chart={chartRef.current} dark={dark} /> : null}
       {vbToasts.length > 0 && (
         <div role="status" aria-label="指标提醒" style={{ position: 'absolute', right: 70, top: 8, zIndex: 5, display: 'flex', flexDirection: 'column', gap: 4, pointerEvents: 'auto' }}>
           {vbToasts.map(t => (
