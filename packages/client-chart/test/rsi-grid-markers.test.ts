@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { readFileSync } from "node:fs"
 import { rsiGridMarksIndicator } from "../src/client/indicators/rsi-grid.js"
+import { mockChart } from "../src/client/indicators/draw-context.js"
 
 type K = { open: number; high: number; low: number; close: number; timestamp: number }
 const raw = JSON.parse(readFileSync(new URL("./fixtures/btcusdt-15m-binance-20261015.json", import.meta.url), "utf8")) as number[][]
@@ -17,8 +18,8 @@ function mockCtx() {
 function draw(list: K[], from: number, to: number) {
   const result = rsiGridMarksIndicator.calc(list, { calcParams: P })
   const ctx = mockCtx()
-  rsiGridMarksIndicator.draw({ ctx, indicator: { calcParams: P, result }, xAxis: { convertToPixel: i => i * 10 }, yAxis: { convertToPixel: v => v / 100 },
-    visibleRange: { from, to }, bounding: { width: 20000 }, kLineDataList: list })
+  rsiGridMarksIndicator.draw({ ctx, chart: mockChart({ visibleRange: { from, to }, kLineDataList: list }), indicator: { calcParams: P, result }, xAxis: { convertToPixel: i => i * 10 }, yAxis: { convertToPixel: v => v / 100 },
+    bounding: { width: 20000 } })
   return { ctx, result }
 }
 

@@ -7,6 +7,7 @@
  */
 import { formatPrice } from '../precision.js'
 import { parseTimeframeSeconds } from './mtf-sr.js'
+import { resolveDrawContext, type ChartDrawApi } from './draw-context.js'
 
 export interface DvCandle {
   open: number; high: number; low: number; close: number
@@ -653,15 +654,14 @@ export const dualViewHtfIndicator = {
     ]
     return { name: '双视HTF形态', calcParamsText: `(${P.htfTf},${P.numCandles})`, legends, features: [] }
   },
-  draw: ({ ctx, indicator, xAxis, yAxis, visibleRange, kLineDataList }: {
+  draw: ({ ctx, chart, indicator, xAxis, yAxis }: {
     ctx: CanvasRenderingContext2D
+    chart: ChartDrawApi
     indicator: { result: DvRow[]; calcParams: number[] }
     xAxis: { convertToPixel: (v: number) => number }
     yAxis: { convertToPixel: (v: number) => number }
-    visibleRange: { from: number; to: number }
-    bounding: { height: number; width: number }
-    kLineDataList: { high?: number; low?: number; timestamp?: number }[]
   }) => {
+    const { visibleRange, kLineDataList } = resolveDrawContext(chart)
     const rows = indicator.result
     if (!rows.length) return false
     const P = sanitizeDvParams(indicator.calcParams)

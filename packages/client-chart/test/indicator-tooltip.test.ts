@@ -4,6 +4,7 @@ import { klineStyles, seriesRows } from '../src/client/ChartCard.js'
 import type { ChartTimeframeData } from '../src/client/payload.js'
 import { createMainPaneTooltipFold } from '../src/client/indicator-tooltip.js'
 import { rsiGridIndicator } from '../src/client/indicators/rsi-grid.js'
+import { mockChart } from '../src/client/indicators/draw-context.js'
 
 const palette = { bg: '#fff', text: '#333c45', faint: '#8b949e', line: '#e5e8eb', up: '#26a17b', down: '#e0563f' }
 
@@ -34,7 +35,7 @@ describe('subplot numerical legends', () => {
     const bars = [100, 101, 99, 102, 100].map((close) => ({ open: close, high: close + 1, low: close - 1, close }))
     const result = rsiGridIndicator.calc(bars, { calcParams })
     const tooltip = (dataIndex?: number) => rsiGridIndicator.createTooltipDataSource({
-      indicator: { calcParams, result }, crosshair: { dataIndex }, kLineDataList: bars,
+      chart: mockChart({ kLineDataList: bars }), indicator: { calcParams, result }, crosshair: { dataIndex },
     })
     expect(tooltip().legends[0]!.value.text).toBe(result.at(-1)!.rsi!.toFixed(2))
     expect(tooltip(2).legends[0]!.value.text).toBe(result[2]!.rsi!.toFixed(2))

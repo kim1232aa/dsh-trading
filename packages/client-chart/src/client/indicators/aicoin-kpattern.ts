@@ -10,6 +10,8 @@
  * - 插件适配（AiCoin 没有的）：跟随图表主题涨跌色、标签碰撞避让（完整→简写→三角）、未收盘 K 线半透明、showLast、百度扩展形态独立开关。
  * - highest/lowest 回看窗口不足（K 线历史开头几根）视为 nan，比较结果为 false。
  */
+import { resolveDrawContext, type ChartDrawApi } from './draw-context.js'
+
 export interface KpCandle { open: number; high: number; low: number; close: number }
 
 export const KP_PLOTS = [
@@ -664,13 +666,11 @@ export function createKPatternTooltipDataSource({ indicator, crosshair }: {
 
 interface DrawArgs {
   ctx: CanvasRenderingContext2D
+  chart: ChartDrawApi
   indicator: { calcParams: number[]; result: KpRow[]; extendData?: unknown }
   xAxis: { convertToPixel: (val: number) => number }
   yAxis: { convertToPixel: (val: number) => number }
-  visibleRange: { from: number; to: number }
   bounding?: { width: number; height: number }
-  barSpace?: { bar?: number }
-  kLineDataList: { high?: number; low?: number }[]
 }
 
 interface Rect { x0: number; x1: number; y0: number; y1: number }
@@ -680,7 +680,8 @@ interface Rect { x0: number; x1: number; y0: number; y1: number }
  * 与 AiCoin 不同的是这里做碰撞避让 —— 相邻 K 线的标签不叠在一起：
  * 自动模式依次尝试 完整文字 → 简写 → 小三角；最后一根（未收盘）K 线半透明，可关闭。
  */
-export function drawKPatterns({ ctx, indicator, xAxis, yAxis, visibleRange, bounding, barSpace, kLineDataList }: DrawArgs): boolean {
+export function drawKPatterns({ ctx, chart, indicator, xAxis, yAxis, bounding }: DrawArgs): boolean {
+  const { visibleRange, kLineDataList, barSpace } = resolveDrawContext(chart)
   const rows = indicator.result
   if (!rows || rows.length === 0) return true
   const P = sanitizeKpParams(indicator.calcParams)

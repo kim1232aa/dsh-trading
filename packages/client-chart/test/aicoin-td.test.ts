@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { TD_DEFAULTS, TD_MARK_RESERVE, aicoinTdIndicator, aicoinTdMarksIndicator, calculateAicoinTd, drawTdMarks, migrateTdParams, sanitizeTdParams, tdAlertEvents, tdWantsMarks, tdWantsPane } from '../src/client/indicators/aicoin-td.js'
+import { mockChart } from '../src/client/indicators/draw-context.js'
 import { EDITABLE, sanitizeSettings } from '../src/client/ChartCard.js'
 
 const rows = (closes: number[]) => calculateAicoinTd(closes.map(close => ({ close })))
@@ -45,11 +46,11 @@ describe('AiCoin TD — plot styling / display', () => {
   it('figure styles: always respect panel colours', () => {
     const [up, dn] = aicoinTdIndicator.figures
     const off = { calcParams: [1, 0x00ff00, 2, 1, 0xff0000, 3, 1, 0] }
-    expect(up!.styles(null, off)).toEqual({ color: '#00ff00', size: 2 })
-    expect(dn!.styles(null, off)).toEqual({ color: '#ff0000', size: 3 })
+    expect(up!.styles({ indicator: off } as any)).toEqual({ color: '#00ff00', size: 2 })
+    expect(dn!.styles({ indicator: off } as any)).toEqual({ color: '#ff0000', size: 3 })
     const on = { calcParams: [1, 0x00ff00, 2, 1, 0xff0000, 3, 1, 1], extendData: { up: '#3ddc97', down: '#f47067' } }
-    expect(up!.styles(null, on)).toEqual({ color: '#00ff00', size: 2 })
-    expect(dn!.styles(null, on)).toEqual({ color: '#ff0000', size: 3 })
+    expect(up!.styles({ indicator: on } as any)).toEqual({ color: '#00ff00', size: 2 })
+    expect(dn!.styles({ indicator: on } as any)).toEqual({ color: '#ff0000', size: 3 })
   })
   it('display off blanks that plot only', () => {
     const data = [10, 11, 12, 13, 14].map(close => ({ close }))
@@ -79,9 +80,9 @@ describe('AiCoin TD — numbers on the candles', () => {
     const k = closes.map(c => ({ high: c + 1, low: c - 1, close: c }))
     drawTdMarks({
       ctx: ctx as never,
+      chart: mockChart({ visibleRange: { from: 0, to: k.length }, kLineDataList: k, barSpace: { bar: barSpace } }),
       indicator: { calcParams: params, result: calculateAicoinTd(k), extendData: { up: '#3ddc97', down: '#f47067' } },
       xAxis: { convertToPixel: i => i * 10 }, yAxis: { convertToPixel: v => 1000 - v },
-      visibleRange: { from: 0, to: k.length }, barSpace: { bar: barSpace }, kLineDataList: k,
     })
     return texts
   }

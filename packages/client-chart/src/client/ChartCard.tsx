@@ -668,9 +668,11 @@ export function macdHistColor(cur: number | undefined, prev: number | undefined)
   return growing ? SUBPLOT_COLORS.down : SUBPLOT_COLORS.downFade
 }
 
-type HistNeighbor = { indicatorData?: { hist?: number } }
-export function macdHistStyles(data: { prev?: HistNeighbor; current?: HistNeighbor }): Record<string, unknown> {
-  const color = macdHistColor(data.current?.indicatorData?.hist, data.prev?.indicatorData?.hist)
+type HistNeighbor = { hist?: number }
+/** klinecharts 10.x: styles receives { data, indicator, barSpace }; data.current IS the calc row. */
+export function macdHistStyles(params: { data?: { prev?: HistNeighbor | null; current?: HistNeighbor | null }; prev?: HistNeighbor | null; current?: HistNeighbor | null }): Record<string, unknown> {
+  const data = params.data ?? params
+  const color = macdHistColor(data.current?.hist, data.prev?.hist)
   return { color, borderColor: color, style: 'fill' }
 }
 
@@ -775,11 +777,12 @@ function ensureRegistered(): void {
       const maPeriod = (indicator.calcParams?.[0] as number | undefined) ?? 14
       return calcOiPostureRows(kLineDataList, history, maPeriod)
     },
-    createTooltipDataSource: ({ indicator, crosshair, kLineDataList }: {
+    createTooltipDataSource: ({ chart, indicator, crosshair }: {
+      chart: { getDataList: () => { timestamp?: number }[] }
       indicator: { calcParams?: number[]; extendData?: unknown; result?: Record<string, unknown>[] }
       crosshair: { dataIndex?: number; kLineData?: { timestamp?: number } }
-      kLineDataList: { timestamp?: number }[]
     }) => {
+      const kLineDataList = chart.getDataList()
       const res = indicator.result ?? []
       const history = (indicator.extendData ?? []) as PanelDerivativeBar[]
       if (!Array.isArray(history) || history.length === 0) {

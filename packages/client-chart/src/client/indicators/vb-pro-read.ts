@@ -5,6 +5,7 @@
  * fired in-chart by ChartCard when the user enables them (default off).
  */
 import { formatPrice } from '../precision.js'
+import { resolveDrawContext, type ChartDrawApi } from './draw-context.js'
 
 export interface VbCandle { high: number; low: number; close: number; open?: number; timestamp?: number }
 
@@ -299,15 +300,15 @@ export const vbProReadIndicator = {
     ]
     return { name: `波动带Pro·${name}`, calcParamsText: `(${indicator.calcParams.slice(0, VB_CALC_PARAMS).join(', ')})`, legends, features: [] }
   },
-  draw: ({ ctx, indicator, xAxis, yAxis, visibleRange, bounding, kLineDataList }: {
+  draw: ({ ctx, chart, indicator, xAxis, yAxis, bounding }: {
     ctx: CanvasRenderingContext2D
+    chart: ChartDrawApi
     indicator: { result: VbRow[]; calcParams: number[] }
     xAxis: { convertToPixel: (v: number) => number }
     yAxis: { convertToPixel: (v: number) => number }
-    visibleRange: { from: number; to: number }
     bounding: { height: number }
-    kLineDataList: { high?: number; low?: number }[]
   }) => {
+    const { visibleRange, kLineDataList } = resolveDrawContext(chart)
     const rows = indicator.result
     if (!rows || rows.length === 0) return false
     const from = Math.max(0, visibleRange.from - 1)

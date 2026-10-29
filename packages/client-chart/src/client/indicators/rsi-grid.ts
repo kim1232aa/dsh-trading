@@ -8,6 +8,7 @@ import { rsiGrid, rsiGridShortParams, RSI_GRID_DEFAULTS } from '../../../../tool
 import type { RsiGridBar } from '../../../../tool-market/src/rsi-grid.js'
 import { formatPrice } from '../precision.js'
 import { statusTableRect } from './revpoint-layout.js'
+import { resolveDrawContext, type ChartDrawApi } from './draw-context.js'
 
 type K = { open: number; high: number; low: number; close: number; timestamp?: number }
 type PositionRow = RsiGridBar & { inPos: boolean; posEntry?: number }
@@ -57,11 +58,12 @@ export const rsiGridIndicator = {
     { key: 'rsi', title: 'RSI: ', type: 'line', styles: () => ({ color: RSI_C }) },
   ],
   calc: (list: K[], ind: { calcParams: number[] }) => rsiGridRows(list, ind.calcParams),
-  createTooltipDataSource: ({ indicator, crosshair, kLineDataList }: {
+  createTooltipDataSource: ({ chart, indicator, crosshair }: {
+    chart: ChartDrawApi
     indicator: { calcParams: number[]; result: Row[] }
     crosshair: { dataIndex?: number }
-    kLineDataList: K[]
   }) => {
+    const kLineDataList = chart.getDataList() as unknown as K[]
     const res = indicator.result ?? []
     const i = Math.min(crosshair.dataIndex ?? res.length - 1, res.length - 1)
     const r = res[i]
@@ -81,14 +83,13 @@ export const rsiGridIndicator = {
       if (row.signal) legends.push({ title: '', value: { text: row.signal === 'entry' ? (short ? '触发进空' : '触发进多') : (short ? '触发平空' : '触发平多'), color: short ? SHORT_C : HIGH_C } })
     }
     if (r?.provisional) legends.push({ title: '', value: { text: '未收盘·不出新信号', color: '#768390' } })
-    return { calcParamsText: `(${indicator.calcParams[0]}｜多<${low}平≥${high} 空>${shortHigh}平≤${shortLow})`, legends, features: [] }
+    return { name: 'RSI网格', calcParamsText: `(${indicator.calcParams[0]}｜多<${low}平≥${high} 空>${shortHigh}平≤${shortLow})`, legends, features: [] }
   },
-  draw: ({ ctx, indicator, xAxis, yAxis, visibleRange, bounding }: {
+  draw: ({ ctx, indicator, xAxis, yAxis, bounding }: {
     ctx: CanvasRenderingContext2D
     indicator: { calcParams: number[]; result: Row[] }
     xAxis: { convertToPixel: (v: number) => number }
     yAxis: { convertToPixel: (v: number) => number }
-    visibleRange: { from: number; to: number }
     bounding: { width: number }
   }) => {
     const res = indicator.result ?? []
@@ -119,12 +120,11 @@ export const rsiGridIndicator = {
 
 type DrawArgs = {
   ctx: CanvasRenderingContext2D
+  chart?: ChartDrawApi
   indicator: { calcParams: number[]; result: Row[] }
   xAxis: { convertToPixel: (v: number) => number }
   yAxis: { convertToPixel: (v: number) => number }
-  visibleRange: { from: number; to: number }
   bounding: { width: number }
-  kLineDataList: K[]
 }
 
 /** Positive long strength and negative short strength; each retains its own unsigned strategy accumulator. */
@@ -179,7 +179,10 @@ export const rsiGridMarksIndicator = {
   figures: [],
   calc: (list: K[], ind: { calcParams: number[] }) => rsiGridRows(list, ind.calcParams),
   createTooltipDataSource: () => ({ name: '', calcParamsText: '', legends: [], features: [] }),
-  draw: ({ ctx, indicator, xAxis, yAxis, visibleRange, kLineDataList, bounding }: DrawArgs) => {
+  draw: ({ ctx, chart, indicator, xAxis, yAxis, bounding }: DrawArgs) => {
+    if (!chart) return false
+    const { visibleRange, kLineDataList: rawList } = resolveDrawContext(chart)
+    const kLineDataList = rawList as unknown as K[]
     const res = indicator.result ?? []
     ctx.save()
     ctx.font = FONT

@@ -151,11 +151,14 @@ export const volTierIndicator = {
       title: '量能: ',
       type: 'bar',
       baseValue: 0,
-      styles: (
-        data: { current?: { indicatorData?: VolTierRow } },
-        indicator?: { extendData?: { dark?: boolean } }
-      ) => {
-        const tier = data.current?.indicatorData?.tier ?? '无前值'
+      styles: ({
+        data,
+        indicator,
+      }: {
+        data: { current?: VolTierRow | null }
+        indicator: { extendData?: { dark?: boolean } }
+      }) => {
+        const tier = data.current?.tier ?? '无前值'
         const isDark = indicator?.extendData?.dark
           ?? (typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches)
         const color = VOLUME_TIER_THEME_COLORS[tier]?.[isDark ? 'dark' : 'light'] ?? '#6b7280'

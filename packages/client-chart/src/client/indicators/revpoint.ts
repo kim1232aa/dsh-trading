@@ -14,6 +14,7 @@ import { revPoint, REVPOINT_DEFAULTS, REVPOINT_HTF, starGlyphs, linePriceAt } fr
 import type { RevPointOpts, RevPointResult, RpLine, RpTf } from '../../../../tool-market/src/revpoint.js'
 import { formatPrice } from '../precision.js'
 import { statusTableRect, clampLabelBox, layoutEdgeTags, clipExtendX, tableMode } from './revpoint-layout.js'
+import { resolveDrawContext, type ChartDrawApi } from './draw-context.js'
 export { TABLE_W as REVPOINT_TABLE_W }
 
 type K = { open: number; high: number; low: number; close: number; volume?: number; timestamp?: number; time?: string }
@@ -181,14 +182,16 @@ export const revPointIndicator = {
     ] : []
     return { calcParamsText: '', legends: hits, features: [] }
   },
-  draw: ({ ctx, indicator, xAxis, yAxis, bounding, kLineDataList }: {
+  draw: ({ ctx, chart, indicator, xAxis, yAxis, bounding }: {
     ctx: CanvasRenderingContext2D
+    chart: ChartDrawApi
     indicator: { result: Row[] }
     xAxis: { convertToPixel: (v: number) => number }
     yAxis: { convertToPixel: (v: number) => number }
     bounding: { width: number; height: number }
-    kLineDataList: { open: number; high: number; low: number; close: number; volume?: number; timestamp: number }[]
   }) => {
+    const { kLineDataList: rawList } = resolveDrawContext(chart)
+    const kLineDataList = rawList as unknown as { open: number; high: number; low: number; close: number; volume?: number; timestamp: number }[]
     const rp = indicator.result?.[0]?.rp
     if (!rp) return false
     const op = rp.opts ?? REVPOINT_DEFAULTS

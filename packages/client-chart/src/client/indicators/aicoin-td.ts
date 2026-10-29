@@ -16,6 +16,8 @@
  * - 数字起始：从第 N 根开始标；K 线太密放不下数字时只标 9 和 13；突出 9 / 13。
  * - 计数到 9 / 13 的提醒（源码没有 alertcondition，属插件附加，默认关闭）。
  */
+import { resolveDrawContext, type ChartDrawApi } from './draw-context.js'
+
 export interface TdRow { oup: number; odn: number; up?: number; dn?: number }
 
 /** 参数槽位：0 显示UP 1 UP色(回落点/卖出结构) 2 UP线宽 3 显示Down 4 Down色(反弹点/买入结构) 5 Down线宽 | 6 显示方式 7 仅显示9和13 8 数字起始 9 突出9/13 10 提醒9 11 提醒13 */
@@ -119,8 +121,8 @@ export const aicoinTdIndicator = {
   precision: 0,
   calcParams: [...TD_DEFAULTS],
   figures: [
-    { key: 'up', title: 'UP: ', type: 'line', styles: (_d: unknown, ind: { calcParams: number[]; extendData?: unknown }) => { const P = sanitizeTdParams(ind.calcParams ?? []); return { color: tdColors(P, ind.extendData).up, size: P.upWidth } } },
-    { key: 'dn', title: 'Down: ', type: 'line', styles: (_d: unknown, ind: { calcParams: number[]; extendData?: unknown }) => { const P = sanitizeTdParams(ind.calcParams ?? []); return { color: tdColors(P, ind.extendData).dn, size: P.dnWidth } } },
+    { key: 'up', title: 'UP: ', type: 'line', styles: ({ indicator }: { indicator: { calcParams: number[]; extendData?: unknown } }) => { const P = sanitizeTdParams(indicator.calcParams ?? []); return { color: tdColors(P, indicator.extendData).up, size: P.upWidth } } },
+    { key: 'dn', title: 'Down: ', type: 'line', styles: ({ indicator }: { indicator: { calcParams: number[]; extendData?: unknown } }) => { const P = sanitizeTdParams(indicator.calcParams ?? []); return { color: tdColors(P, indicator.extendData).dn, size: P.dnWidth } } },
   ],
   calc: (dataList: readonly { close: number }[], ind: { calcParams: number[] }) => {
     const P = sanitizeTdParams(ind.calcParams ?? [])
@@ -130,18 +132,17 @@ export const aicoinTdIndicator = {
 
 interface MarkDrawArgs {
   ctx: CanvasRenderingContext2D
+  chart: ChartDrawApi
   indicator: { calcParams: number[]; result: TdRow[]; extendData?: unknown }
   xAxis: { convertToPixel: (val: number) => number }
   yAxis: { convertToPixel: (val: number) => number }
-  visibleRange: { from: number; to: number }
-  barSpace?: { bar?: number }
-  kLineDataList: { high?: number; low?: number }[]
 }
 
 const FONT_FAMILY = 'system-ui, "Segoe UI", "Microsoft YaHei UI", sans-serif'
 
 /** 主图数字：UP 标在高点上方，Down 标在低点下方；9 / 13 加粗放大；未收盘 K 线半透明。 */
-export function drawTdMarks({ ctx, indicator, xAxis, yAxis, visibleRange, barSpace, kLineDataList }: MarkDrawArgs): boolean {
+export function drawTdMarks({ ctx, chart, indicator, xAxis, yAxis }: MarkDrawArgs): boolean {
+  const { visibleRange, kLineDataList, barSpace } = resolveDrawContext(chart)
   const rows = indicator.result
   if (!rows || rows.length === 0) return true
   const P = sanitizeTdParams(indicator.calcParams ?? [])

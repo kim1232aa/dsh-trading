@@ -14,6 +14,7 @@ import {
   sanitizeNwParams,
   type KernelType,
 } from '../src/client/indicators/nadaraya-watson.js'
+import { mockChart } from '../src/client/indicators/draw-context.js'
 
 /** calcParams with overrides by index (see NW_DEFAULTS layout). */
 const P = (o: Record<number, number>): number[] => { const p = [...NW_DEFAULTS]; for (const [k, v] of Object.entries(o)) p[Number(k)] = v; return p }
@@ -195,9 +196,11 @@ describe('draw (pine L122-153)', () => {
   const run = (params: number[]) => {
     const r = recorder()
     const ret = drawNadarayaWatson({
-      ctx: r.ctx as never, indicator: { calcParams: params, result: calculateNwFromParams(bars, params) },
+      ctx: r.ctx as never,
+      chart: mockChart({ visibleRange: { from: 0, to: 5 }, kLineDataList: bars }),
+      indicator: { calcParams: params, result: calculateNwFromParams(bars, params) },
       xAxis: { convertToPixel: i => i * 10 }, yAxis: { convertToPixel: v => 100 - v },
-      visibleRange: { from: 0, to: 5 }, bounding: { width: 60, height: 100 }, kLineDataList: bars,
+      bounding: { width: 60, height: 100 },
     })
     return { ...r, ret }
   }

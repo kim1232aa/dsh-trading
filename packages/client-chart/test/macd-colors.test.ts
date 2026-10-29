@@ -9,8 +9,8 @@ describe('MACD histogram colours', () => {
     expect(macdHistColor(-1, -2)).toBe(C.downFade)
     expect(macdHistColor(0.5, undefined)).toBe(C.up)
   })
-  it('styles callback reads klinecharts indicatorData neighbours', () => {
-    const s = macdHistStyles({ prev: { indicatorData: { hist: -3 } }, current: { indicatorData: { hist: -4 } } })
+  it('styles callback reads klinecharts 10.x calc-row neighbours', () => {
+    const s = macdHistStyles({ data: { prev: { hist: -3 }, current: { hist: -4 } } })
     expect(s.color).toBe(C.down)
   })
 })

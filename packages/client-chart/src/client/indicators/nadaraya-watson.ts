@@ -10,6 +10,7 @@
  */
 
 import { formatPrice } from '../precision.js'
+import { resolveDrawContext, type ChartDrawApi } from './draw-context.js'
 
 export type KernelType = 'Gaussian' | 'Epanechnikov' | 'Triangular' | 'Quartic' | 'Cosine' | 'Rational Quadratic'
 export type PresetType = 'Default' | 'Fast Response' | 'Smooth Trend'
@@ -372,17 +373,16 @@ export function createNadarayaWatsonTooltipDataSource({ indicator, crosshair }: 
 
 interface DrawArgs {
   ctx: CanvasRenderingContext2D
+  chart: ChartDrawApi
   indicator: { calcParams: number[]; result: NadarayaWatsonBarResult[] }
   xAxis: { convertToPixel: (val: number) => number }
   yAxis: { convertToPixel: (val: number) => number }
-  visibleRange: { from: number; to: number }
   bounding: { width: number; height: number }
-  barSpace?: { gapBar?: number; halfGapBar?: number } | undefined
-  kLineDataList: { open?: number; high?: number; low?: number; close?: number }[]
 }
 
 /** Draws exactly the Pine visuals (L122-153). Returns true: the default figure renderer is replaced. */
-export function drawNadarayaWatson({ ctx, indicator, xAxis, yAxis, visibleRange, bounding, barSpace, kLineDataList }: DrawArgs): boolean {
+export function drawNadarayaWatson({ ctx, chart, indicator, xAxis, yAxis, bounding }: DrawArgs): boolean {
+  const { visibleRange, kLineDataList, barSpace } = resolveDrawContext(chart)
   const rows = indicator.result
   if (!rows || rows.length === 0) return true
   const P = sanitizeNwParams(indicator.calcParams ?? [])

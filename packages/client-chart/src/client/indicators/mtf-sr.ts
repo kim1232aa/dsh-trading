@@ -5,6 +5,7 @@
  */
 
 import { formatPrice } from '../precision.js'
+import { resolveDrawContext, type ChartDrawApi } from './draw-context.js'
 
 export interface Candle {
   open?: number
@@ -949,7 +950,9 @@ export const mtfSRIndicator = {
   }) => {
     const row = crosshair.dataIndex !== undefined ? indicator.result?.[crosshair.dataIndex] : undefined
     return {
+      name: 'MTF SR',
       calcParamsText: '',
+      features: [],
       legends: [
         row?.res ? {
           title: '阻力: ',
@@ -976,13 +979,14 @@ export const mtfSRIndicator = {
       ].filter((x): x is NonNullable<typeof x> => x !== null),
     }
   },
-  draw: ({ ctx, indicator, xAxis, yAxis, visibleRange }: {
+  draw: ({ ctx, chart, indicator, xAxis, yAxis }: {
     ctx: CanvasRenderingContext2D
+    chart: ChartDrawApi
     indicator: { result: MtfSRBarPoint[] }
     xAxis: { convertToPixel: (val: number) => number }
     yAxis: { convertToPixel: (val: number) => number }
-    visibleRange: { from: number; to: number }
   }) => {
+    const { visibleRange } = resolveDrawContext(chart)
     const results = indicator.result
     if (!results || results.length === 0) return false
     const from = Math.max(0, visibleRange.from)

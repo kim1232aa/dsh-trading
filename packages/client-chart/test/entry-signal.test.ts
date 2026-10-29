@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { entrySignals, signalStatus } from '../../tool-market/src/signal.js'
 import { entrySignalIndicator, signalRows } from '../src/client/indicators/entry-signal.js'
 import { formatPrice } from '../src/client/precision.js'
+import { mockChart } from '../src/client/indicators/draw-context.js'
 
 const CLOSED = { lastBarClosed: true }
 const make = (i: number, close: number, spread = 1) => ({
@@ -101,9 +102,9 @@ describe('entry signal indicator confirmation and historical display', () => {
       measureText: (text: string) => ({ width: text.length * 6 }),
       fillText: (text: string) => texts.push(text),
     } as unknown as CanvasRenderingContext2D
-    entrySignalIndicator.draw({ ctx, indicator: { result: rows },
+    entrySignalIndicator.draw({ ctx, chart: mockChart({ visibleRange: { from: 0, to: rows.length }, kLineDataList: tiny }), indicator: { result: rows },
       xAxis: { convertToPixel: v => v * 3 }, yAxis: { convertToPixel: v => v * 1000 },
-      visibleRange: { from: 0, to: rows.length }, kLineDataList: tiny, bounding: { width: 1000 } })
+      bounding: { width: 1000 } })
     const index = rows.findIndex(r => r.signal !== undefined)
     const signal = rows[index]!.signal!
     const precision = rows[index]!.precision!

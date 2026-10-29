@@ -12,6 +12,7 @@
 import { advanceSignal, confirmedBarCount, entrySignals, signalStatus } from '../../../../tool-market/src/signal.js'
 import type { EntrySignal, SignalOptions, SignalStatus } from '../../../../tool-market/src/signal.js'
 import { detectPricePrecision, formatPrice } from '../precision.js'
+import { resolveDrawContext, type ChartDrawApi } from './draw-context.js'
 
 type K = { timestamp: number; open: number; high: number; low: number; close: number; volume?: number }
 type Row = { signal?: EntrySignal; status?: SignalStatus; tracked?: EntrySignal; asOfStatus?: SignalStatus; confirmed?: boolean; precision?: number }
@@ -79,6 +80,7 @@ export const entrySignalIndicator = {
     const precision = row?.precision ?? 2
     const c = s?.side === 'long' ? LONG : SHORT
     return {
+      name: '入场信号',
       calcParamsText: `(${indicator.calcParams.join(', ')})`,
       legends: [
         ...s === undefined ? [] : [
@@ -96,15 +98,16 @@ export const entrySignalIndicator = {
       features: [],
     }
   },
-  draw: ({ ctx, indicator, xAxis, yAxis, visibleRange, kLineDataList, bounding }: {
+  draw: ({ ctx, chart, indicator, xAxis, yAxis, bounding }: {
     ctx: CanvasRenderingContext2D
+    chart: ChartDrawApi
     indicator: { result: Row[] }
     xAxis: { convertToPixel: (v: number) => number }
     yAxis: { convertToPixel: (v: number) => number }
-    visibleRange: { from: number; to: number }
-    kLineDataList: K[]
     bounding: { width: number }
   }) => {
+    const { visibleRange, kLineDataList: rawList } = resolveDrawContext(chart)
+    const kLineDataList = rawList as unknown as K[]
     const res = indicator.result ?? []
     const basePrecision = detectPricePrecision(kLineDataList)
     ctx.save()

@@ -555,6 +555,7 @@ export const orderBlockIndicator = {
     const row = indicator.result[crosshair.dataIndex ?? indicator.result.length - 1]
     const params = indicator.calcParams ?? []
     return {
+      name: '订单块',
       calcParamsText: params.length ? `(${params.join(', ')})` : '',
       legends: [
         row?.bullOB ? { title: '买单块: ', value: { text: formatPrice(row.bullOB), color: '#22c55e' } } : null,

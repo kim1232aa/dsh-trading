@@ -148,12 +148,16 @@ describe('vol-tier indicator (量比分档量能)', () => {
     expect(figure.key).toBe('volume')
     expect(figure.type).toBe('bar')
 
-    const cbDataDark = { current: { indicatorData: { tier: '量比<1' as const, volume: 13.21 } } }
-    const resDark = figure.styles(cbDataDark as any, { extendData: { dark: true } } as any)
+    const resDark = figure.styles({
+      data: { current: { tier: '量比<1' as const, volume: 13.21 } },
+      indicator: { extendData: { dark: true } },
+    } as any)
     expect(resDark.color).toBe('#e8c552')
 
-    const cbDataLight = { current: { indicatorData: { tier: '量比<1' as const, volume: 13.21 } } }
-    const resLight = figure.styles(cbDataLight as any, { extendData: { dark: false } } as any)
+    const resLight = figure.styles({
+      data: { current: { tier: '量比<1' as const, volume: 13.21 } },
+      indicator: { extendData: { dark: false } },
+    } as any)
     expect(resLight.color).toBe('#d9a01f')
   })
 

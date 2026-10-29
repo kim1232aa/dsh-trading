@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { rsiGridIndicator, rsiGridCumIndicator, rsiGridMarksIndicator, rsiGridRows } from '../src/client/indicators/rsi-grid.js'
+import { mockChart } from '../src/client/indicators/draw-context.js'
 import { rsiGrid } from '../../tool-market/src/rsi-grid.js'
 
 const params = [7, 30, 60, 10]
@@ -20,9 +21,9 @@ function canvas() {
 function drawMarks(list: ReturnType<typeof bars>, to = list.length) {
   const result = rsiGridRows(list, params)
   const { ctx, texts } = canvas()
-  rsiGridMarksIndicator.draw({ ctx, indicator: { calcParams: params, result },
+  rsiGridMarksIndicator.draw({ ctx, chart: mockChart({ visibleRange: { from: 0, to }, kLineDataList: list }), indicator: { calcParams: params, result },
     xAxis: { convertToPixel: x => x * 10 }, yAxis: { convertToPixel: y => y },
-    visibleRange: { from: 0, to }, bounding: { width: 768 }, kLineDataList: list })
+    bounding: { width: 768 } })
   return texts
 }
 
@@ -63,7 +64,7 @@ describe('RSI grid bearish coverage', () => {
     const { ctx, texts } = canvas()
     rsiGridCumIndicator.draw({ ctx, indicator: { calcParams: params, result: rows },
       xAxis: { convertToPixel: x => x }, yAxis: { convertToPixel: y => y },
-      visibleRange: { from: 0, to: rows.length }, bounding: { width: 375 }, kLineDataList: bars() })
+      bounding: { width: 375 } })
     expect(texts.join(' ')).toContain('多阈值10')
     expect(texts.join(' ')).toContain('空阈值-10')
   })
@@ -77,7 +78,7 @@ describe('RSI grid bearish coverage', () => {
     const list = bars(), result = rsiGridRows(list, params)
     const i = result.findIndex(r => r.short?.inPos && r.short.posEntry !== undefined && list[result.indexOf(r)]!.close < r.short.posEntry)
     expect(i).toBeGreaterThan(-1)
-    const tooltip = rsiGridIndicator.createTooltipDataSource({ indicator: { calcParams: params, result }, crosshair: { dataIndex: i }, kLineDataList: list })
+    const tooltip = rsiGridIndicator.createTooltipDataSource({ chart: mockChart({ kLineDataList: list }), indicator: { calcParams: params, result }, crosshair: { dataIndex: i } })
     expect(tooltip.legends.some(v => v.title.includes('持空') && v.value.text.includes('+'))).toBe(true)
     expect(tooltip.legends.some(v => v.title.includes('空累计'))).toBe(true)
   })

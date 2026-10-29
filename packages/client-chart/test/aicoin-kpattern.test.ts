@@ -7,6 +7,7 @@ import {
   type KpCandle,
 } from '../src/client/indicators/aicoin-kpattern.js'
 import { EDITABLE, sanitizeSettings } from '../src/client/ChartCard.js'
+import { mockChart } from '../src/client/indicators/draw-context.js'
 
 /** Neutral bar: o=100 h=101 l=99 c=100 (no body, so no single-bar pattern can fire on it). */
 const base = (n: number): KpCandle[] => Array.from({ length: n }, () => ({ open: 100, high: 101, low: 99, close: 100 }))
@@ -269,12 +270,11 @@ describe('AiCoin K线形态 — drawing', () => {
     const m = mockCtx()
     drawKPatterns({
       ctx: m.ctx as never,
+      chart: mockChart({ visibleRange: { from: 0, to: c.length }, kLineDataList: c }),
       indicator: { calcParams: params, result: calculateKPatterns(c), extendData },
       xAxis: { convertToPixel: i => i * xStep },
       yAxis: { convertToPixel: v => 1000 - v },
-      visibleRange: { from: 0, to: c.length },
       ...(height !== undefined ? { bounding: { width: 1000, height } } : {}),
-      kLineDataList: c,
     })
     return m
   }

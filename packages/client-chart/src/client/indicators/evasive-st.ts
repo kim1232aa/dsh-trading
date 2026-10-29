@@ -8,6 +8,7 @@
  */
 
 import { formatPrice } from '../precision.js'
+import { resolveDrawContext, type ChartDrawApi } from './draw-context.js'
 
 export interface Candle {
   high: number
@@ -248,6 +249,7 @@ export const evasiveSuperTrendIndicator = {
     const row = indicator.result[crosshair.dataIndex ?? indicator.result.length - 1]
     const v = row?.stBand ?? row?.up ?? row?.dn
     return {
+      name: 'Evasive ST',
       calcParamsText: `(${indicator.calcParams.join(', ')})`,
       legends: v === undefined ? [] : [
         { title: '', value: { text: formatPrice(v), color: row?.trend === 1 ? EVASIVE_ST_DEFAULTS.bullColor : EVASIVE_ST_DEFAULTS.bearColor } },
@@ -259,14 +261,14 @@ export const evasiveSuperTrendIndicator = {
       features: [],
     }
   },
-  draw: ({ ctx, indicator, xAxis, yAxis, visibleRange, kLineDataList }: {
+  draw: ({ ctx, chart, indicator, xAxis, yAxis }: {
     ctx: CanvasRenderingContext2D
+    chart: ChartDrawApi
     indicator: { result: EvasiveSuperTrendResult[] }
     xAxis: { convertToPixel: (val: number) => number }
     yAxis: { convertToPixel: (val: number) => number }
-    visibleRange: { from: number; to: number }
-    kLineDataList: { high?: number; low?: number }[]
   }) => {
+    const { visibleRange, kLineDataList } = resolveDrawContext(chart)
     const results = indicator.result
     if (!results || results.length === 0) return false
     const from = Math.max(0, visibleRange.from)
