@@ -645,13 +645,13 @@ export const dualViewHtfIndicator = {
     const i = crosshair.dataIndex ?? indicator.result.length - 1
     const r = indicator.result[i]
     const tag = (text: string, color: string) => ({ title: { text: '', color }, value: { text, color } })
-    const values = [
+    const legends = [
       tag(`HTF ${getTimeframeLabel(P.htfTf)}`, P.centerColor),
       ...(r?.ma !== undefined ? [{ title: { text: 'MA: ', color: P.maColor }, value: { text: formatPrice(r.ma), color: P.maColor } }] : []),
       ...(last?.patterns?.[0]?.found ? [tag(last.patterns[0].text.replace(/\n/g, ' · '), P.labelBull)] : [tag('无最新完成K形态', P.centerColor)]),
       tag(`完成HTF: ${last?.completedCount ?? 0}`, P.centerColor),
     ]
-    return { name: '双视HTF形态', calcParamsText: `(${P.htfTf},${P.numCandles})`, values }
+    return { name: '双视HTF形态', calcParamsText: `(${P.htfTf},${P.numCandles})`, legends, features: [] }
   },
   draw: ({ ctx, indicator, xAxis, yAxis, visibleRange, kLineDataList }: {
     ctx: CanvasRenderingContext2D

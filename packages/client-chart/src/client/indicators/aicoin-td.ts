@@ -190,10 +190,10 @@ export const aicoinTdMarksIndicator = {
     const P = sanitizeTdParams(indicator.calcParams ?? [])
     const col = tdColors(P, indicator.extendData)
     const r = crosshair.dataIndex !== undefined ? indicator.result?.[crosshair.dataIndex] : undefined
-    const values: { title: string; value: { text: string; color: string } }[] = []
-    if (P.showUp && r?.up !== undefined) values.push({ title: 'Up:', value: { text: String(r.up), color: col.up } })
-    if (P.showDn && r?.dn !== undefined) values.push({ title: 'Down:', value: { text: String(r.dn), color: col.dn } })
-    return { name: 'TD', calcParamsText: '', values, icons: [] }
+    const legends: { title: string; value: { text: string; color: string } }[] = []
+    if (P.showUp && r?.up !== undefined) legends.push({ title: 'Up:', value: { text: String(r.up), color: col.up } })
+    if (P.showDn && r?.dn !== undefined) legends.push({ title: 'Down:', value: { text: String(r.dn), color: col.dn } })
+    return { name: 'TD', calcParamsText: '', legends, features: [] }
   },
   draw: drawTdMarks,
 }

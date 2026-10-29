@@ -80,7 +80,7 @@ export const entrySignalIndicator = {
     const c = s?.side === 'long' ? LONG : SHORT
     return {
       calcParamsText: `(${indicator.calcParams.join(', ')})`,
-      values: [
+      legends: [
         ...s === undefined ? [] : [
           { title: '', value: { text: `${s.side === 'long' ? '多头观察' : '空头观察'}·已确认·${s.kind === 'flip' ? '翻转' : '回踩'}`, color: c } },
           { title: '参考: ', value: { text: formatSignalPrice(s.entry, precision), color: c } },
@@ -93,7 +93,7 @@ export const entrySignalIndicator = {
           ? [{ title: '当前K线: ', value: { text: '等待收盘，不确认新信号', color: '#ffa726' } }]
           : [],
       ],
-      icons: [],
+      features: [],
     }
   },
   draw: ({ ctx, indicator, xAxis, yAxis, visibleRange, kLineDataList, bounding }: {

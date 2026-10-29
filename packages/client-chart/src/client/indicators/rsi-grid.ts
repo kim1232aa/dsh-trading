@@ -67,7 +67,7 @@ export const rsiGridIndicator = {
     const r = res[i]
     const [, low, high, th] = indicator.calcParams
     const [, shortLow, shortHigh] = rsiGridShortParams(indicator.calcParams)
-    const values: { title: string; value: { text: string; color: string } }[] = r === undefined ? [] : [
+    const legends: { title: string; value: { text: string; color: string } }[] = r === undefined ? [] : [
       { title: 'RSI: ', value: { text: r.rsi === null ? '–' : r.rsi.toFixed(2), color: RSI_C } },
       { title: '多累计: ', value: { text: r.rsi === null ? '–' : `${r.cum.toFixed(2)}/${th}`, color: CUM_C } },
       { title: '空累计: ', value: { text: r.rsi === null ? '–' : `${r.shortCum.toFixed(2)}/-${th}`, color: SHORT_C } },
@@ -76,12 +76,12 @@ export const rsiGridIndicator = {
       if (row.inPos && row.posEntry !== undefined) {
         const c = kLineDataList[i]?.close ?? row.posEntry
         const pnl = 100 * (short ? row.posEntry - c : c - row.posEntry) / row.posEntry
-        values.push({ title: short ? '持空 ' : '持多 ', value: { text: `@${formatPrice(row.posEntry)} ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%`, color: pnl >= 0 ? HIGH_C : LOW_C } })
+        legends.push({ title: short ? '持空 ' : '持多 ', value: { text: `@${formatPrice(row.posEntry)} ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%`, color: pnl >= 0 ? HIGH_C : LOW_C } })
       }
-      if (row.signal) values.push({ title: '', value: { text: row.signal === 'entry' ? (short ? '触发进空' : '触发进多') : (short ? '触发平空' : '触发平多'), color: short ? SHORT_C : HIGH_C } })
+      if (row.signal) legends.push({ title: '', value: { text: row.signal === 'entry' ? (short ? '触发进空' : '触发进多') : (short ? '触发平空' : '触发平多'), color: short ? SHORT_C : HIGH_C } })
     }
-    if (r?.provisional) values.push({ title: '', value: { text: '未收盘·不出新信号', color: '#768390' } })
-    return { calcParamsText: `(${indicator.calcParams[0]}｜多<${low}平≥${high} 空>${shortHigh}平≤${shortLow})`, values, icons: [] }
+    if (r?.provisional) legends.push({ title: '', value: { text: '未收盘·不出新信号', color: '#768390' } })
+    return { calcParamsText: `(${indicator.calcParams[0]}｜多<${low}平≥${high} 空>${shortHigh}平≤${shortLow})`, legends, features: [] }
   },
   draw: ({ ctx, indicator, xAxis, yAxis, visibleRange, bounding }: {
     ctx: CanvasRenderingContext2D
@@ -144,7 +144,7 @@ export const rsiGridCumIndicator = {
     const rows = indicator.result ?? []
     const row = rows[Math.min(crosshair.dataIndex ?? rows.length - 1, rows.length - 1)]
     const value = (n: number) => row?.rsi === null ? '–' : n.toFixed(2)
-    return { calcParamsText: `(多+ 空−｜±${indicator.calcParams[3] ?? 10})`, icons: [], values: row ? [
+    return { calcParamsText: `(多+ 空−｜±${indicator.calcParams[3] ?? 10})`, features: [], legends: row ? [
       { title: '多累计: ', value: { text: value(row.cum), color: CUM_C } },
       { title: '空累计: ', value: { text: value(row.shortCum), color: SHORT_C } },
     ] : [] }
@@ -178,7 +178,7 @@ export const rsiGridMarksIndicator = {
   calcParams: [...RSI_GRID_DEFAULTS],
   figures: [],
   calc: (list: K[], ind: { calcParams: number[] }) => rsiGridRows(list, ind.calcParams),
-  createTooltipDataSource: () => ({ name: '', calcParamsText: '', values: [], icons: [] }),
+  createTooltipDataSource: () => ({ name: '', calcParamsText: '', legends: [], features: [] }),
   draw: ({ ctx, indicator, xAxis, yAxis, visibleRange, kLineDataList, bounding }: DrawArgs) => {
     const res = indicator.result ?? []
     ctx.save()

@@ -651,7 +651,7 @@ export function createKPatternTooltipDataSource({ indicator, crosshair }: {
   const theme = asKpTheme(indicator.extendData)
   const i = crosshair.dataIndex
   const row = i !== undefined ? indicator.result?.[i] : undefined
-  const values = [
+  const legends = [
     ...KP_PLOTS.flatMap((p, k) => (P.show[k] && row?.[p.key]
       ? [{ title: p.title + ': ', value: { text: p.text, color: kpStyle(P, k, theme).text } }]
       : [])),
@@ -659,7 +659,7 @@ export function createKPatternTooltipDataSource({ indicator, crosshair }: {
       ? [{ title: p.title + ': ', value: { text: p.text, color: kpStyle(P, KP_N + j, theme).text } }]
       : [])),
   ]
-  return { name: 'K线形态', calcParamsText: '', values, icons: [] }
+  return { name: 'K线形态', calcParamsText: '', legends, features: [] }
 }
 
 interface DrawArgs {

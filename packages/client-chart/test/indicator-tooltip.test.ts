@@ -11,7 +11,9 @@ describe('subplot numerical legends', () => {
   it('keeps subplot names, parameters, and values visible without a crosshair', () => {
     const styles = klineStyles(palette) as { indicator: { tooltip: Record<string, unknown> }; candle: { tooltip: Record<string, unknown> } }
     expect(styles.indicator.tooltip).toMatchObject({
-      showRule: 'always', showType: 'standard', showName: true, showParams: true, defaultValue: '—',
+      showRule: 'always', showType: 'standard',
+      title: { showName: true, showParams: true },
+      legend: { defaultValue: '—' },
     })
     expect(styles.candle.tooltip.showType).toBe('rect')
   })
@@ -34,38 +36,37 @@ describe('subplot numerical legends', () => {
     const tooltip = (dataIndex?: number) => rsiGridIndicator.createTooltipDataSource({
       indicator: { calcParams, result }, crosshair: { dataIndex }, kLineDataList: bars,
     })
-    expect(tooltip().values[0]!.value.text).toBe(result.at(-1)!.rsi!.toFixed(2))
-    expect(tooltip(2).values[0]!.value.text).toBe(result[2]!.rsi!.toFixed(2))
-    expect(tooltip(2).values[0]!.value.text).not.toBe(tooltip().values[0]!.value.text)
-    expect(tooltip(0).values[0]!.value.text).toBe('–')
+    expect(tooltip().legends[0]!.value.text).toBe(result.at(-1)!.rsi!.toFixed(2))
+    expect(tooltip(2).legends[0]!.value.text).toBe(result[2]!.rsi!.toFixed(2))
+    expect(tooltip(2).legends[0]!.value.text).not.toBe(tooltip().legends[0]!.value.text)
+    expect(tooltip(0).legends[0]!.value.text).toBe('–')
   })
 })
 
 describe('main-chart tooltip folding', () => {
   function fixture() {
-    const custom = vi.fn(() => ({ name: 'WMA', calcParamsText: '(60)', values: [{ title: 'WMA60', value: '101.25' }], icons: [] }))
-    const main = new Map([
-      ['WMA', { createTooltipDataSource: custom }],
-      ['TM_BB', { createTooltipDataSource: null }],
-    ]) as unknown as Map<string, Indicator>
-    const subplot = { createTooltipDataSource: vi.fn(() => ({ name: 'RSI', values: [25] })) }
-    const getIndicatorByPaneId = vi.fn((paneId: string) => paneId === 'candle_pane' ? main : subplot)
-    const overrideIndicator = vi.fn((override: { name: string; createTooltipDataSource: Indicator['createTooltipDataSource'] }, paneId: string) => {
-      if (paneId === 'candle_pane') main.get(override.name)!.createTooltipDataSource = override.createTooltipDataSource
+    const custom = vi.fn(() => ({ name: 'WMA', calcParamsText: '(60)', legends: [{ title: 'WMA60', value: '101.25' }], features: [] }))
+    const main = [
+      { name: 'WMA', createTooltipDataSource: custom },
+      { name: 'TM_BB', createTooltipDataSource: null },
+    ] as unknown as Indicator[]
+    const overrideIndicator = vi.fn((override: { name: string; paneId?: string; createTooltipDataSource: Indicator['createTooltipDataSource'] }) => {
+      const hit = main.find(i => i.name === override.name)
+      if (hit) hit.createTooltipDataSource = override.createTooltipDataSource
+      return true
     })
-    const chart = { getIndicatorByPaneId, overrideIndicator } as unknown as Pick<Chart, 'getIndicatorByPaneId' | 'overrideIndicator'>
-    return { main, subplot, custom, overrideIndicator, fold: createMainPaneTooltipFold(chart) }
+    const getIndicators = vi.fn((filter?: { paneId?: string }) => filter?.paneId === 'candle_pane' ? main : [])
+    const chart = { getIndicators, overrideIndicator } as unknown as Pick<Chart, 'getIndicators' | 'overrideIndicator'>
+    return { main, custom, overrideIndicator, getIndicators, fold: createMainPaneTooltipFold(chart) }
   }
 
   it('folds only candle-pane legends and preserves subplot callbacks', () => {
     const f = fixture()
-    const subplotCallback = f.subplot.createTooltipDataSource
     f.fold(true)
-    for (const indicator of f.main.values()) {
-      expect(indicator.createTooltipDataSource!({} as never)).toEqual({ name: '', calcParamsText: '', values: [], icons: [] })
+    for (const indicator of f.main) {
+      expect(indicator.createTooltipDataSource!({} as never)).toEqual({ name: '', calcParamsText: '', legends: [], features: [] })
     }
-    expect(f.subplot.createTooltipDataSource).toBe(subplotCallback)
-    expect(f.overrideIndicator.mock.calls.every(([, pane]) => pane === 'candle_pane')).toBe(true)
+    expect(f.overrideIndicator.mock.calls.every(([o]) => o.paneId === 'candle_pane')).toBe(true)
   })
 
   it('restores original custom legends and the library default after repeated folding', () => {
@@ -73,8 +74,8 @@ describe('main-chart tooltip folding', () => {
     f.fold(true)
     f.fold(true)
     f.fold(false)
-    expect(f.main.get('WMA')!.createTooltipDataSource).toBe(f.custom)
-    expect(f.main.get('TM_BB')!.createTooltipDataSource).toBeNull()
-    expect(f.custom().values[0]!.value).toBe('101.25')
+    expect(f.main.find(i => i.name === 'WMA')!.createTooltipDataSource).toBe(f.custom)
+    expect(f.main.find(i => i.name === 'TM_BB')!.createTooltipDataSource).toBeNull()
+    expect(f.custom().legends[0]!.value).toBe('101.25')
   })
 })

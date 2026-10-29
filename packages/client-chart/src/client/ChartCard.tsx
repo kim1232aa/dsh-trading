@@ -14,8 +14,20 @@
  */
 import { Component, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, ErrorInfo, ReactNode } from 'react'
-import { ActionType, dispose, init, registerIndicator, registerOverlay, utils } from 'klinecharts'
-import type { Chart, KLineData, YAxisType } from 'klinecharts'
+import { dispose, init, registerIndicator, registerOverlay, utils } from 'klinecharts'
+import type { Chart, KLineData } from 'klinecharts'
+import {
+  createCandleDataLoader,
+  createIndicatorInPane,
+  hasIndicator,
+  overrideIndicator as overrideInd,
+  periodFromTimeframe,
+  removeIndicator as removeInd,
+  tooltipFeatureIcon,
+  tooltipOf,
+  yAxisNameForCoord,
+} from './kline-v10.js'
+import type { BarSubscriber } from './kline-v10.js'
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 import { publishLatestChart } from './latest.js'
 import { annotationDigest, contentText, readChartPayload } from './payload.js'
@@ -96,10 +108,10 @@ function syncAicoinTd(chart: Chart, s: { params: number[]; visible: boolean }, d
   const p = dark ? DARK : LIGHT
   const ext = { up: p.up, down: p.down }
   const sync = (want: boolean, name: string, paneId: string, isStack: boolean): void => {
-    const has = chart.getIndicatorByPaneId(paneId, name) != null
-    if (!want) { if (has) chart.removeIndicator(paneId, name); return }
-    if (has) chart.overrideIndicator({ name, calcParams: s.params, extendData: ext }, paneId)
-    else chart.createIndicator({ name, calcParams: s.params, extendData: ext }, isStack, paneId === 'candle_pane' ? { id: paneId } : { id: paneId, height: PANE_HEIGHT })
+    const has = hasIndicator(chart, paneId, name)
+    if (!want) { if (has) removeInd(chart, paneId, name); return }
+    if (has) overrideInd(chart, { name, calcParams: s.params, extendData: ext }, paneId)
+    else createIndicatorInPane(chart, { name, calcParams: s.params, extendData: ext }, { paneId, isStack, height: PANE_HEIGHT })
   }
   sync(s.visible && tdWantsPane(s.params), 'AICOIN_TD', 'pane_aicoin_td', false)
   sync(s.visible && tdWantsMarks(s.params), 'AICOIN_TD_MARKS', 'candle_pane', true)
@@ -457,10 +469,8 @@ export const DEFAULT_AXIS_SETTINGS: AxisSettings = {
   },
 }
 
-export function toYAxisType(coord: CoordType): YAxisType {
-  if (coord === 'percentage') return 'percentage' as YAxisType
-  if (coord === 'log') return 'log' as YAxisType
-  return 'normal' as YAxisType
+export function toYAxisType(coord: CoordType): string {
+  return yAxisNameForCoord(coord)
 }
 
 export function sanitizeAxisSettings(raw: unknown): AxisSettings {
@@ -556,11 +566,7 @@ export function resetCandleYAxisAuto(chart: Chart | null): void {
 }
 
 /** Legend cog on the editable indicators; a click opens the param row (ActionType.OnTooltipIconClick). */
-const GEAR = {
-  id: 'params', position: 'right', icon: '⚙', size: 12, fontFamily: 'Segoe UI Symbol, Apple Symbols, sans-serif',
-  color: '#8b949e', activeColor: '#c9d1d9', backgroundColor: 'transparent', activeBackgroundColor: 'rgba(139,148,158,0.2)',
-  marginLeft: 4, marginTop: 4, marginRight: 4, marginBottom: 4, paddingLeft: 2, paddingTop: 0, paddingRight: 2, paddingBottom: 0,
-}
+const GEAR = tooltipFeatureIcon('params', '⚙')
 
 /** 折叠十字线浮窗里的指标行，只留 时间/开高低收，点一下在“收起/展开”之间切换。 */
 /** Enabled VB alerts on the latest closed bar (second to last; last is forming). */
@@ -573,11 +579,7 @@ export function vbAlertEvents(candles: readonly { time: string; high: number; lo
 
 export const FOLD_EXEMPT: ReadonlySet<string> = new Set(["VB_PRO_READ"])
 
-const FOLD = {
-  id: 'fold', position: 'right', icon: '▤', size: 12, fontFamily: 'Segoe UI Symbol, Apple Symbols, sans-serif',
-  color: '#8b949e', activeColor: '#c9d1d9', backgroundColor: 'transparent', activeBackgroundColor: 'rgba(139,148,158,0.2)',
-  marginLeft: 4, marginTop: 4, marginRight: 4, marginBottom: 4, paddingLeft: 2, paddingTop: 0, paddingRight: 2, paddingBottom: 0,
-}
+const FOLD = tooltipFeatureIcon('fold', '▤')
 
 let registered = false
 
@@ -714,7 +716,7 @@ function ensureRegistered(): void {
           return v === undefined ? [] : [[`wma${j}`, v]]
         })))
     },
-    createTooltipDataSource: () => ({ icons: [GEAR] }),
+    createTooltipDataSource: () => tooltipOf({ features: [GEAR] }),
   } as never)
 
   registerIndicator({
@@ -733,11 +735,11 @@ function ensureRegistered(): void {
     }) => {
       const row = indicator.result[crosshair.dataIndex ?? indicator.result.length - 1]
       const v = row?.up ?? row?.dn
-      return {
+      return tooltipOf({
         calcParamsText: `(${indicator.calcParams.join(', ')})`,
-        values: v === undefined ? [] : [{ title: '', value: { text: formatPrice(v), color: ST_COLORS[row?.up !== undefined ? 0 : 1] } }],
-        icons: [GEAR],
-      }
+        legends: v === undefined ? [] : [{ title: '', value: { text: formatPrice(v), color: ST_COLORS[row?.up !== undefined ? 0 : 1]! } }],
+        features: [GEAR],
+      })
     },
   } as never)
 
@@ -781,7 +783,7 @@ function ensureRegistered(): void {
       const res = indicator.result ?? []
       const history = (indicator.extendData ?? []) as PanelDerivativeBar[]
       if (!Array.isArray(history) || history.length === 0) {
-        return { name: '合约OI', calcParamsText: '', values: [] }
+        return { name: '合约OI', calcParamsText: '', legends: [], features: [] }
       }
       const dataIndex = crosshair.dataIndex ?? (kLineDataList.length - 1)
       const row = res[dataIndex] as OiPostureRow | undefined
@@ -801,10 +803,11 @@ function ensureRegistered(): void {
         return {
           name: '合约OI',
           calcParamsText: '',
-          values: [
+          legends: [
             { title: '币数: ', value: { text: '—', color: '#8b949e' } },
             { title: '动向: ', value: { text: '历史无快照', color: '#8b949e' } },
           ],
+        features: [],
         }
       }
 
@@ -821,29 +824,30 @@ function ensureRegistered(): void {
         ? `${deltaVal >= 0 ? '+' : ''}${compact.format(deltaVal)}`
         : null
 
-      const values: { title: string; value: { text: string; color: string } }[] = [
+      const legends: { title: string; value: { text: string; color: string } }[] = [
         { title: '币数: ', value: { text: oiText, color: '#27C6DA' } },
         { title: 'OI名义: ', value: { text: target.openInterestValue ? formatUsdtCnLocal(target.openInterestValue) : '—', color: '#8b949e' } },
       ]
       if (row?.oiMa !== undefined && Number.isFinite(row.oiMa)) {
-        values.push({ title: 'OI均线: ', value: { text: compact.format(row.oiMa), color: '#f59e0b' } })
+        legends.push({ title: 'OI均线: ', value: { text: compact.format(row.oiMa), color: '#f59e0b' } })
       }
       if (deltaText) {
-        values.push({ title: 'Δ币数: ', value: { text: deltaText, color: deltaVal! >= 0 ? '#22c55e' : '#ef4444' } })
+        legends.push({ title: 'Δ币数: ', value: { text: deltaText, color: deltaVal! >= 0 ? '#22c55e' : '#ef4444' } })
       }
-      values.push({ title: '动向: ', value: { text: postureText ?? '—', color: pColor } })
+      legends.push({ title: '动向: ', value: { text: postureText ?? '—', color: pColor } })
       if (tkText) {
-        values.push({ title: '主动买卖: ', value: { text: tkText, color: Number(tkText) >= 1.0 ? '#22c55e' : '#ef4444' } })
+        legends.push({ title: '主动买卖: ', value: { text: tkText, color: Number(tkText) >= 1.0 ? '#22c55e' : '#ef4444' } })
       }
-      values.push({ title: '账户人数比: ', value: { text: lsrText, color: '#c9d1d9' } })
+      legends.push({ title: '账户人数比: ', value: { text: lsrText, color: '#c9d1d9' } })
       if (topPos) {
-        values.push({ title: '大户持仓比: ', value: { text: topPos, color: '#ffa726' } })
+        legends.push({ title: '大户持仓比: ', value: { text: topPos, color: '#ffa726' } })
       }
       const p = indicator.calcParams?.[0] ?? 14
       return {
         name: '合约OI',
         calcParamsText: `(${p})`,
-        values,
+        legends,
+        features: [],
       }
     },
   } as never)
@@ -894,7 +898,7 @@ export function ohlcTooltipAvoidTable(revPointOn: boolean, paneW = 0): Record<st
   return { candle: { tooltip: { rect: { offsetRight: revPointOn && paneW > 0 ? ohlcOffsetRightForTopLeft(paneW) : 4 } } } }
 }
 
-export function klineStyles(p: Palette, coordType: CoordType = 'normal'): Record<string, unknown> {
+export function klineStyles(p: Palette, _coordType: CoordType = 'normal'): Record<string, unknown> {
   const tick = { color: p.faint, family: FONT_FAMILY }
   return {
     grid: { horizontal: { color: p.line }, vertical: { color: p.line } },
@@ -911,8 +915,9 @@ export function klineStyles(p: Palette, coordType: CoordType = 'normal'): Record
       },
       tooltip: {
         showType: 'rect',
-        text: { color: p.text, family: FONT_FAMILY },
-        icons: [FOLD],
+        legend: { color: p.text, family: FONT_FAMILY },
+        title: { color: p.text, family: FONT_FAMILY },
+        features: [FOLD],
         rect: {
           position: 'fixed',
           paddingLeft: 6, paddingRight: 6, paddingTop: 4, paddingBottom: 4,
@@ -926,11 +931,12 @@ export function klineStyles(p: Palette, coordType: CoordType = 'normal'): Record
     indicator: {
       tooltip: {
         ...SUBPLOT_TOOLTIP,
-        text: { color: p.text, family: FONT_FAMILY },
+        legend: { color: p.text, family: FONT_FAMILY, defaultValue: '—' },
+        title: { color: p.text, family: FONT_FAMILY, showName: true, showParams: true },
       },
     },
     xAxis: { axisLine: { color: p.line }, tickText: tick, tickLine: { color: p.line } },
-    yAxis: { axisLine: { color: p.line }, tickText: tick, tickLine: { color: p.line }, type: toYAxisType(coordType) },
+    yAxis: { axisLine: { color: p.line }, tickText: tick, tickLine: { color: p.line } },
     separator: { color: p.line },
     crosshair: {
       horizontal: { line: { color: p.faint }, text: { backgroundColor: p.faint, family: FONT_FAMILY } },
@@ -1185,6 +1191,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   // already unmounted. One id per mount.
   const chartDomId = useRef(`dsh-kline-${++chartDomSeq}`)
   const chartRef = useRef<Chart | null>(null)
+  /** Live-bar sink from DataLoader.subscribeBar (klinecharts 10). */
+  const barSubscribeRef = useRef<BarSubscriber>(null)
   const ohlcParkCleanup = useRef<(() => void) | null>(null)
   const latest = useRef(data)
   latest.current = data
@@ -1215,7 +1223,13 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     container.id = chartDomId.current
     ensureRegistered()
     const palette = dark ? DARK : LIGHT
-    const chart = init(container, { locale: 'zh-CN' })
+    const chart = init(container, {
+      locale: 'zh-CN',
+      layout: {
+        pane: { height: PANE_HEIGHT, minHeight: 40 },
+        yAxis: { position: 'right', inside: false, scrollZoomEnabled: true },
+      },
+    })
     if (chart === null) return
     chartRef.current = chart
     const applyFold = createMainPaneTooltipFold(chart, FOLD_EXEMPT)
@@ -1226,17 +1240,25 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(applyOhlcPark) : null
     ro?.observe(container)
     ohlcParkCleanup.current = () => ro?.disconnect()
-    chart.setPaneOptions({
-      id: 'candle_pane',
-      gap: axisSettings.autoScale.candle ? { top: 0.08, bottom: 0.05 } : { top: 0.2, bottom: 0.1 },
-      axisOptions: { scrollZoomEnabled: true },
+    const candleGap = axisSettings.autoScale.candle ? { top: 0.08, bottom: 0.05 } : { top: 0.2, bottom: 0.1 }
+    chart.overrideYAxis({
+      paneId: 'candle_pane',
+      name: yAxisNameForCoord(axisSettings.coordType),
+      scrollZoomEnabled: true,
+      gap: candleGap,
     })
     const pricePrec = detectPricePrecision(data.candles)
-    chart.setPriceVolumePrecision(pricePrec, 0)
-    chart.applyNewData(data.candles.map(c => ({
-      timestamp: Date.parse(c.time),
-      open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
-    })))
+    chart.setSymbol({ ticker: seriesKey.split('|')[1] ?? seriesKey, pricePrecision: pricePrec, volumePrecision: 0 })
+    chart.setPeriod(periodFromTimeframe(data.timeframe))
+    const loaderOpts: Parameters<typeof createCandleDataLoader>[0] = {
+      getCandles: () => latest.current.candles,
+      onSubscribe: (cb) => { barSubscribeRef.current = cb },
+    }
+    if (historyRef.current) {
+      loaderOpts.loadOlder = (beforeMs) => historyRef.current!.load(beforeMs)
+      loaderOpts.commitOlder = (rows) => { historyRef.current?.commit(rows as typeof latest.current.candles) }
+    }
+    chart.setDataLoader(createCandleDataLoader(loaderOpts))
     for (const def of EDITABLE) {
       if (def.name === 'LARGE_WALLS') continue // overlay drawn from CoinGlass RPC, not a klinecharts indicator
       const s = settingsRef.current[def.name]!
@@ -1248,53 +1270,43 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       if (def.pane !== undefined) {
         // Own pane: created only when shown, so a hidden one doesn't leave a blank strip.
         if (s.visible) {
-          chart.createIndicator({ name: def.name, calcParams: s.params, extendData: ext }, false, { id: def.pane, height: PANE_HEIGHT, gap: { top: 0.24, bottom: 0.10 } })
+          createIndicatorInPane(chart, { name: def.name, calcParams: s.params, extendData: ext }, { paneId: def.pane, height: PANE_HEIGHT })
+          chart.overrideYAxis({ paneId: def.pane, gap: { top: 0.24, bottom: 0.10 } })
           if (def.name === 'RSI_GRID') {
-            chart.createIndicator({ name: 'RSI_GRID_CUM', calcParams: s.params }, false, { id: 'pane_rsi_cum', height: PANE_HEIGHT, gap: { top: 0.24, bottom: 0.10 } })
-            chart.createIndicator({ name: 'RSI_GRID_MARKS', calcParams: s.params }, true, { id: 'candle_pane' })
+            createIndicatorInPane(chart, { name: 'RSI_GRID_CUM', calcParams: s.params }, { paneId: 'pane_rsi_cum', height: PANE_HEIGHT })
+            chart.overrideYAxis({ paneId: 'pane_rsi_cum', gap: { top: 0.24, bottom: 0.10 } })
+            createIndicatorInPane(chart, { name: 'RSI_GRID_MARKS', calcParams: s.params }, { paneId: 'candle_pane', isStack: true })
           }
         }
         continue
       }
-      chart.createIndicator({ name: def.name, calcParams: s.params, visible: s.visible, extendData: ext }, true, { id: 'candle_pane' })
+      createIndicatorInPane(chart, { name: def.name, calcParams: s.params, visible: s.visible, extendData: ext }, { paneId: 'candle_pane', isStack: true })
     }
-    chart.subscribeAction(ActionType.OnTooltipIconClick, (d?: { iconId?: string }) => {
-      if (d?.iconId === GEAR.id) onEditRef.current()
-      if (d?.iconId === FOLD.id) {
+    const onFeatureClick = (data: unknown) => {
+      const d = data as { feature?: { id?: string } } | undefined
+      if (d?.feature?.id === GEAR.id) onEditRef.current()
+      if (d?.feature?.id === FOLD.id) {
         foldRef.current = !foldRef.current
         applyFold(foldRef.current)
       }
-    })
-    chart.subscribeAction(ActionType.OnCrosshairChange, (d?: { kLineData?: { timestamp?: number } }) => {
+    }
+    chart.subscribeAction('onCandleTooltipFeatureClick', onFeatureClick)
+    chart.subscribeAction('onIndicatorTooltipFeatureClick', onFeatureClick)
+    chart.subscribeAction('onCrosshairChange', (data: unknown) => {
+      const d = data as { kLineData?: { timestamp?: number } } | undefined
       onHoverRef.current?.(d?.kLineData?.timestamp ?? null)
     })
-    chart.subscribeAction(ActionType.OnCandleBarClick, (d?: { data?: { timestamp?: number } }) => {
+    chart.subscribeAction('onCandleBarClick', (data: unknown) => {
+      const d = data as { data?: { timestamp?: number } } | undefined
       if (d?.data?.timestamp) onHoverRef.current?.(d.data.timestamp)
     })
-
-    // History paging: klinecharts fires this when the user drags to the left edge.
-    if (typeof (chart as any).loadMore === 'function') {
-      chart.loadMore((timestamp) => {
-        const h = historyRef.current
-        if (h === undefined || timestamp == null) { chart.applyMoreData([], false); return }
-        h.load(timestamp).then(
-          (older) => {
-            if (chartRef.current !== chart) return
-            const rows = older.filter(c => Date.parse(c.time) < timestamp)
-            if (rows.length === 0) { chart.applyMoreData([], false); return }
-            chart.applyMoreData(rows.map(toKLine), true)
-            h.commit(rows)
-          },
-          () => { if (chartRef.current === chart) chart.applyMoreData([], false) },
-        )
-      })
-    }
     applyFold(foldRef.current)
     const observer = new ResizeObserver(() => chart.resize())
     observer.observe(container)
     return () => {
       observer.disconnect()
       chartRef.current = null
+      barSubscribeRef.current = null
       mountedChips.current = new Map()
       annotationOverlayIds.current = []
       ohlcParkCleanup.current?.()
@@ -1390,29 +1402,31 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
         : def.name === 'VOL_TIER' ? { dark } : undefined
       if (def.name === 'AICOIN_TD') { syncAicoinTd(chart, s, dark); continue }
       if (def.pane !== undefined) {
-        const exists = chart.getIndicatorByPaneId(def.pane, def.name) != null
+        const exists = hasIndicator(chart, def.pane, def.name)
         if (!s.visible) {
-          if (exists) chart.removeIndicator(def.pane, def.name)
+          if (exists) removeInd(chart, def.pane, def.name)
           if (def.name === 'RSI_GRID') {
-            chart.removeIndicator('pane_rsi_cum', 'RSI_GRID_CUM')
-            chart.removeIndicator('candle_pane', 'RSI_GRID_MARKS')
+            removeInd(chart, 'pane_rsi_cum', 'RSI_GRID_CUM')
+            removeInd(chart, 'candle_pane', 'RSI_GRID_MARKS')
           }
         } else if (!exists) {
-          chart.createIndicator({ name: def.name, calcParams: s.params, extendData: ext }, false, { id: def.pane, height: PANE_HEIGHT, gap: { top: 0.24, bottom: 0.10 } })
+          createIndicatorInPane(chart, { name: def.name, calcParams: s.params, extendData: ext }, { paneId: def.pane, height: PANE_HEIGHT })
+          chart.overrideYAxis({ paneId: def.pane, gap: { top: 0.24, bottom: 0.10 } })
           if (def.name === 'RSI_GRID') {
-            chart.createIndicator({ name: 'RSI_GRID_CUM', calcParams: s.params }, false, { id: 'pane_rsi_cum', height: PANE_HEIGHT, gap: { top: 0.24, bottom: 0.10 } })
-            chart.createIndicator({ name: 'RSI_GRID_MARKS', calcParams: s.params }, true, { id: 'candle_pane' })
+            createIndicatorInPane(chart, { name: 'RSI_GRID_CUM', calcParams: s.params }, { paneId: 'pane_rsi_cum', height: PANE_HEIGHT })
+            chart.overrideYAxis({ paneId: 'pane_rsi_cum', gap: { top: 0.24, bottom: 0.10 } })
+            createIndicatorInPane(chart, { name: 'RSI_GRID_MARKS', calcParams: s.params }, { paneId: 'candle_pane', isStack: true })
           }
         } else {
-          chart.overrideIndicator({ name: def.name, calcParams: s.params, extendData: ext }, def.pane)
+          overrideInd(chart, { name: def.name, calcParams: s.params, extendData: ext }, def.pane)
           if (def.name === 'RSI_GRID') {
-            chart.overrideIndicator({ name: 'RSI_GRID_CUM', calcParams: s.params }, 'pane_rsi_cum')
-            chart.overrideIndicator({ name: 'RSI_GRID_MARKS', calcParams: s.params }, 'candle_pane')
+            overrideInd(chart, { name: 'RSI_GRID_CUM', calcParams: s.params }, 'pane_rsi_cum')
+            overrideInd(chart, { name: 'RSI_GRID_MARKS', calcParams: s.params }, 'candle_pane')
           }
         }
         continue
       }
-      chart.overrideIndicator({ name: def.name, calcParams: s.params, visible: s.visible, extendData: ext }, 'candle_pane')
+      overrideInd(chart, { name: def.name, calcParams: s.params, visible: s.visible, extendData: ext }, 'candle_pane')
     }
   }, [settings, derivatives, data.timeframe, dark])
 
@@ -1485,7 +1499,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     const chart = chartRef.current
     const last = data.candles[data.candles.length - 1]
     if (chart === null || last === undefined) return
-    chart.updateData(toKLine(last))
+    barSubscribeRef.current?.(toKLine(last))
     const plan = planChipSync(active, mountedChips.current, id => {
       const def = CHIP_DEFS.find(d => d.id === id)
       if (!def?.indicator) return false
@@ -1497,27 +1511,27 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       const paneId = mountedChips.current.get(id)
       mountedChips.current.delete(id)
       if (!def?.indicator || paneId === undefined) continue
-      try { chart.removeIndicator(paneId, def.indicator.name) } catch { /* already gone */ }
+      try { removeInd(chart, paneId, def.indicator.name) } catch { /* already gone */ }
     }
     for (const id of plan.add) {
       const def = CHIP_DEFS.find(d => d.id === id)!
       const ind = def.indicator!
       if (ind.builtIn === true) {
         const paneId = `pane_${def.id}`
-        chart.createIndicator(ind.name, false, { id: paneId, height: PANE_HEIGHT })
+        createIndicatorInPane(chart, ind.name, { paneId, height: PANE_HEIGHT })
         mountedChips.current.set(id, paneId)
         continue
       }
       const create = { name: ind.name, extendData: seriesRows(data, ind.figures) }
       const paneId = ind.overlay === true ? 'candle_pane' : `pane_${id}`
-      chart.createIndicator(create, ind.overlay === true, { id: paneId, height: PANE_HEIGHT })
+      createIndicatorInPane(chart, create, { paneId, isStack: ind.overlay === true, height: PANE_HEIGHT })
       mountedChips.current.set(id, paneId)
     }
     for (const [id, paneId] of mountedChips.current) {
       if (plan.add.includes(id)) continue
       const def = CHIP_DEFS.find(d => d.id === id)
       if (!def?.indicator || def.indicator.builtIn === true || !hasSeries(data, def.indicator.figures)) continue
-      chart.overrideIndicator({ name: def.indicator.name, extendData: seriesRows(data, def.indicator.figures) }, paneId)
+      overrideInd(chart, { name: def.indicator.name, extendData: seriesRows(data, def.indicator.figures) }, paneId)
     }
   }, [data, active, seriesKey, dark])
 
@@ -1553,9 +1567,9 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   useEffect(() => {
     const chart = chartRef.current
     if (chart === null) return
-    chart.setStyles({ yAxis: { type: toYAxisType(axisSettings.coordType) } })
-    chart.setPaneOptions({
-      id: 'candle_pane',
+    chart.overrideYAxis({
+      paneId: 'candle_pane',
+      name: yAxisNameForCoord(axisSettings.coordType),
       gap: axisSettings.autoScale.candle ? { top: 0.08, bottom: 0.05 } : { top: 0.2, bottom: 0.1 },
     })
     if (axisSettings.autoScale.candle) {

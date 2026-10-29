@@ -354,19 +354,19 @@ export function createNadarayaWatsonTooltipDataSource({ indicator, crosshair }: 
   const i = crosshair.dataIndex
   const row = i !== undefined ? indicator.result?.[i] : undefined
   const trend = row?.isBullish === false ? P.bear : P.bull
-  const values: { title: string; value: { text: string; color: string } }[] = []
+  const legends: { title: string; value: { text: string; color: string } }[] = []
   if (row?.value !== undefined) {
-    values.push({ title: 'NW Trend: ', value: { text: formatPrice(row.value), color: intToHex(trend) } })
+    legends.push({ title: 'NW Trend: ', value: { text: formatPrice(row.value), color: intToHex(trend) } })
     if (P.showBands && row.upper !== undefined && row.lower !== undefined) {
-      values.push({ title: 'NW Upper Band: ', value: { text: formatPrice(row.upper), color: pineRgba(trend, 55) } })
-      values.push({ title: 'NW Lower Band: ', value: { text: formatPrice(row.lower), color: pineRgba(trend, 55) } })
+      legends.push({ title: 'NW Upper Band: ', value: { text: formatPrice(row.upper), color: pineRgba(trend, 55) } })
+      legends.push({ title: 'NW Lower Band: ', value: { text: formatPrice(row.lower), color: pineRgba(trend, 55) } })
     }
   }
   return {
     name: 'NW Trend',
     calcParamsText: '(' + [P.preset, P.source, P.kernel, P.lookback, P.bandwidth, P.hMult].join(', ') + ')',
-    values,
-    icons: [],
+    legends,
+    features: [],
   }
 }
 

@@ -120,8 +120,8 @@ describe('AiCoin TD — numbers on the candles', () => {
     expect(tt).toEqual({
       name: 'TD',
       calcParamsText: '',
-      values: [{ title: 'Up:', value: { text: '6', color: '#26a380' } }],
-      icons: [],
+      legends: [{ title: 'Up:', value: { text: '6', color: '#26a380' } }],
+      features: [],
     })
   })
 })

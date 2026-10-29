@@ -249,14 +249,14 @@ export const evasiveSuperTrendIndicator = {
     const v = row?.stBand ?? row?.up ?? row?.dn
     return {
       calcParamsText: `(${indicator.calcParams.join(', ')})`,
-      values: v === undefined ? [] : [
+      legends: v === undefined ? [] : [
         { title: '', value: { text: formatPrice(v), color: row?.trend === 1 ? EVASIVE_ST_DEFAULTS.bullColor : EVASIVE_ST_DEFAULTS.bearColor } },
         row?.isNoisy
           ? { title: '', value: { text: '[虚线·避险]', color: '#ffa726' } }
           : { title: '', value: { text: '[实线·主趋势]', color: row?.trend === 1 ? EVASIVE_ST_DEFAULTS.bullColor : EVASIVE_ST_DEFAULTS.bearColor } },
         row?.trendChanged ? { title: '', value: { text: row.trend === 1 ? '▲ 转多' : '▼ 转空', color: row.trend === 1 ? EVASIVE_ST_DEFAULTS.bullColor : EVASIVE_ST_DEFAULTS.bearColor } } : null,
       ].filter((x): x is NonNullable<typeof x> => x !== null),
-      icons: [],
+      features: [],
     }
   },
   draw: ({ ctx, indicator, xAxis, yAxis, visibleRange, kLineDataList }: {

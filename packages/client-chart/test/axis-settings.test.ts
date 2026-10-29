@@ -60,10 +60,10 @@ describe('AxisSettings', () => {
     })
   })
 
-  it('maps CoordType to klinecharts YAxisType correctly', () => {
+  it('maps CoordType to klinecharts 10 y-axis template names', () => {
     expect(toYAxisType('normal')).toBe('normal')
     expect(toYAxisType('percentage')).toBe('percentage')
-    expect(toYAxisType('log')).toBe('log')
+    expect(toYAxisType('log')).toBe('logarithm')
   })
 
   it('notifies listeners when axis settings change', () => {

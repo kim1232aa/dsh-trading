@@ -193,7 +193,7 @@ describe('VB Pro-Read parity additions', () => {
   it('tooltip: 上/中/下轨 + state with object titles; legend params exclude colors', () => {
     const rows = calculateVbProRead(trend(60, 1), [])
     const tt = vbProReadIndicator.createTooltipDataSource({ indicator: { calcParams: [...(VB_DEF())], result: rows }, crosshair: { dataIndex: 59 } })
-    const texts = tt.values.map(v => v.title.text + v.value.text)
+    const texts = tt.legends.map(v => v.title.text + v.value.text)
     expect(texts[0]).toMatch(/^上轨: /); expect(texts[1]).toMatch(/^中轨: /); expect(texts[2]).toMatch(/^下轨: /)
     expect(['走带上', '走带下', '中性']).toContain(texts[3])
     expect(tt.calcParamsText).toBe('(0, 20, 2, 1.5, 5, 3, 0.8, 14, 20, 1, 1)')
@@ -204,7 +204,7 @@ describe('VB Pro-Read parity additions', () => {
     expect(FOLD_EXEMPT.has('VB_PRO_READ')).toBe(true)
     const calls: string[] = []
     const orig = () => ({}) as never
-    const chart = { getIndicatorByPaneId: () => new Map([['VB_PRO_READ', { createTooltipDataSource: orig }], ['WMA', { createTooltipDataSource: orig }]]), overrideIndicator: (o: { name: string }) => { calls.push(o.name); return true } }
+    const chart = { getIndicators: () => [{ name: 'VB_PRO_READ', createTooltipDataSource: orig }, { name: 'WMA', createTooltipDataSource: orig }], overrideIndicator: (o: { name: string }) => { calls.push(o.name); return true } }
     createMainPaneTooltipFold(chart as never, FOLD_EXEMPT)(true)
     expect(calls).toEqual(['WMA'])
   })

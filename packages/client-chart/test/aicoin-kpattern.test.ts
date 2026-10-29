@@ -356,7 +356,7 @@ describe('AiCoin K线形态 — drawing', () => {
       indicator: { calcParams: p, result: calculateKPatterns(c) },
       crosshair: { dataIndex: 6 },
     })
-    expect(tip.values.map(v => v.title + v.value.text)).toEqual(['跳空下跌: 跳空跌', '岛形顶部: 岛形顶'])
+    expect(tip.legends.map(v => v.title + v.value.text)).toEqual(['跳空下跌: 跳空跌', '岛形顶部: 岛形顶'])
   })
   it('registers as a price-pane overlay with no figures (does not stretch the Y axis)', () => {
     expect(kPatternIndicator.name).toBe('AICOIN_KPATTERN')

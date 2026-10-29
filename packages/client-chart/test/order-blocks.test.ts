@@ -260,10 +260,10 @@ describe('calculateOrderBlocks', () => {
       crosshair: { dataIndex: 0 },
     })
 
-    expect(tooltip.values).toHaveLength(2)
-    expect(tooltip.values[0]!.title).toContain('买单块')
-    expect(tooltip.values[0]!.value.text).toBe('100.50')
-    expect(tooltip.values[1]!.title).toContain('破坏块')
-    expect(tooltip.values[1]!.value.text).toBe('95.20')
+    expect(tooltip.legends).toHaveLength(2)
+    expect(tooltip.legends[0]!.title).toContain('买单块')
+    expect(tooltip.legends[0]!.value.text).toBe('100.50')
+    expect(tooltip.legends[1]!.title).toContain('破坏块')
+    expect(tooltip.legends[1]!.value.text).toBe('95.20')
   })
 })

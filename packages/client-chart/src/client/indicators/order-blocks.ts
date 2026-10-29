@@ -556,12 +556,12 @@ export const orderBlockIndicator = {
     const params = indicator.calcParams ?? []
     return {
       calcParamsText: params.length ? `(${params.join(', ')})` : '',
-      values: [
+      legends: [
         row?.bullOB ? { title: '买单块: ', value: { text: formatPrice(row.bullOB), color: '#22c55e' } } : null,
         row?.bearOB ? { title: '卖单块: ', value: { text: formatPrice(row.bearOB), color: '#ef4444' } } : null,
         row?.breaker ? { title: '破坏块: ', value: { text: formatPrice(row.breaker), color: '#a855f7' } } : null,
       ].filter((x): x is NonNullable<typeof x> => x !== null),
-      icons: [],
+      features: [],
     }
   },
   draw: ({ ctx, indicator, xAxis, yAxis, bounding }: {

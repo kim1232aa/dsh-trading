@@ -179,7 +179,7 @@ export const revPointIndicator = {
       ...rp.big.filter(b => b.idx === i).map(b => ({ title: '', value: { text: b.text.replace('\n', ' '), color: '#d29922' } })),
       ...rp.cBars.filter(b => b.idx === i).map(b => ({ title: '', value: { text: b.text, color: '#a371f7' } })),
     ] : []
-    return { calcParamsText: '', values: hits, icons: [] }
+    return { calcParamsText: '', legends: hits, features: [] }
   },
   draw: ({ ctx, indicator, xAxis, yAxis, bounding, kLineDataList }: {
     ctx: CanvasRenderingContext2D

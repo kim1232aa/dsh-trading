@@ -172,6 +172,6 @@ describe('calculateEvasiveSuperTrend', () => {
     })
 
     expect(tooltip.calcParamsText).toBe('(10, 3, 1, 0.5)')
-    expect(tooltip.values.length).toBeGreaterThan(0)
+    expect(tooltip.legends.length).toBeGreaterThan(0)
   })
 })

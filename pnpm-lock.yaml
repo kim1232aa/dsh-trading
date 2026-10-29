@@ -69,8 +69,8 @@ importers:
   packages/client-chart:
     dependencies:
       klinecharts:
-        specifier: ^9.8.12
-        version: 9.8.12
+        specifier: 10.1.0
+        version: 10.1.0
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: ^4.0.4
@@ -1197,9 +1197,8 @@ packages:
   js-tokens@9.0.1:
     resolution: {integrity: sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==}
 
-  klinecharts@9.8.12:
-    resolution: {integrity: sha512-yKLWMliwwIsiQsAI8geNOkE8P6SFsvaa0leX2isgB4Y1SvM3tS6Y9pe7ZbKkiLtOE0P0W9W9wb0M2wH0xAPG7w==}
-    engines: {node: '>=0.10.0'}
+  klinecharts@10.1.0:
+    resolution: {integrity: sha512-sExME3Tv1Ey1zHzTjEc203xd5/B8e6WI6sEB2wg6SQjYwuQRB/sGDIZ6IKEfKEDhaBUXVgVXXO1OX5Giasrbew==}
 
   long@3.2.0:
     resolution: {integrity: sha512-ZYvPPOMqUwPoDsbJaR10iQJYnMuZhRTvHYl62ErLIEX7RgFlziSBUUvrt3OVfc47QlHHpzPZYP17g3Fv7oeJkg==}
@@ -2010,7 +2009,7 @@ snapshots:
 
   js-tokens@9.0.1: {}
 
-  klinecharts@9.8.12: {}
+  klinecharts@10.1.0: {}
 
   long@3.2.0: {}
 

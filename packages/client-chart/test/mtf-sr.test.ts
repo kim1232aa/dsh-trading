@@ -416,13 +416,13 @@ describe('MTF S/R Zones - Intraday MTF SR Pine Script v6 Port', () => {
         indicator: { calcParams: [5, 5, 0.35], result },
         crosshair: { dataIndex: 0 },
       })
-      expect(ds.values.length).toBe(3)
-      expect(ds.values[0]!.title).toContain('阻力')
-      expect(ds.values[0]!.value.text).toBe('105.50')
-      expect(ds.values[1]!.title).toContain('支撑')
-      expect(ds.values[1]!.value.text).toBe('95.20')
-      expect(ds.values[2]!.title).toContain('共振带')
-      expect(ds.values[2]!.value.text).toBe('100.00')
+      expect(ds.legends.length).toBe(3)
+      expect(ds.legends[0]!.title).toContain('阻力')
+      expect(ds.legends[0]!.value.text).toBe('105.50')
+      expect(ds.legends[1]!.title).toContain('支撑')
+      expect(ds.legends[1]!.value.text).toBe('95.20')
+      expect(ds.legends[2]!.title).toContain('共振带')
+      expect(ds.legends[2]!.value.text).toBe('100.00')
     })
 
     it.each([false, true])('does not synthesize fixed intraday zones from calendar-month candles (mirror=%s)', mirror => {

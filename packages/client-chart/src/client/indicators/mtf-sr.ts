@@ -950,7 +950,7 @@ export const mtfSRIndicator = {
     const row = crosshair.dataIndex !== undefined ? indicator.result?.[crosshair.dataIndex] : undefined
     return {
       calcParamsText: '',
-      values: [
+      legends: [
         row?.res ? {
           title: '阻力: ',
           value: {

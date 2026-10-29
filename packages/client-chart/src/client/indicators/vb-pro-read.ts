@@ -284,7 +284,7 @@ export const vbProReadIndicator = {
     const sc = (st: number) => stateColor(P, st)
     const v = (title: string, x: number | undefined, color: string) => ({ title: { text: title, color }, value: { text: x === undefined ? '--' : formatPrice(x), color } })
     const tag = (text: string, color: string) => ({ title: { text: '', color }, value: { text, color } })
-    const values = r === undefined || r.upper === undefined ? [tag('数据不足', P.colN)] : [
+    const legends = r === undefined || r.upper === undefined ? [tag('数据不足', P.colN)] : [
       v('上轨: ', r.upper, sc(r.state)),
       v('中轨: ', r.basis, P.colN),
       v('下轨: ', r.lower, sc(r.state)),
@@ -297,7 +297,7 @@ export const vbProReadIndicator = {
       ...(r.mrShort ? [tag('×均值回归空', P.colDn)] : []),
       ...VB_ALERTS.filter((a, k) => P.alertOn[k] && r.alerts.includes(a.key)).map(a => tag(`🔔${a.cn}`, '#ffa726')),
     ]
-    return { name: `波动带Pro·${name}`, calcParamsText: `(${indicator.calcParams.slice(0, VB_CALC_PARAMS).join(', ')})`, values }
+    return { name: `波动带Pro·${name}`, calcParamsText: `(${indicator.calcParams.slice(0, VB_CALC_PARAMS).join(', ')})`, legends, features: [] }
   },
   draw: ({ ctx, indicator, xAxis, yAxis, visibleRange, bounding, kLineDataList }: {
     ctx: CanvasRenderingContext2D

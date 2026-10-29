@@ -118,14 +118,15 @@ export function formatVolume(v: number | undefined | null): string {
 
 const GEAR_ICON = {
   id: 'params',
-  position: 'right',
-  icon: '⚙',
+  position: 'right' as const,
+  type: 'icon_font' as const,
+  content: { code: '⚙', family: 'Segoe UI Symbol, Apple Symbols, sans-serif' },
   size: 12,
-  fontFamily: 'Segoe UI Symbol, Apple Symbols, sans-serif',
   color: '#8b949e',
   activeColor: '#c9d1d9',
   backgroundColor: 'transparent',
   activeBackgroundColor: 'rgba(139,148,158,0.2)',
+  borderRadius: 0,
   marginLeft: 4,
   marginTop: 4,
   marginRight: 4,
@@ -171,7 +172,7 @@ export const volTierIndicator = {
     crosshair: { dataIndex?: number }
   }) => {
     const res = indicator.result ?? []
-    if (res.length === 0) return { name: '量比分档量能', calcParamsText: '', values: [], icons: [GEAR_ICON] }
+    if (res.length === 0) return { name: '量比分档量能', calcParamsText: '', legends: [], features: [GEAR_ICON] }
     const i = Math.min(crosshair.dataIndex ?? (res.length - 1), res.length - 1)
     const row = res[i]
     const isDark = indicator.extendData?.dark
@@ -183,13 +184,13 @@ export const volTierIndicator = {
     return {
       name: '量比分档量能',
       calcParamsText: '',
-      values: [
+      legends: [
         {
           title: `${tier}: `,
           value: { text: volText, color },
         },
       ],
-      icons: [GEAR_ICON],
+      features: [GEAR_ICON],
     }
   },
 }

@@ -24,7 +24,7 @@ describe('entry signal indicator confirmation and historical display', () => {
     const rows = entrySignalIndicator.calc(prefix, { calcParams: [10, 3] })
     expect(rows.at(-1)!.signal).toBeUndefined()
     expect(rows.at(-1)!.confirmed).toBe(false)
-    expect(tooltip(rows, rows.length - 1).values.map(v => v.value.text)).toContain('等待收盘，不确认新信号')
+    expect(tooltip(rows, rows.length - 1).legends.map(v => v.value.text)).toContain('等待收盘，不确认新信号')
   })
 
   it('confirms the prior tail when the next candle appears', () => {
@@ -39,7 +39,7 @@ describe('entry signal indicator confirmation and historical display', () => {
     const rows = signalRows(list, 10, 3, CLOSED)
     expect(rows[first.index]!.status).not.toBe('open')
     expect(rows[first.index]!.asOfStatus).toBe('open')
-    const values = tooltip(rows, first.index).values
+    const values = tooltip(rows, first.index).legends
     expect(values.find(v => v.title === '当时: ')!.value.text).toBe('信号跟踪中')
     expect(values.map(v => v.value.text).join(' ')).not.toMatch(/触及止损|触及T2/)
   })
@@ -47,7 +47,7 @@ describe('entry signal indicator confirmation and historical display', () => {
   it('does not show a future signal before its entry candle', () => {
     const rows = signalRows(list, 10, 3, CLOSED)
     expect(rows[first.index - 1]!.tracked).toBeUndefined()
-    expect(tooltip(rows, first.index - 1).values).toEqual([])
+    expect(tooltip(rows, first.index - 1).legends).toEqual([])
   })
 
   it('keeps every historical tooltip state consistent with the shared evaluator', () => {
@@ -84,7 +84,7 @@ describe('entry signal indicator confirmation and historical display', () => {
     const tiny = list.map(k => ({ ...k, open: k.open * scale, high: k.high * scale, low: k.low * scale, close: k.close * scale }))
     const rows = signalRows(tiny, 10, 3, CLOSED)
     const index = rows.findIndex(r => r.signal !== undefined)
-    const values = tooltip(rows, index).values
+    const values = tooltip(rows, index).legends
     const prices = ['参考: ', '损: ', 'T1: ', 'T2: '].map(title => Number(values.find(v => v.title === title)!.value.text))
     expect(prices.every(value => value > 0 && Number.isFinite(value))).toBe(true)
     expect(new Set(prices).size).toBe(4)

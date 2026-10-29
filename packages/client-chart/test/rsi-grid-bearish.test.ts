@@ -78,8 +78,8 @@ describe('RSI grid bearish coverage', () => {
     const i = result.findIndex(r => r.short?.inPos && r.short.posEntry !== undefined && list[result.indexOf(r)]!.close < r.short.posEntry)
     expect(i).toBeGreaterThan(-1)
     const tooltip = rsiGridIndicator.createTooltipDataSource({ indicator: { calcParams: params, result }, crosshair: { dataIndex: i }, kLineDataList: list })
-    expect(tooltip.values.some(v => v.title.includes('持空') && v.value.text.includes('+'))).toBe(true)
-    expect(tooltip.values.some(v => v.title.includes('空累计'))).toBe(true)
+    expect(tooltip.legends.some(v => v.title.includes('持空') && v.value.text.includes('+'))).toBe(true)
+    expect(tooltip.legends.some(v => v.title.includes('空累计'))).toBe(true)
   })
   it('does not leak a future short cost line into an earlier viewport', () => {
     expect(drawMarks(bars(), 7).some(t => t.includes('持空') || t.includes('RSI空头'))).toBe(false)
