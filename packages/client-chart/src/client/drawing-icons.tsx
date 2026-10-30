@@ -2,11 +2,11 @@
  * SVG icons adapted from @klinecharts/pro drawing-bar (Apache-2.0).
  * https://github.com/klinecharts/pro/tree/main/src/widget/drawing-bar/icons
  */
-import type { CSSProperties, ReactElement, SVGProps } from 'react'
+import type { CSSProperties, ReactElement, ReactNode, SVGProps } from 'react'
 
 type IconProps = { style?: CSSProperties | undefined }
 
-function Svg({ style, children }: { style?: CSSProperties | undefined; children: ReactElement }): ReactElement {
+function Svg({ style, children }: { style?: CSSProperties | undefined; children: ReactNode }): ReactElement {
   return (
     <svg
       viewBox="0 0 22 22"
@@ -189,6 +189,76 @@ export function IconWeakMagnet({ style }: IconProps): ReactElement {
 }
 
 
+
+export function IconCircle({ style }: IconProps): ReactElement {
+  return (
+    <Svg style={style}>
+      <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </Svg>
+  )
+}
+
+export function IconRect({ style }: IconProps): ReactElement {
+  return (
+    <Svg style={style}>
+      <rect x="4.5" y="6" width="13" height="10" rx="1" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </Svg>
+  )
+}
+
+export function IconTriangle({ style }: IconProps): ReactElement {
+  return (
+    <Svg style={style}>
+      <path d="M11 4.5L18 17.5H4Z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    </Svg>
+  )
+}
+
+export function IconParallelogram({ style }: IconProps): ReactElement {
+  return (
+    <Svg style={style}>
+      <path d="M7 6.5H17L15 15.5H5Z" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    </Svg>
+  )
+}
+
+export function IconWave({ style }: IconProps): ReactElement {
+  return (
+    <Svg style={style}>
+      <path d="M3 14L6.5 7.5L10 14L13.5 7.5L17 14L19 10.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+    </Svg>
+  )
+}
+
+export function IconAbcd({ style }: IconProps): ReactElement {
+  return (
+    <Svg style={style}>
+      <path d="M4 15L8 7L12 15L18 6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx="4" cy="15" r="1.2" fill="currentColor" />
+      <circle cx="8" cy="7" r="1.2" fill="currentColor" />
+      <circle cx="12" cy="15" r="1.2" fill="currentColor" />
+      <circle cx="18" cy="6" r="1.2" fill="currentColor" />
+    </Svg>
+  )
+}
+
+export function IconGannBox({ style }: IconProps): ReactElement {
+  return (
+    <Svg style={style}>
+      <rect x="4.5" y="4.5" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M4.5 4.5L17.5 17.5M17.5 4.5L4.5 17.5M11 4.5V17.5M4.5 11H17.5" fill="none" stroke="currentColor" strokeWidth="1" opacity="0.7" />
+    </Svg>
+  )
+}
+
+export function IconFibonacciSegment({ style }: IconProps): ReactElement {
+  return (
+    <Svg style={style}>
+      <path d="M4 6H18M4 9.5H14M4 13H16M4 16.5H12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </Svg>
+  )
+}
+
 export function IconCursor({ style }: IconProps): ReactElement {
   return (
     <Svg style={style}>
@@ -233,10 +303,27 @@ export const DRAW_ICON_MAP: Record<string, (p: IconProps) => ReactElement> = {
   straightLine: IconStraightLine,
   rayLine: IconRayLine,
   segment: IconSegment,
+  arrow: IconArrow,
   priceLine: IconPriceLine,
   priceChannelLine: IconPriceChannelLine,
   parallelStraightLine: IconParallelStraightLine,
   fibonacciLine: IconFibonacciLine,
+  fibonacciSegment: IconFibonacciSegment,
+  fibonacciCircle: IconCircle,
+  fibonacciSpiral: IconWave,
+  fibonacciSpeedResistanceFan: IconFibonacciSegment,
+  fibonacciExtension: IconFibonacciLine,
+  gannBox: IconGannBox,
+  circle: IconCircle,
+  rect: IconRect,
+  parallelogram: IconParallelogram,
+  triangle: IconTriangle,
+  threeWaves: IconWave,
+  fiveWaves: IconWave,
+  eightWaves: IconWave,
+  anyWaves: IconWave,
+  abcd: IconAbcd,
+  xabcd: IconAbcd,
   weak_magnet: IconWeakMagnet,
   strong_magnet: IconStrongMagnet,
   lock: IconLock,

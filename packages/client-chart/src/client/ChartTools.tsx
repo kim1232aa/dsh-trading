@@ -1,8 +1,8 @@
 /**
- * Left drawing toolbar styled like KLineChart Pro DrawingBar only:
- * cursor, line groups, channel, fib, brush, annotation, magnet, lock, eye, trash.
- * Wires to klinecharts 10 core createOverlay / removeOverlay / overrideOverlay.
- * Icon paths adapted from @klinecharts/pro (Apache-2.0).
+ * Left drawing toolbar styled like KLineChart Pro DrawingBar:
+ * cursor, singleLine, moreLine, polygon, fibonacci, wave, brush, annotation,
+ * magnet, lock, eye, trash. Polygon/wave/fib extras registered from Pro overlays.
+ * Icon paths + overlay templates adapted from @klinecharts/pro (Apache-2.0).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactElement, ReactNode } from 'react'
@@ -35,10 +35,27 @@ export type DrawToolName =
   | 'horizontalSegment'
   | 'verticalRayLine'
   | 'verticalSegment'
+  | 'arrow'
   | 'priceLine'
   | 'priceChannelLine'
   | 'parallelStraightLine'
+  | 'circle'
+  | 'rect'
+  | 'parallelogram'
+  | 'triangle'
   | 'fibonacciLine'
+  | 'fibonacciSegment'
+  | 'fibonacciCircle'
+  | 'fibonacciSpiral'
+  | 'fibonacciSpeedResistanceFan'
+  | 'fibonacciExtension'
+  | 'gannBox'
+  | 'xabcd'
+  | 'abcd'
+  | 'threeWaves'
+  | 'fiveWaves'
+  | 'eightWaves'
+  | 'anyWaves'
   | 'brush'
   | 'simpleAnnotation'
   | 'simpleTag'
@@ -55,12 +72,39 @@ const SINGLE_LINE: ToolItem[] = [
   { key: 'straightLine', text: '直线' },
   { key: 'rayLine', text: '射线' },
   { key: 'segment', text: '线段' },
+  { key: 'arrow', text: '箭头' },
   { key: 'priceLine', text: '价格线' },
 ]
 
 const MORE_LINE: ToolItem[] = [
   { key: 'priceChannelLine', text: '价格通道线' },
   { key: 'parallelStraightLine', text: '平行直线' },
+]
+
+const POLYGON: ToolItem[] = [
+  { key: 'circle', text: '圆' },
+  { key: 'rect', text: '矩形' },
+  { key: 'parallelogram', text: '平行四边形' },
+  { key: 'triangle', text: '三角形' },
+]
+
+const FIBONACCI: ToolItem[] = [
+  { key: 'fibonacciLine', text: '斐波那契回调直线' },
+  { key: 'fibonacciSegment', text: '斐波那契段' },
+  { key: 'fibonacciCircle', text: '斐波那契圈' },
+  { key: 'fibonacciSpiral', text: '斐波那契螺旋' },
+  { key: 'fibonacciSpeedResistanceFan', text: '斐波那契速度阻力扇' },
+  { key: 'fibonacciExtension', text: '斐波那契延伸' },
+  { key: 'gannBox', text: '江恩箱' },
+]
+
+const WAVE: ToolItem[] = [
+  { key: 'xabcd', text: 'XABCD' },
+  { key: 'abcd', text: 'ABCD' },
+  { key: 'threeWaves', text: '三浪' },
+  { key: 'fiveWaves', text: '五浪' },
+  { key: 'eightWaves', text: '八浪' },
+  { key: 'anyWaves', text: '任意浪' },
 ]
 
 const ANNOTATION: ToolItem[] = [
@@ -311,6 +355,9 @@ export function ChartTools({
   const [activeTool, setActiveTool] = useState<DrawToolName | null>(null)
   const [singleIcon, setSingleIcon] = useState<DrawToolName>('horizontalStraightLine')
   const [moreIcon, setMoreIcon] = useState<DrawToolName>('priceChannelLine')
+  const [polygonIcon, setPolygonIcon] = useState<DrawToolName>('circle')
+  const [fibIcon, setFibIcon] = useState<DrawToolName>('fibonacciLine')
+  const [waveIcon, setWaveIcon] = useState<DrawToolName>('xabcd')
   const [annoIcon, setAnnoIcon] = useState<DrawToolName>('simpleAnnotation')
   const [popover, setPopover] = useState('')
 
@@ -427,15 +474,77 @@ export function ChartTools({
         ) : null}
       </GroupItem>
 
-      {/* Fibonacci */}
-      <SoloItem
+      {/* Polygon shapes — Pro createPolygonOptions */}
+      <GroupItem
         dark={dark}
-        selected={activeTool === 'fibonacciLine'}
-        title="斐波那契回调直线"
-        onClick={() => startDraw('fibonacciLine')}
+        selected={POLYGON.some(t => t.key === activeTool)}
+        iconName={polygonIcon}
+        title={POLYGON.find(t => t.key === polygonIcon)?.text ?? '多边形'}
+        open={popover === 'polygon'}
+        onMainClick={() => startDraw(polygonIcon)}
+        onArrowClick={() => togglePopover('polygon')}
       >
-        {iconOf('fibonacciLine')}
-      </SoloItem>
+        {popover === 'polygon' ? (
+          <PopoverList
+            dark={dark}
+            items={POLYGON}
+            onPick={(key) => {
+              const k = key as DrawToolName
+              setPolygonIcon(k)
+              startDraw(k)
+              setPopover('')
+            }}
+          />
+        ) : null}
+      </GroupItem>
+
+      {/* Fibonacci family — Pro createFibonacciOptions */}
+      <GroupItem
+        dark={dark}
+        selected={FIBONACCI.some(t => t.key === activeTool)}
+        iconName={fibIcon}
+        title={FIBONACCI.find(t => t.key === fibIcon)?.text ?? '斐波那契'}
+        open={popover === 'fibonacci'}
+        onMainClick={() => startDraw(fibIcon)}
+        onArrowClick={() => togglePopover('fibonacci')}
+      >
+        {popover === 'fibonacci' ? (
+          <PopoverList
+            dark={dark}
+            items={FIBONACCI}
+            onPick={(key) => {
+              const k = key as DrawToolName
+              setFibIcon(k)
+              startDraw(k)
+              setPopover('')
+            }}
+          />
+        ) : null}
+      </GroupItem>
+
+      {/* Wave / harmonic — Pro createWaveOptions */}
+      <GroupItem
+        dark={dark}
+        selected={WAVE.some(t => t.key === activeTool)}
+        iconName={waveIcon}
+        title={WAVE.find(t => t.key === waveIcon)?.text ?? '波浪'}
+        open={popover === 'wave'}
+        onMainClick={() => startDraw(waveIcon)}
+        onArrowClick={() => togglePopover('wave')}
+      >
+        {popover === 'wave' ? (
+          <PopoverList
+            dark={dark}
+            items={WAVE}
+            onPick={(key) => {
+              const k = key as DrawToolName
+              setWaveIcon(k)
+              startDraw(k)
+              setPopover('')
+            }}
+          />
+        ) : null}
+      </GroupItem>
 
       {/* Brush */}
       <SoloItem

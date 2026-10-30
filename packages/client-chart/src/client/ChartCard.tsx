@@ -58,6 +58,7 @@ import { volTierIndicator } from './indicators/vol-tier.js'
 import { ohlcOffsetRightForTopLeft } from './indicators/revpoint-layout.js'
 import { detectPricePrecision, formatPrice } from './precision.js'
 import { createAnnotationOverlays } from './annotation-overlays.js'
+import { registerProOverlays } from './overlays/index.js'
 import { createMainPaneTooltipFold, SUBPLOT_TOOLTIP } from './indicator-tooltip.js'
 
 export { evasiveSuperTrend } from './indicators/evasive-st.js'
@@ -78,7 +79,7 @@ function formatUsdtCnLocal(n: number): string {
 }
 let chartDomSeq = 0
 
-const CHART_HEIGHT = 320
+const CHART_HEIGHT = 480
 const PANE_HEIGHT = 90
 
 /**
@@ -905,6 +906,8 @@ registerIndicator(aicoinTdMarksIndicator as never)
     utils.calcTextWidth(text, style.size, style.weight, style.family))) {
     registerOverlay(overlay)
   }
+  // Pro DrawingBar extras (polygon / wave / fib variants) — Apache-2.0 from @klinecharts/pro.
+  registerProOverlays()
 }
 
 function useDark(): boolean {
@@ -1768,7 +1771,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   // Drawing bar is 52px (Pro DrawingBar width); keep chart canvas to its right.
   const drawBarW = chartReady > 0 && drawBarOpen ? 52 : 0
   return (
-    <div style={{ position: 'relative', width: '100%', overflow: 'visible', ...(fill ? { flex: '1 1 auto', minHeight: 240 } : { height: baseHeight + paneCount * PANE_HEIGHT }) }}>
+    <div style={{ position: 'relative', width: '100%', overflow: 'visible', ...(fill ? { flex: '1 1 auto', minHeight: 360 } : { height: baseHeight + paneCount * PANE_HEIGHT }) }}>
       <div ref={el} style={{ position: 'absolute', left: drawBarW, right: 0, top: 0, bottom: 0, width: 'auto', height: 'auto' }} />
       {chartReady > 0 && drawBarOpen ? <ChartTools chart={chartRef.current} dark={dark} /> : null}
       {vbToasts.length > 0 && (

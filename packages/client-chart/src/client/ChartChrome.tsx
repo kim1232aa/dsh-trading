@@ -1,7 +1,11 @@
 /**
- * Pro PeriodBar–style chart chrome: 指标 / 时区 / 设置 / 截屏 / 全屏.
+ * Pro PeriodBar–style chart chrome: 指标 / 时区 / 设置 / 截屏 / 全屏 + ☰画线栏折叠.
  * Lives on ChartBody header — not the left DrawingBar.
  * Display prefs (timezone, candle type, grid) persist and re-apply on chart init.
+ *
+ * Legend-side eye/settings/remove (Pro MA tooltip icons): not wired on every
+ * indicator — would need per-indicator TooltipFeatureStyle + click routing.
+ * Best-effort substitute: 指标 quick toggles + 详细参数 here.
  */
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, ReactElement, ReactNode, RefObject } from 'react'
