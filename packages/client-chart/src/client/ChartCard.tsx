@@ -80,7 +80,12 @@ function formatUsdtCnLocal(n: number): string {
 let chartDomSeq = 0
 
 const CHART_HEIGHT = 480
-const PANE_HEIGHT = 90
+/** Sub-pane target height. Keep modest so fill-mode leaves room for candles. */
+const PANE_HEIGHT = 72
+/** Floor for the candle pane when redistributing sub-pane heights after layout. */
+const CANDLE_PANE_MIN = 200
+/** fill-mode CSS minHeight — must clear chrome + a few sub-panes + candle floor. */
+const FILL_MIN_HEIGHT = 480
 
 /**
  * klinecharts defaults to 'Helvetica Neue', which Windows lacks — CJK captions
@@ -592,6 +597,44 @@ export function resetCandleYAxisAuto(chart: Chart | null): void {
   if (!chart) return
   setCandleYAxisAutoCalc(chart, true)
   adjustChartViewport(chart)
+}
+
+/**
+ * Sub-pane height that leaves `candleMin` px for the candle pane inside `totalHeight`.
+ * klinecharts gives leftover height to the candle pane; tall Pro chrome + many
+ * sub-panes can leave it near 0 → squashed bars / no Y ticks (price mark stuck at top).
+ */
+export function planSubPaneHeight(
+  totalHeight: number,
+  subPaneCount: number,
+  candleMin = CANDLE_PANE_MIN,
+  preferred = PANE_HEIGHT,
+): number {
+  if (subPaneCount <= 0) return preferred
+  if (!(totalHeight > 0)) return preferred
+  const budget = Math.max(0, totalHeight - candleMin)
+  return Math.max(40, Math.min(preferred, Math.floor(budget / subPaneCount)))
+}
+
+/** After layout/drawBar width changes: resize, shrink competing sub-panes, restore Y auto. */
+export function healCandleViewport(chart: Chart | null, autoScaleCandle = true): void {
+  if (!chart) return
+  try {
+    const total = chart.getSize()?.height ?? 0
+    const panes = chart.getPaneOptions()
+    const list = Array.isArray(panes) ? panes : (panes ? [panes] : [])
+    const subIds = list
+      .map((p: { id?: string } | null) => p?.id)
+      .filter((id): id is string => typeof id === 'string' && id !== 'candle_pane' && id !== 'x_axis_pane' && !id.startsWith('separator_'))
+    if (subIds.length > 0 && total > 0) {
+      const h = planSubPaneHeight(total, subIds.length)
+      for (const id of subIds) {
+        try { chart.setPaneOptions({ id, height: h }) } catch { /* pane gone */ }
+      }
+    }
+    if (typeof chart.resize === 'function') chart.resize()
+    if (autoScaleCandle) resetCandleYAxisAuto(chart)
+  } catch { /* degrade */ }
 }
 
 /** Legend cog on the editable indicators; a click opens the param row (ActionType.OnTooltipIconClick). */
@@ -1358,9 +1401,21 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       if (d?.data?.timestamp) onHoverRef.current?.(d.data.timestamp)
     })
     applyFold(foldRef.current)
-    const observer = new ResizeObserver(() => chart.resize())
+    // drawBarW flips 0→52 on the next paint; heal after layout so Y-axis height
+    // is not left at 0 (klinecharts: squashed bars, no ticks, last price glued to top).
+    let healCancelled = false
+    const heal = () => {
+      if (healCancelled || chartRef.current !== chart) return
+      healCandleViewport(chart, getAxisSettings().autoScale.candle)
+    }
+    const observer = new ResizeObserver(() => { chart.resize() })
     observer.observe(container)
+    const healRaf = requestAnimationFrame(() => {
+      requestAnimationFrame(heal)
+    })
     return () => {
+      healCancelled = true
+      cancelAnimationFrame(healRaf)
       observer.disconnect()
       chartRef.current = null
       onChartReadyRef.current?.(null)
@@ -1632,7 +1687,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       gap: axisSettings.autoScale.candle ? { top: 0.08, bottom: 0.05 } : { top: 0.2, bottom: 0.1 },
     })
     if (axisSettings.autoScale.candle) {
-      if (setCandleYAxisAutoCalc(chart, true)) adjustChartViewport(chart)
+      healCandleViewport(chart, true)
     } else {
       setCandleYAxisAutoCalc(chart, false)
     }
@@ -1764,6 +1819,17 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     }
   }, [])
 
+  // After DrawingBar mounts/toggles, canvas `left` changes — re-heal Y + pane split.
+  useEffect(() => {
+    if (chartReady === 0) return
+    const chart = chartRef.current
+    if (!chart) return
+    const id = requestAnimationFrame(() => {
+      requestAnimationFrame(() => healCandleViewport(chart, getAxisSettings().autoScale.candle))
+    })
+    return () => cancelAnimationFrame(id)
+  }, [chartReady, drawBarOpen])
+
   // In fill mode the plot is sized by the flex parent and the ResizeObserver
   // above keeps klinecharts in step; `minHeight` is the floor below which a
   // candlestick chart stops being a chart. Indicator panes then divide the
@@ -1771,7 +1837,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   // Drawing bar is 52px (Pro DrawingBar width); keep chart canvas to its right.
   const drawBarW = chartReady > 0 && drawBarOpen ? 52 : 0
   return (
-    <div style={{ position: 'relative', width: '100%', overflow: 'visible', ...(fill ? { flex: '1 1 auto', minHeight: 360 } : { height: baseHeight + paneCount * PANE_HEIGHT }) }}>
+    <div style={{ position: 'relative', width: '100%', overflow: 'visible', ...(fill ? { flex: '1 1 auto', minHeight: FILL_MIN_HEIGHT } : { height: baseHeight + paneCount * PANE_HEIGHT }) }}>
       <div ref={el} style={{ position: 'absolute', left: drawBarW, right: 0, top: 0, bottom: 0, width: 'auto', height: 'auto' }} />
       {chartReady > 0 && drawBarOpen ? <ChartTools chart={chartRef.current} dark={dark} /> : null}
       {vbToasts.length > 0 && (

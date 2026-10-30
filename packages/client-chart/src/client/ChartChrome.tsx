@@ -116,7 +116,10 @@ export function displayStylesPatch(d: DisplaySettings): Record<string, unknown> 
 /** Apply timezone + display styles onto a live chart (init + preference changes). */
 export function applyDisplayToChart(chart: Chart | null, d: DisplaySettings = getDisplaySettings()): void {
   if (!chart) return
-  try { chart.setTimezone(d.timezone) } catch { /* ignore */ }
+  try {
+    if (chart.getTimezone() !== d.timezone) chart.setTimezone(d.timezone)
+  } catch { /* ignore */ }
+  // Deep-merge patch only — never replace full candle/grid trees (would drop bar colors).
   try { chart.setStyles(displayStylesPatch(d) as never) } catch { /* ignore */ }
 }
 
