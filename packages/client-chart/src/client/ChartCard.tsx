@@ -595,8 +595,11 @@ export function adjustChartViewport(chart: Chart | null): void {
  */
 export function resetCandleYAxisAuto(chart: Chart | null): void {
   if (!chart) return
+  // klinecharts 10 only rebuilds Y range in layout/resize when autoCalc is already
+  // true; updatePane alone redraws with the frozen range. Match 「自动」: flag then resize.
   setCandleYAxisAutoCalc(chart, true)
-  adjustChartViewport(chart)
+  if (typeof (chart as { resize?: () => void }).resize === 'function') chart.resize()
+  else adjustChartViewport(chart)
 }
 
 /**
@@ -616,10 +619,15 @@ export function planSubPaneHeight(
   return Math.max(40, Math.min(preferred, Math.floor(budget / subPaneCount)))
 }
 
-/** After layout/drawBar width changes: resize, shrink competing sub-panes, restore Y auto. */
+/**
+ * After layout/drawBar width changes: shrink competing sub-panes, restore Y auto, resize.
+ * Order matches 「自动」: setAutoCalc(true) BEFORE resize so forceBuildYAxisTick recreates range
+ * (resize-then-updatePane left a frozen empty range — blank candles until the button).
+ */
 export function healCandleViewport(chart: Chart | null, autoScaleCandle = true): void {
   if (!chart) return
   try {
+    if (autoScaleCandle) setCandleYAxisAutoCalc(chart, true)
     const total = chart.getSize()?.height ?? 0
     const panes = chart.getPaneOptions()
     const list = Array.isArray(panes) ? panes : (panes ? [panes] : [])
@@ -633,8 +641,17 @@ export function healCandleViewport(chart: Chart | null, autoScaleCandle = true):
       }
     }
     if (typeof chart.resize === 'function') chart.resize()
-    if (autoScaleCandle) resetCandleYAxisAuto(chart)
+    else if (autoScaleCandle) adjustChartViewport(chart)
   } catch { /* degrade */ }
+}
+
+/** Same restore as the 「↺ 自动」 button: heal Y auto + persist autoScale.candle. */
+export function restoreCandleViewportLikeAutoButton(chart: Chart | null): void {
+  healCandleViewport(chart, true)
+  const cur = getAxisSettings()
+  if (!cur.autoScale.candle) {
+    setAxisSettings({ ...cur, autoScale: { ...cur.autoScale, candle: true } })
+  }
 }
 
 /** Legend cog on the editable indicators; a click opens the param row (ActionType.OnTooltipIconClick). */
@@ -1406,16 +1423,22 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     let healCancelled = false
     const heal = () => {
       if (healCancelled || chartRef.current !== chart) return
-      healCandleViewport(chart, getAxisSettings().autoScale.candle)
+      // Always restore like 「自动」 — persisted autoScale=false must not leave Y frozen empty.
+      restoreCandleViewportLikeAutoButton(chart)
     }
     const observer = new ResizeObserver(() => { chart.resize() })
     observer.observe(container)
     const healRaf = requestAnimationFrame(() => {
       requestAnimationFrame(heal)
     })
+    // Data/size often settle after the first paint; retry so Y rebuilds with real candles.
+    const healLate = window.setTimeout(heal, 120)
+    const healLater = window.setTimeout(heal, 400)
     return () => {
       healCancelled = true
       cancelAnimationFrame(healRaf)
+      window.clearTimeout(healLate)
+      window.clearTimeout(healLater)
       observer.disconnect()
       chartRef.current = null
       onChartReadyRef.current?.(null)
@@ -1819,15 +1842,16 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     }
   }, [])
 
-  // After DrawingBar mounts/toggles, canvas `left` changes — re-heal Y + pane split.
+  // After DrawingBar mounts/toggles, canvas `left` changes — same restore as 「自动」.
   useEffect(() => {
     if (chartReady === 0) return
     const chart = chartRef.current
     if (!chart) return
-    const id = requestAnimationFrame(() => {
-      requestAnimationFrame(() => healCandleViewport(chart, getAxisSettings().autoScale.candle))
-    })
-    return () => cancelAnimationFrame(id)
+    let cancelled = false
+    const run = () => { if (!cancelled && chartRef.current === chart) restoreCandleViewportLikeAutoButton(chart) }
+    const id = requestAnimationFrame(() => { requestAnimationFrame(run) })
+    const late = window.setTimeout(run, 120)
+    return () => { cancelled = true; cancelAnimationFrame(id); window.clearTimeout(late) }
   }, [chartReady, drawBarOpen])
 
   // In fill mode the plot is sized by the flex parent and the ResizeObserver
@@ -1854,9 +1878,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
         <button
           type="button"
           onClick={() => {
-            const chart = chartRef.current
-            resetCandleYAxisAuto(chart)
-            setAxisSettings({ ...axisSettings, autoScale: { ...axisSettings.autoScale, candle: true } })
+            restoreCandleViewportLikeAutoButton(chartRef.current)
           }}
           title="双击画布或点击此处恢复K线自动坐标"
           style={{
