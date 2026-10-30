@@ -86,20 +86,30 @@ describe('AxisSettings', () => {
     const mockYAxis = {
       setAutoCalcTickFlag: vi.fn(),
       getAutoCalcTickFlag: vi.fn().mockReturnValue(true),
+      isInCandle: vi.fn().mockReturnValue(true),
     }
+    // klinecharts 10 path: public getYAxes + updatePane
+    const mockChartV10 = {
+      getYAxes: vi.fn().mockReturnValue([mockYAxis]),
+      updatePane: vi.fn(),
+    }
+    expect(getCandleYAxis(mockChartV10 as any)).toBe(mockYAxis)
+    resetCandleYAxisAuto(mockChartV10 as any)
+    expect(mockYAxis.setAutoCalcTickFlag).toHaveBeenCalledWith(true)
+    expect(mockChartV10.updatePane).toHaveBeenCalledWith(0, 'candle_pane')
+
+    // klinecharts 9 fallback: getDrawPaneById + getAxisComponent + adjustPaneViewport
+    mockYAxis.setAutoCalcTickFlag.mockClear()
     const mockPane = {
       getAxisComponent: vi.fn().mockReturnValue(mockYAxis),
     }
-    const mockChart = {
+    const mockChartV9 = {
       getDrawPaneById: vi.fn().mockImplementation((id: string) => (id === 'candle_pane' ? mockPane : null)),
       adjustPaneViewport: vi.fn(),
     }
-
-    const yAxis = getCandleYAxis(mockChart as any)
-    expect(yAxis).toBe(mockYAxis)
-
-    resetCandleYAxisAuto(mockChart as any)
+    expect(getCandleYAxis(mockChartV9 as any)).toBe(mockYAxis)
+    resetCandleYAxisAuto(mockChartV9 as any)
     expect(mockYAxis.setAutoCalcTickFlag).toHaveBeenCalledWith(true)
-    expect(mockChart.adjustPaneViewport).toHaveBeenCalledWith(false, true, true, true, true)
+    expect(mockChartV9.adjustPaneViewport).toHaveBeenCalledWith(false, true, true, true, true)
   })
 })

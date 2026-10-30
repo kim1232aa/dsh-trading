@@ -1,22 +1,18 @@
 /**
- * Left drawing toolbar styled like KLineChart Pro DrawingBar:
- * icon groups + popover submenus, magnet / lock / visible / clear.
+ * Left drawing toolbar styled like KLineChart Pro DrawingBar only:
+ * cursor, line groups, channel, fib, brush, annotation, magnet, lock, eye, trash.
  * Wires to klinecharts 10 core createOverlay / removeOverlay / overrideOverlay.
- * Extra pane/theme/timezone/scroll controls sit below a split (not in Pro bar).
- *
  * Icon paths adapted from @klinecharts/pro (Apache-2.0).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactElement, ReactNode } from 'react'
-import type { Chart, OverlayMode, PaneState } from 'klinecharts'
+import type { Chart, OverlayMode } from 'klinecharts'
 import {
   clearUserDrawings,
   createUserDrawing,
   setUserDrawLock,
   setUserDrawMagnet,
   setUserDrawVisible,
-  toggleLeftYAxis,
-  zoomByFactor,
 } from './kline-v10.js'
 import {
   DRAW_ICON_MAP,
@@ -67,10 +63,6 @@ const MORE_LINE: ToolItem[] = [
   { key: 'parallelStraightLine', text: '平行直线' },
 ]
 
-const FIBONACCI: ToolItem[] = [
-  { key: 'fibonacciLine', text: '斐波那契回调直线' },
-]
-
 const ANNOTATION: ToolItem[] = [
   { key: 'simpleAnnotation', text: '简单标注' },
   { key: 'simpleTag', text: '简单标签' },
@@ -79,13 +71,6 @@ const ANNOTATION: ToolItem[] = [
 const MAGNETS: { key: OverlayMode; text: string }[] = [
   { key: 'weak_magnet', text: '弱磁模式' },
   { key: 'strong_magnet', text: '强磁模式' },
-]
-
-const TIMEZONES = [
-  { id: 'Asia/Tokyo', label: '东京' },
-  { id: 'Asia/Shanghai', label: '上海' },
-  { id: 'UTC', label: 'UTC' },
-  { id: 'America/New_York', label: '纽约' },
 ]
 
 const BAR_W = 52
@@ -312,52 +297,12 @@ function SoloItem({
   )
 }
 
-function MiniBtn({
-  title,
-  active,
-  onClick,
-  children,
-  wide,
-}: {
-  title: string
-  active?: boolean
-  onClick: () => void
-  children: ReactNode
-  wide?: boolean
-}): ReactElement {
-  return (
-    <button
-      type="button"
-      title={title}
-      aria-label={title}
-      aria-pressed={active === true}
-      onClick={onClick}
-      style={{
-        width: wide ? 44 : 28,
-        height: 22,
-        padding: 0,
-        margin: 0,
-        border: '1px solid rgba(128,128,128,0.3)',
-        borderRadius: 3,
-        background: active ? 'rgba(22,119,255,0.22)' : 'transparent',
-        color: active ? '#1677ff' : 'inherit',
-        fontSize: 10,
-        cursor: 'pointer',
-      }}
-    >
-      {children}
-    </button>
-  )
-}
-
 export function ChartTools({
   chart,
   dark,
-  onThemeChange,
 }: {
   chart: Chart | null
   dark: boolean
-  onThemeChange?: (name: 'dsh-dark' | 'dsh-light') => void
 }): JSX.Element | null {
   const [magnetMode, setMagnetMode] = useState<OverlayMode>('normal')
   const [magnetIcon, setMagnetIcon] = useState<'weak_magnet' | 'strong_magnet'>('weak_magnet')
@@ -368,23 +313,9 @@ export function ChartTools({
   const [moreIcon, setMoreIcon] = useState<DrawToolName>('priceChannelLine')
   const [annoIcon, setAnnoIcon] = useState<DrawToolName>('simpleAnnotation')
   const [popover, setPopover] = useState('')
-  const [tz, setTz] = useState('Asia/Tokyo')
-  const [leftY, setLeftY] = useState(false)
-  const [paneState, setPaneState] = useState<PaneState>('normal')
-  const [theme, setTheme] = useState<'dsh-dark' | 'dsh-light'>(dark ? 'dsh-dark' : 'dsh-light')
-  const [coordHint, setCoordHint] = useState('')
 
   const closePopover = useCallback(() => setPopover(''), [])
   const barRef = useClickOutside(popover, closePopover)
-
-  useEffect(() => {
-    setTheme(dark ? 'dsh-dark' : 'dsh-light')
-  }, [dark])
-
-  useEffect(() => {
-    if (!chart) return
-    try { setTz(chart.getTimezone() || 'Asia/Tokyo') } catch { /* */ }
-  }, [chart])
 
   const startDraw = useCallback((name: DrawToolName) => {
     if (!chart) return
@@ -405,8 +336,6 @@ export function ChartTools({
   const border = dark ? '#292929' : '#ebedf1'
   const barBg = dark ? '#131316' : '#f5f6f8'
   const fg = dark ? '#929AA5' : '#76808F'
-
-  const paneLabel = paneState === 'normal' ? '窗' : paneState === 'maximize' ? '大' : '小'
 
   return (
     <div
@@ -610,116 +539,6 @@ export function ChartTools({
       >
         <IconRemove />
       </SoloItem>
-
-      <div style={{ width: '100%', height: 1, background: border, marginTop: 8 }} />
-
-      {/* Extra core APIs — compact, below Pro-like drawing section */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'center', marginTop: 8, width: '100%', padding: '0 4px', boxSizing: 'border-box' }}>
-        <div style={{ fontSize: 9, opacity: 0.75 }}>视窗</div>
-        <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'center' }}>
-          <MiniBtn title="向左滚动" onClick={() => chart.scrollByDistance(-120, 200)}>←</MiniBtn>
-          <MiniBtn title="向右滚动" onClick={() => chart.scrollByDistance(120, 200)}>→</MiniBtn>
-          <MiniBtn title="回到最新" onClick={() => chart.scrollToRealTime(200)}>新</MiniBtn>
-          <MiniBtn title="放大" onClick={() => zoomByFactor(chart, 1.2)}>＋</MiniBtn>
-          <MiniBtn title="缩小" onClick={() => zoomByFactor(chart, 1 / 1.2)}>－</MiniBtn>
-        </div>
-        <div style={{ fontSize: 9, opacity: 0.75, marginTop: 4 }}>窗格/轴</div>
-        <div style={{ display: 'flex', gap: 2 }}>
-          <MiniBtn
-            title={`主图窗格：${paneState}`}
-            active={paneState !== 'normal'}
-            onClick={() => {
-              const next: PaneState = paneState === 'normal' ? 'maximize' : paneState === 'maximize' ? 'minimize' : 'normal'
-              try {
-                chart.setPaneOptions({ id: 'candle_pane', state: next })
-                setPaneState(next)
-              } catch (e) {
-                console.warn('[client-chart] setPaneOptions failed', e)
-              }
-            }}
-          >
-            {paneLabel}
-          </MiniBtn>
-          <MiniBtn
-            title="切换左侧副Y轴"
-            active={leftY}
-            onClick={() => setLeftY(toggleLeftYAxis(chart, !leftY))}
-          >
-            双Y
-          </MiniBtn>
-        </div>
-        <div style={{ fontSize: 9, opacity: 0.75, marginTop: 4 }}>主题</div>
-        <div style={{ display: 'flex', gap: 2 }}>
-          <MiniBtn
-            title="深色 dsh-dark"
-            active={theme === 'dsh-dark'}
-            onClick={() => {
-              try {
-                chart.setStyles('dsh-dark')
-                setTheme('dsh-dark')
-                onThemeChange?.('dsh-dark')
-              } catch (e) {
-                console.warn('[client-chart] setStyles failed', e)
-              }
-            }}
-          >
-            暗
-          </MiniBtn>
-          <MiniBtn
-            title="浅色 dsh-light"
-            active={theme === 'dsh-light'}
-            onClick={() => {
-              try {
-                chart.setStyles('dsh-light')
-                setTheme('dsh-light')
-                onThemeChange?.('dsh-light')
-              } catch (e) {
-                console.warn('[client-chart] setStyles failed', e)
-              }
-            }}
-          >
-            亮
-          </MiniBtn>
-        </div>
-        <div style={{ fontSize: 9, opacity: 0.75, marginTop: 4 }}>时区</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
-          {TIMEZONES.map(t => (
-            <MiniBtn
-              key={t.id}
-              title={`时区 ${t.id}`}
-              active={tz === t.id}
-              wide
-              onClick={() => {
-                chart.setTimezone(t.id)
-                setTz(t.id)
-              }}
-            >
-              {t.label}
-            </MiniBtn>
-          ))}
-        </div>
-        <div style={{ fontSize: 9, opacity: 0.75, marginTop: 4 }}>坐标</div>
-        <MiniBtn
-          title="演示 convertToPixel / convertFromPixel"
-          wide
-          onClick={() => {
-            const list = chart.getDataList()
-            const last = list[list.length - 1]
-            if (!last) { setCoordHint('无数据'); return }
-            const px = chart.convertToPixel({ timestamp: last.timestamp, value: last.close })
-            const p = (Array.isArray(px) ? px[0] : px) as { x?: number; y?: number } | undefined
-            const back = chart.convertFromPixel([{ x: p?.x ?? 0, y: p?.y ?? 0 }])
-            const b = (Array.isArray(back) ? back[0] : back) as { value?: number } | undefined
-            setCoordHint(`px(${Math.round(p?.x ?? 0)},${Math.round(p?.y ?? 0)})`)
-            void b
-          }}
-        >
-          换算
-        </MiniBtn>
-        {coordHint ? (
-          <div style={{ maxWidth: 48, fontSize: 9, wordBreak: 'break-all', textAlign: 'center', opacity: 0.8 }}>{coordHint}</div>
-        ) : null}
-      </div>
     </div>
   )
 }

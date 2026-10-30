@@ -519,17 +519,32 @@ export function subscribeAxisSettings(l: () => void): () => void {
  * Resolves the candle pane's Y-axis component from a klinecharts Chart instance.
  */
 export function getCandleYAxis(chart: Chart | null): any {
-  // klinecharts exposes no public Y-axis handle in 9.x; these are internals.
-  // Every hop is feature-detected and the whole lookup is fenced, so a library
-  // upgrade that renames them degrades Y-zoom/reset instead of white-screening.
+  // klinecharts 10: DrawPane dropped getAxisComponent — use getYAxes / getYAxisComponentById.
+  // Every hop is feature-detected so a rename degrades Y-zoom/reset instead of white-screening.
   if (!chart) return null
   try {
     const anyChart = chart as any
+    if (typeof anyChart.getYAxes === 'function') {
+      const axes = anyChart.getYAxes({ paneId: 'candle_pane' }) as any[] | null | undefined
+      if (Array.isArray(axes) && axes.length > 0) {
+        const candle = axes.find(a => typeof a?.isInCandle === 'function' && a.isInCandle())
+        return candle ?? axes[0] ?? null
+      }
+    }
     const pane = typeof anyChart.getDrawPaneById === 'function'
       ? anyChart.getDrawPaneById('candle_pane')
       : anyChart._candlePane
-    const axis = typeof pane?.getAxisComponent === 'function' ? pane.getAxisComponent() : null
-    return axis ?? null
+    if (!pane) return null
+    if (typeof pane.getYAxisComponentById === 'function') {
+      return pane.getYAxisComponentById() ?? null
+    }
+    if (typeof pane.getYAxisComponents === 'function') {
+      const list = pane.getYAxisComponents()
+      return (Array.isArray(list) ? list[0] : null) ?? null
+    }
+    // klinecharts 9.x fallback
+    if (typeof pane.getAxisComponent === 'function') return pane.getAxisComponent() ?? null
+    return null
   } catch {
     return null
   }
@@ -554,7 +569,16 @@ export function adjustChartViewport(chart: Chart | null): void {
   if (!chart) return
   try {
     const anyChart = chart as any
-    if (typeof anyChart.adjustPaneViewport === 'function') anyChart.adjustPaneViewport(false, true, true, true, true)
+    // klinecharts 10: adjustPaneViewport removed; updatePane(Main) refreshes after Y reset.
+    if (typeof anyChart.updatePane === 'function') {
+      anyChart.updatePane(0 /* UpdateLevel.Main */, 'candle_pane')
+      return
+    }
+    if (typeof anyChart.adjustPaneViewport === 'function') {
+      anyChart.adjustPaneViewport(false, true, true, true, true)
+      return
+    }
+    if (typeof anyChart.resize === 'function') anyChart.resize()
   } catch { /* degrade */ }
 }
 
