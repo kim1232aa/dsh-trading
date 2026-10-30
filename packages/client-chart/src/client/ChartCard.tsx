@@ -30,6 +30,8 @@ import {
 } from './kline-v10.js'
 import type { BarSubscriber } from './kline-v10.js'
 import { ChartTools } from './ChartTools.js'
+import { ChartChrome, applyDisplayToChart, getDisplaySettings } from './ChartChrome.js'
+import type { ChromeChip, ChromeIndicator } from './ChartChrome.js'
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 import { publishLatestChart } from './latest.js'
 import { annotationDigest, contentText, readChartPayload } from './payload.js'
@@ -1189,7 +1191,7 @@ export function planChipSync(active: readonly string[], mounted: ReadonlyMap<str
   return { add: [...want].filter(id => !have.has(id)), remove: [...have].filter(id => !want.has(id)) }
 }
 
-function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSettings, onEditParams, derivatives, largeWalls, wallMarket = 'all', onCrosshairHover, history, baseHeight = CHART_HEIGHT, fill = false }: {
+function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSettings, onEditParams, derivatives, largeWalls, wallMarket = 'all', onCrosshairHover, history, baseHeight = CHART_HEIGHT, fill = false, onChartReady, drawBarOpen = true }: {
   data: ChartTimeframeData
   /** Older-bar paging for klinecharts loadMore; absent on agent cards. */
   history?: ChartHistory | undefined
@@ -1215,6 +1217,10 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   baseHeight?: number
   /** Take the height the parent flex column leaves, instead of a fixed plot height. */
   fill?: boolean
+  /** Expose the live chart instance to ChartBody chrome (screenshot / timezone / styles). */
+  onChartReady?: ((chart: Chart | null) => void) | undefined
+  /** When false, hide Pro DrawingBar and give the canvas full width. */
+  drawBarOpen?: boolean
 }): JSX.Element {
   const el = useRef<HTMLDivElement>(null)
   // klinecharts 9.8 keys its instance cache on the container's DOM id and
@@ -1237,6 +1243,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   onEditRef.current = onEditParams
   const onHoverRef = useRef(onCrosshairHover)
   onHoverRef.current = onCrosshairHover
+  const onChartReadyRef = useRef(onChartReady)
+  onChartReadyRef.current = onChartReady
   const wallOverlayIds = useRef<string[]>([])
   const annotationOverlayIds = useRef<string[]>([])
   /** Chip indicators currently mounted on the canvas: chip id → pane id. */
@@ -1266,6 +1274,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     })
     if (chart === null) return
     chartRef.current = chart
+    onChartReadyRef.current?.(chart)
     setChartReady(n => n + 1)
     const applyFold = createMainPaneTooltipFold(chart, FOLD_EXEMPT)
     const data = latest.current
@@ -1275,6 +1284,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       light: klineStyles(LIGHT, axisSettings.coordType) as never,
     })
     chart.setStyles(klineStyles(palette, axisSettings.coordType))
+    applyDisplayToChart(chart, getDisplaySettings())
     const applyOhlcPark = () => chart.setStyles(ohlcTooltipAvoidTable(settingsRef.current['REVPOINT']?.visible ?? false, chart.getSize('candle_pane', 'main' as never)?.width ?? 0))
     applyOhlcPark()
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(applyOhlcPark) : null
@@ -1350,6 +1360,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     return () => {
       observer.disconnect()
       chartRef.current = null
+      onChartReadyRef.current?.(null)
       setChartReady(0)
       barSubscribeRef.current = null
       mountedChips.current = new Map()
@@ -1755,11 +1766,11 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   // candlestick chart stops being a chart. Indicator panes then divide the
   // available height rather than extending the card downward.
   // Drawing bar is 52px (Pro DrawingBar width); keep chart canvas to its right.
-  const drawBarW = chartReady > 0 ? 52 : 0
+  const drawBarW = chartReady > 0 && drawBarOpen ? 52 : 0
   return (
     <div style={{ position: 'relative', width: '100%', overflow: 'visible', ...(fill ? { flex: '1 1 auto', minHeight: 240 } : { height: baseHeight + paneCount * PANE_HEIGHT }) }}>
       <div ref={el} style={{ position: 'absolute', left: drawBarW, right: 0, top: 0, bottom: 0, width: 'auto', height: 'auto' }} />
-      {chartReady > 0 ? <ChartTools chart={chartRef.current} dark={dark} /> : null}
+      {chartReady > 0 && drawBarOpen ? <ChartTools chart={chartRef.current} dark={dark} /> : null}
       {vbToasts.length > 0 && (
         <div role="status" aria-label="指标提醒" style={{ position: 'absolute', right: 70, top: 8, zIndex: 5, display: 'flex', flexDirection: 'column', gap: 4, pointerEvents: 'auto' }}>
           {vbToasts.map(t => (
@@ -2545,6 +2556,9 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
   const [editing, setEditing] = useState(false)
   const axisSettings = useSyncExternalStore(subscribeAxisSettings, getAxisSettings, () => DEFAULT_AXIS_SETTINGS)
   const [showAxisMenu, setShowAxisMenu] = useState(false)
+  const [chartApi, setChartApi] = useState<Chart | null>(null)
+  const [drawBarOpen, setDrawBarOpen] = useState(true)
+  const fullscreenRef = useRef<HTMLDivElement>(null)
   // Left edge the rebuild key keeps while loadMore prepends history: `prepended`
   // is the first bar time the canvas itself produced, `edge` the original one.
   const historyEdge = useRef<{ prepended: string; edge: string } | null>(null)
@@ -2577,6 +2591,20 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
   const first = tf.candles[0]!
   const changePct = get(tf.indicators, 'changePct')
   const palette = dark ? DARK : LIGHT
+  const chromeIndicators: ChromeIndicator[] = EDITABLE.map(def => ({
+    name: def.name,
+    title: def.title,
+    visible: settings[def.name]?.visible ?? false,
+    group: def.pane !== undefined ? 'sub' : 'main',
+  }))
+  // Chip-only indicators (not in EDITABLE): show under 副图 / 主图 in the quick modal.
+  const chromeChips: ChromeChip[] = [
+    { id: 'bb', title: '布林带', on: activeChips.includes('bb') },
+    { id: 'macd', title: 'MACD', on: activeChips.includes('macd') },
+    { id: 'stoch', title: '随机指标', on: activeChips.includes('stoch') },
+    { id: 'adx', title: 'ADX', on: activeChips.includes('adx') },
+    { id: 'mfi', title: 'MFI', on: activeChips.includes('mfi') },
+  ]
   const toggle = (id: string): void => {
     if (id === 'rsi') {
       const cur = settings['RSI_GRID']!
@@ -2637,7 +2665,7 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
     : shell
 
   return (
-    <div style={root}>
+    <div ref={fullscreenRef} style={root}>
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 8, marginBottom: 8, flex: '0 0 auto' }}>
         <strong style={{ fontSize: 13 }}>{payload.symbol}</strong>
         <span style={{ color: palette.faint }}>{tf.timeframe} · {tf.candles.length} 根 · {payload.provider}</span>
@@ -2676,6 +2704,23 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
               padding: '1px 8px', fontSize: 11, cursor: 'pointer',
             }}
           >⚙ 指标参数</button>
+          <ChartChrome
+            chart={chartApi}
+            dark={dark}
+            palette={palette}
+            fullscreenRef={fullscreenRef}
+            indicators={chromeIndicators}
+            chips={chromeChips}
+            onToggleIndicator={(name) => {
+              const cur = settings[name]
+              if (!cur) return
+              setSettings({ ...settings, [name]: { ...cur, visible: !cur.visible } })
+            }}
+            onToggleChip={(id) => toggle(id)}
+            onOpenParams={() => setEditing(true)}
+            drawBarOpen={drawBarOpen}
+            onToggleDrawBar={() => setDrawBarOpen(v => !v)}
+          />
         </div>
         {payload.timeframes.length > 1
           ? <span style={{ display: 'flex', gap: 4 }}>
@@ -2709,6 +2754,8 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
         onCrosshairHover={onCrosshairHover}
         history={historyForKline}
         onEditParams={() => setEditing(true)}
+        onChartReady={setChartApi}
+        drawBarOpen={drawBarOpen}
         baseHeight={chartHeight}
         fill={fill}
       />
