@@ -129,6 +129,10 @@ export interface PanelLargeOrders {
   pair: string
   orderCount: number
   updatedAt?: number
+  /** Served from the last good pull (CoinGlass rate limit / network); see updatedAt. */
+  stale?: boolean
+  /** Venue queries that failed this round. */
+  failedSources?: number
   walls: PanelLargeOrderWall[]
 }
 

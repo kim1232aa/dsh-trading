@@ -26,6 +26,13 @@ import { chartPanelContextText, describeChartView, ENDPOINTS, MARKET_CHANNEL, se
 import { CoinglassCapi } from '@dsh-trading/provider-coinglass'
 import type { CoinglassService } from '@dsh-trading/provider-coinglass'
 
+/**
+ * One capi client for the whole host when no coinglass service is mounted:
+ * its pull cache and 429 cooldown only work if every request shares it.
+ */
+let sharedCoinglass: CoinglassCapi | undefined
+const fallbackCoinglass = (): CoinglassCapi => (sharedCoinglass ??= new CoinglassCapi())
+
 export {
   chartPanelContextText,
   CHART_CONTEXT_PRESETS,
@@ -89,7 +96,6 @@ export function apply(ctx: Context): void {
         const status: 'active' | 'all' | 'revoked' = body['status'] === 'all' || body['status'] === 'revoked' || body['status'] === 'active' ? body['status'] : 'active'
         const balanced = typeof body['balanced'] === 'boolean' ? body['balanced'] : true
 
-        const client = coinglass?.client ?? new CoinglassCapi()
         if (coinglass && !coinglass.enabled) {
           return { ok: true, value: { symbol, cgSymbol: '', pair: '', orderCount: 0, walls: [] } }
         }
@@ -98,13 +104,15 @@ export function apply(ctx: Context): void {
           top,
           status,
           balanced,
+          // The panel never shows venue statistics; skip that extra capi request.
+          statistics: false,
           ...(venue ? { venue } : {}),
           ...(marketType ? { marketType } : {}),
           ...(currentPrice !== undefined ? { currentPrice } : {}),
           ...(maxDistancePct !== undefined ? { maxDistancePct } : {}),
           ...(minUsd !== undefined ? { minUsd } : {}),
         }
-        const snap = await (coinglass ? coinglass.getLargeOrders(symbol, opts) : client.getLargeOrders(symbol, opts))
+        const snap = await (coinglass ? coinglass.getLargeOrders(symbol, opts) : fallbackCoinglass().getLargeOrders(symbol, opts))
         return {
           ok: true,
           value: {
@@ -113,6 +121,8 @@ export function apply(ctx: Context): void {
             pair: snap.pair,
             orderCount: snap.orderCount,
             updatedAt: snap.updatedAt ?? Date.now(),
+            ...(snap.stale ? { stale: true } : {}),
+            ...(snap.failedSources ? { failedSources: snap.failedSources } : {}),
             walls: snap.walls.map(w => ({
               id: w.id,
               exchange: w.exchange,

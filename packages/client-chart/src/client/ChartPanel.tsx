@@ -482,25 +482,51 @@ function marketBadgeText(market?: string): string {
   return isSpotWallMarket(market) ? '现货' : '合约'
 }
 
+/** Short Chinese reason for a large-wall pull failure. */
+function wallErrorText(error: string): string {
+  if (/429/.test(error)) return 'CoinGlass 限流，稍后自动重试'
+  if (/fetch failed|network|timeout|abort/i.test(error)) return '网络失败，稍后自动重试'
+  return error.slice(0, 60)
+}
+
 function LargeWallsStrip({
   wallsData,
   currentPrice,
   marketFilter,
   onMarketFilter,
   onRefresh,
+  error,
 }: {
   wallsData: PanelLargeOrders | null
   currentPrice?: number | undefined
   marketFilter: WallMarketFilter
   onMarketFilter: (next: WallMarketFilter) => void
   onRefresh?: () => void
+  /** Last pull failure; shown when there is nothing (or only stale data) on screen. */
+  error?: string | null
 }): JSX.Element | null {
   const [bookOpen, setBookOpen] = useState(false)
   const [sideFilter, setSideFilter] = useState<'all' | 'buy' | 'sell'>('all')
 
-  if (!wallsData || !wallsData.walls || wallsData.walls.length === 0) return null
+  if (!wallsData) {
+    if (!error) return null
+    return (
+      <div style={{ ...STRIP, fontSize: 11, alignItems: 'center', color: '#d29922' }} title={error}>
+        <span style={{ fontWeight: 600 }}>🧱 大单墙</span>
+        <span>暂无数据：{wallErrorText(error)}</span>
+        {onRefresh ? (
+          <button type="button" onClick={onRefresh} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 11 }} title="立即重试">🔄</button>
+        ) : null}
+      </div>
+    )
+  }
+  const walls = wallsData.walls ?? []
 
-  const filteredWalls = filterWallsByMarket(wallsData.walls, marketFilter)
+  const filteredWalls = filterWallsByMarket(walls, marketFilter)
+  const staleAge = wallsData.updatedAt ? Math.max(0, Math.round((Date.now() - wallsData.updatedAt) / 1000)) : 0
+  const staleNote = wallsData.stale || error
+    ? `⚠ 延迟 ${staleAge >= 60 ? `${Math.round(staleAge / 60)}分` : `${staleAge}秒`}${error ? `（${wallErrorText(error)}）` : '（CoinGlass 限流）'}`
+    : null
 
   const buys = filteredWalls
     .filter(w => w.side === 'buy')
@@ -591,6 +617,9 @@ function LargeWallsStrip({
             📋 挂单簿 ({filteredWalls.length}) {bookOpen ? '▲' : '▼'}
           </button>
           <span style={{ opacity: 0.75 }}>更新: {updatedTime}</span>
+          {staleNote ? <span style={{ color: '#d29922' }} title={error ?? 'CoinGlass 拒绝了本轮拉取，显示上一份成功数据'}>{staleNote}</span> : null}
+          {wallsData.failedSources ? <span style={{ color: '#8b949e' }} title="部分交易所源本轮拉取失败，墙可能不全">缺{wallsData.failedSources}源</span> : null}
+          {filteredWalls.length === 0 ? <span style={{ color: '#8b949e' }}>当前筛选无墙（门槛/距离/市场）</span> : null}
           {onRefresh ? (
             <button
               type="button"
@@ -957,6 +986,8 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
   const [activeGroup, setActiveGroup] = useState<string>('全部')
   const [panelDerivatives, setPanelDerivatives] = useState<PanelDerivatives | null>(null)
   const [panelLargeWalls, setPanelLargeWalls] = useState<PanelLargeOrders | null>(null)
+  const [largeWallsError, setLargeWallsError] = useState<string | null>(null)
+  const wallPriceRef = useRef<number | undefined>(undefined)
   const [largeWallsOn, setLargeWallsOn] = useState(() => peekSettings()['LARGE_WALLS']?.visible ?? false)
   const [wallMarket, setWallMarket] = useState<WallMarketFilter>('all')
   const [hoveredTime, setHoveredTime] = useState<number | null>(null)
@@ -1054,25 +1085,36 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
     }
   }, [ownSymbol, ownTf, ownProvider, manualProvider, market])
 
+  // Last close for the wall distance filter, read by the poller through a ref:
+  // the live tail replaces payload.timeframes every second, and depending on it
+  // restarted the poll (a 14-venue CoinGlass fan-out) each tick → HTTP 429 →
+  // walls vanished. Price drift between 20 s polls does not matter.
+  {
+    const tf0 = payload?.timeframes?.[0]
+    wallPriceRef.current = tf0?.candles?.[tf0.candles.length - 1]?.close
+  }
+  const wallSymbol = payload?.symbol
+
   // Poll CoinGlass large walls only while the overlay is enabled.
   useEffect(() => {
-    if (!largeWallsOn || payload === null) {
+    if (!largeWallsOn || !wallSymbol || !market.getLargeOrders) {
       setPanelLargeWalls(null)
+      setLargeWallsError(null)
       pullLargeWallsRef.current = null
       return
     }
-    const symbol = payload.symbol
-    if (!symbol || !market.getLargeOrders) {
-      setPanelLargeWalls(null)
-      pullLargeWallsRef.current = null
-      return
-    }
+    const symbol = wallSymbol
+    // Another symbol's walls must never be drawn on this chart.
+    setPanelLargeWalls(cur => (cur && cur.symbol === symbol ? cur : null))
+    setLargeWallsError(null)
     let active = true
+    let busy = false
     const controller = new AbortController()
-    const pull = (): void => {
-      const tf0 = payload.timeframes?.[0]
-      const lastCandle = tf0?.candles?.[tf0.candles.length - 1]
-      const currentPrice = lastCandle?.close
+    const pull = (manual = false): void => {
+      if (busy) return
+      if (!manual && typeof document !== 'undefined' && document.hidden) return
+      busy = true
+      const currentPrice = wallPriceRef.current
       const minWan = peekSettings()['LARGE_WALLS']?.params?.[0] ?? 100
       const maxDist = (peekSettings()['LARGE_WALLS']?.params?.[1] ?? 20) / 100
       const sideLimit = peekSettings()['LARGE_WALLS']?.params?.[2] ?? 12
@@ -1088,20 +1130,36 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
         },
         controller.signal,
       ).then(
-        snap => { if (active) setPanelLargeWalls(snap) },
-        () => { if (active && !controller.signal.aborted) setPanelLargeWalls(null) },
+        snap => {
+          busy = false
+          if (!active) return
+          setPanelLargeWalls(snap)
+          setLargeWallsError(null)
+        },
+        (err: unknown) => {
+          busy = false
+          if (!active || controller.signal.aborted) return
+          // Keep the last good walls on screen (marked stale) instead of
+          // blanking strip + overlay on one refused poll.
+          setLargeWallsError(err instanceof Error ? err.message : String(err))
+          setPanelLargeWalls(cur => (cur && cur.symbol === symbol ? { ...cur, stale: true } : cur))
+        },
       )
     }
-    pullLargeWallsRef.current = pull
-    pull()
-    const timer = setInterval(pull, LARGE_WALLS_MS)
+    pullLargeWallsRef.current = () => pull(true)
+    pull(true)
+    const timer = setInterval(() => pull(), LARGE_WALLS_MS)
+    // Hidden tabs skip polls; catch up as soon as the tab is shown again.
+    const onVisible = (): void => { if (!document.hidden) pull() }
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible)
     return () => {
       active = false
       controller.abort()
       clearInterval(timer)
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible)
       pullLargeWallsRef.current = null
     }
-  }, [largeWallsOn, market, payload?.symbol, payload?.timeframes])
+  }, [largeWallsOn, market, wallSymbol])
 
 
   const load = useCallback(async (
@@ -1639,10 +1697,11 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
                 intervalMs={shownTimeframe ? TF_MS[shownTimeframe] : undefined}
               />
             ) : null}
-            {largeWallsOn && panelLargeWalls?.walls?.length ? (
+            {largeWallsOn && (panelLargeWalls || largeWallsError) ? (
               <LargeWallsStrip
                 key="large-walls-strip"
                 wallsData={panelLargeWalls}
+                error={largeWallsError}
                 currentPrice={payload.timeframes[0]?.candles[payload.timeframes[0].candles.length - 1]?.close}
                 marketFilter={wallMarket}
                 onMarketFilter={setWallMarket}

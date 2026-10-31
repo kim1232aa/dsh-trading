@@ -44,8 +44,15 @@ export interface LargeOrdersSnapshot {
   statistics: LargeOrderStatistics[]
   /** How many raw walls before top-N trim. */
   orderCount: number
-  /** Epoch timestamp ms of when this snapshot was fetched. */
+  /** Epoch ms of the primary pull behind this snapshot (older than now when served from cache). */
   updatedAt?: number
+  /**
+   * True when CoinGlass refused or failed the primary pull (HTTP 429, network)
+   * and this is the last good pull instead; `updatedAt` says how old it is.
+   */
+  stale?: boolean
+  /** Venue queries that failed this round; their walls are missing from `walls`. */
+  failedSources?: number
 }
 
 export interface FetchLargeOrdersOptions {
@@ -77,4 +84,6 @@ export interface FetchLargeOrdersOptions {
   maxDistancePct?: number
   /** Whether to balance top walls evenly between buy (support) and sell (resistance). Default true. */
   balanced?: boolean
+  /** Also pull venue statistics (one extra request). Default true; the chart strip does not use them. */
+  statistics?: boolean
 }

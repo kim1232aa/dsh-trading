@@ -41,6 +41,10 @@ export function renderLargeOrders(snap: LargeOrdersSnapshot, top = 40): string {
   const lines: string[] = [
     `大额挂单 ${snap.pair}（${snap.cgSymbol}，窗口 ${snap.startTime}..${snap.endTime}，共 ${snap.orderCount} 堵，展示 Top ${Math.min(top, snap.walls.length)}）`,
   ]
+  if (snap.stale && snap.updatedAt) {
+    lines.push(`  注意: CoinGlass 限流/失败，以下是 ${Math.round((Date.now() - snap.updatedAt) / 1000)} 秒前的数据`)
+  }
+  if (snap.failedSources) lines.push(`  注意: ${snap.failedSources} 个交易所源本轮拉取失败，墙可能不全`)
   if (snap.statistics.length > 0) {
     for (const s of snap.statistics.slice(0, 5)) {
       const venue = `${s.exchange}${s.market === 'spot' ? '现货' : s.market === 'perp' ? '合约' : ''}`

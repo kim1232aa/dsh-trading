@@ -10,6 +10,9 @@ import {
 } from '@dsh-trading/provider-coinglass'
 import type { CoinglassService, LargeOrdersSnapshot } from '@dsh-trading/provider-coinglass'
 
+/** Reused so the pull cache and 429 cooldown survive between tool calls. */
+const fallbackClients = new Map<string, CoinglassCapi>()
+
 async function pullLargeOrders(
   ctx: Context,
   symbol: string,
@@ -46,10 +49,15 @@ async function pullLargeOrders(
   if (service) {
     return service.getLargeOrders(symbol, queryOpts)
   }
-  const client = new CoinglassCapi({
-    ...(opts.exchange !== undefined ? { defaultExchange: opts.exchange } : {}),
-    ...(opts.market !== undefined ? { defaultMarket: opts.market } : {}),
-  })
+  const key = `${opts.exchange ?? ''}|${opts.market ?? ''}`
+  let client = fallbackClients.get(key)
+  if (!client) {
+    client = new CoinglassCapi({
+      ...(opts.exchange !== undefined ? { defaultExchange: opts.exchange } : {}),
+      ...(opts.market !== undefined ? { defaultMarket: opts.market } : {}),
+    })
+    fallbackClients.set(key, client)
+  }
   return client.getLargeOrders(symbol, queryOpts)
 }
 

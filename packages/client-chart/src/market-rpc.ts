@@ -88,6 +88,10 @@ export interface LargeOrdersResponse {
   pair: string
   orderCount: number
   updatedAt?: number
+  /** Served from the last good pull because CoinGlass refused a fresh one. */
+  stale?: boolean
+  /** Venue queries that failed this round. */
+  failedSources?: number
   walls: {
     id: string | number
     exchange: string

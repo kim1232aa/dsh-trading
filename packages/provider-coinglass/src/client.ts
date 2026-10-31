@@ -26,6 +26,43 @@ export interface CoinglassClientConfig {
   timeoutMs?: number
   /** User-Agent. */
   userAgent?: string
+  /** Fresh window of the primary (Binance-routed) wall pull, ms. Default 15 000. */
+  primaryTtlMs?: number
+  /** Fresh window of each secondary venue pull, ms. Default 60 000. */
+  secondaryTtlMs?: number
+  /** Clock, for tests. */
+  now?: () => number
+}
+
+/** A raw largeTakerOrder answer and when it was pulled. */
+interface RawPull {
+  at: number
+  groups: unknown
+}
+
+/** Oldest raw pull still served when CoinGlass refuses a fresh one. */
+const STALE_MAX_MS = 10 * 60_000
+/** First cooldown after HTTP 429; doubles per repeated 429 up to the max. */
+const COOLDOWN_BASE_MS = 15_000
+const COOLDOWN_MAX_MS = 120_000
+
+/** CoinGlass answered 429 Too Many Requests. */
+export function isRateLimitError(err: unknown): boolean {
+  return err instanceof Error && /\bHTTP 429\b/.test(err.message)
+}
+
+/** Settle with `p`, or reject as soon as `signal` aborts — without cancelling `p` for other waiters. */
+function raceAbort<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return p
+  if (signal.aborted) return Promise.reject(signal.reason ?? new Error('aborted'))
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(signal.reason ?? new Error('aborted'))
+    signal.addEventListener('abort', onAbort, { once: true })
+    p.then(
+      v => { signal.removeEventListener('abort', onAbort); resolve(v) },
+      (e: unknown) => { signal.removeEventListener('abort', onAbort); reject(e) },
+    )
+  })
 }
 
 type RawGroup = {
@@ -240,6 +277,18 @@ export class CoinglassCapi {
   readonly defaultMarket: 'perp' | 'spot'
   readonly timeoutMs: number
   readonly userAgent: string
+  readonly primaryTtlMs: number
+  readonly secondaryTtlMs: number
+  readonly now: () => number
+  /**
+   * Raw wall pulls by `symbol|hours`. CoinGlass rate-limits by IP: one poll is a
+   * 14-venue fan-out, so every caller (chart strip, overlay, large_orders tool,
+   * other tabs) must share pulls instead of each hitting capi.
+   */
+  private readonly rawPulls = new Map<string, RawPull>()
+  private readonly rawInflight = new Map<string, Promise<RawPull>>()
+  private cooldownUntil = 0
+  private cooldownMs = 0
 
   constructor(config: CoinglassClientConfig = {}) {
     this.baseURL = (config.baseURL ?? DEFAULT_BASE_URL).replace(/\/$/, '')
@@ -248,6 +297,67 @@ export class CoinglassCapi {
     this.timeoutMs = config.timeoutMs ?? 30_000
     this.userAgent = config.userAgent
       ?? 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+    this.primaryTtlMs = config.primaryTtlMs ?? 15_000
+    this.secondaryTtlMs = config.secondaryTtlMs ?? 60_000
+    this.now = config.now ?? Date.now
+  }
+
+  /** Start (or double) the HTTP 429 cooldown. A fan-out collects several 429s at once; escalate once per round. */
+  private noteRateLimit(): void {
+    const now = this.now()
+    if (this.cooldownUntil > now) return
+    this.cooldownMs = Math.min(COOLDOWN_MAX_MS, this.cooldownMs > 0 ? this.cooldownMs * 2 : COOLDOWN_BASE_MS)
+    this.cooldownUntil = now + this.cooldownMs
+  }
+
+  /** ms left in the HTTP 429 cooldown; 0 when capi may be called. */
+  rateLimitRemainingMs(): number {
+    return Math.max(0, this.cooldownUntil - this.now())
+  }
+
+  /**
+   * One venue's raw walls: cached within `ttlMs`, one request in flight per key,
+   * no request during a 429 cooldown. A refused or failed pull falls back to the
+   * last good one (up to STALE_MAX_MS old); callers read its age from `at`.
+   */
+  private pullRaw(cgSymbol: string, start: number, end: number, hours: number, ttlMs: number, signal?: AbortSignal): Promise<RawPull> {
+    const key = `${cgSymbol}|${hours}`
+    const t = this.now()
+    const cached = this.rawPulls.get(key)
+    if (cached && t - cached.at < ttlMs) return Promise.resolve(cached)
+    const usable = (): RawPull | undefined => {
+      const last = this.rawPulls.get(key)
+      return last && this.now() - last.at <= STALE_MAX_MS ? last : undefined
+    }
+    if (this.cooldownUntil > t) {
+      const last = usable()
+      if (last) return Promise.resolve(last)
+      return Promise.reject(new Error(
+        `coinglass HTTP 429 cooldown: retry in ${Math.ceil((this.cooldownUntil - t) / 1000)}s`,
+      ))
+    }
+    let pending = this.rawInflight.get(key)
+    if (!pending) {
+      // Not tied to the caller's signal: other waiters share this request.
+      pending = this.largeTakerOrder(cgSymbol, start, end).then(
+        (groups): RawPull => {
+          this.rawInflight.delete(key)
+          const pull = { at: this.now(), groups }
+          this.rawPulls.set(key, pull)
+          this.cooldownMs = 0
+          return pull
+        },
+        (err: unknown): RawPull => {
+          this.rawInflight.delete(key)
+          if (isRateLimitError(err)) this.noteRateLimit()
+          const last = usable()
+          if (last) return last
+          throw err
+        },
+      )
+      this.rawInflight.set(key, pending)
+    }
+    return raceAbort(pending, signal)
   }
 
   /** GET one encrypted endpoint and decrypt. */
@@ -364,18 +474,28 @@ export class CoinglassCapi {
     const top = opts.top ?? 40
     const end = Math.floor(Date.now() / 1000)
     const start = end - Math.max(1, Math.floor(hours * 3600))
+    // The primary (Binance-routed) answer already carries Binance + OKX +
+    // Coinbase books and refreshes fast; secondary venues refresh slower so a
+    // 20 s chart poll costs ~1 request, not 14.
     const settled = await Promise.allSettled(
-      cgSymbols.map(sym => this.largeTakerOrder(sym, start, end, opts.signal)),
+      cgSymbols.map((sym, i) => this.pullRaw(
+        sym, start, end, hours, i === 0 ? this.primaryTtlMs : this.secondaryTtlMs, opts.signal,
+      )),
     )
     const primaryResult = settled[0]
     if (!primaryResult || primaryResult.status === 'rejected') {
       throw primaryResult ? primaryResult.reason : new Error(`coinglass fetch failed for ${mapped.cgSymbol}`)
     }
+    const primary = primaryResult.value
+    const stale = this.now() - primary.at >= this.primaryTtlMs
+    let failedSources = 0
     const mergedGroups: unknown[] = []
     for (const res of settled) {
-      if (res.status === 'fulfilled' && Array.isArray(res.value)) {
-        mergedGroups.push(...res.value)
+      if (res.status === 'rejected') {
+        failedSources += 1
+        continue
       }
+      if (Array.isArray(res.value.groups)) mergedGroups.push(...res.value.groups)
     }
     let walls = deduplicateWalls(flattenWalls(mergedGroups))
     if (opts.venue) {
@@ -439,7 +559,7 @@ export class CoinglassCapi {
 
     let statistics: LargeOrderStatistics[] = []
     const prices = selectedWalls.map(w => w.price).filter(p => p > 0)
-    if (prices.length > 0) {
+    if (prices.length > 0 && opts.statistics !== false && this.cooldownUntil <= this.now()) {
       const minP = opts.minPrice ?? Math.min(...prices) * 0.98
       const maxP = opts.maxPrice ?? Math.max(...prices) * 1.02
       try {
@@ -454,8 +574,9 @@ export class CoinglassCapi {
         if (opts.marketType === 'spot' || opts.marketType === 'perp') {
           statistics = statistics.filter(s => s.market === opts.marketType)
         }
-      } catch {
+      } catch (err) {
         // Statistics are optional; walls alone are enough for the tool/overlay.
+        if (isRateLimitError(err)) this.noteRateLimit()
       }
     }
 
@@ -467,7 +588,9 @@ export class CoinglassCapi {
       orderCount,
       walls: selectedWalls,
       statistics,
-      updatedAt: Date.now(),
+      updatedAt: primary.at,
+      ...(stale ? { stale: true } : {}),
+      ...(failedSources > 0 ? { failedSources } : {}),
     }
   }
 }
