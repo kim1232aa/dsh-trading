@@ -1651,7 +1651,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       walls = walls.filter(w => Math.abs(w.price - curP) / curP <= maxDistPct)
     }
     // Hide walls already crossed by curP or swept by a candle opened after the snapshot.
-    walls = dropCrossedWalls(walls, curP, { candles: data.candles })
+    walls = dropCrossedWalls(walls, curP, { candles: data.candles, ...(largeWalls.updatedAt !== undefined ? { snapshotAt: largeWalls.updatedAt } : {}) })
 
     const buys = walls
       .filter(w => w.side === 'buy')

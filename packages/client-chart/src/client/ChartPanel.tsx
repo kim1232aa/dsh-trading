@@ -523,7 +523,10 @@ function LargeWallsStrip({
   const filteredWalls = dropCrossedWalls(
     filterWallsByMarket(walls, marketFilter),
     currentPrice,
-    candles ? { candles } : undefined,
+    {
+      ...(candles ? { candles } : {}),
+      ...(wallsData.updatedAt !== undefined ? { snapshotAt: wallsData.updatedAt } : {}),
+    },
   )
   const staleAge = wallsData.updatedAt ? Math.max(0, Math.round((Date.now() - wallsData.updatedAt) / 1000)) : 0
   const staleNote = wallsData.stale || error
@@ -622,7 +625,7 @@ function LargeWallsStrip({
             }}
             title="展开/收起 CoinGlass 实时大额挂单簿明细"
           >
-            📋 挂单簿 ({filteredWalls.length}) {bookOpen ? '▲' : '▼'}
+            📋 挂单簿 ({filteredWalls.length}{wallsData.orderCount > filteredWalls.length ? `/${wallsData.orderCount}` : ''}) {bookOpen ? '▲' : '▼'}
           </button>
           <span style={{ opacity: 0.75 }}>更新: {updatedTime}</span>
           {staleNote ? <span style={{ color: '#d29922' }} title={error ?? 'CoinGlass 拒绝了本轮拉取，显示上一份成功数据'}>{staleNote}</span> : null}
@@ -1140,7 +1143,8 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
         symbol,
         {
           hours: 168,
-          top: Math.max(40, sideLimit * 2),
+          top: Math.max(80, sideLimit * 4),
+          marketType: wallMarket,
           status: 'active',
           maxDistancePct: maxDist,
           minUsd: minWan * 10_000,
@@ -1179,7 +1183,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
       if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible)
       pullLargeWallsRef.current = null
     }
-  }, [largeWallsOn, wallParamsKey, market, wallSymbol])
+  }, [largeWallsOn, wallMarket, wallParamsKey, market, wallSymbol])
 
 
   const load = useCallback(async (

@@ -179,18 +179,26 @@ export interface WallSweepCandle {
   low: number
 }
 
+/** Venue snapshots in CoinGlass + secondary cache refresh within ~45 s. */
+export const SNAPSHOT_SWEEP_WINDOW_MS = 45_000
+
 export interface DropCrossedWallsOptions {
   /** Relative slack for the live-price side check (default WALL_CROSS_TOLERANCE = 0). */
   tol?: number
   /**
-   * Optional series candles (ascending by open time). Any candle whose open
-   * time is >= `w.currentTime` occurred strictly after CoinGlass last saw the
-   * wall alive; if its wick traded past `w.price` (beyond `sweepSlack`), the
-   * wall was eaten/pulled and will not resurrect on a pullback while cached.
+   * Optional series candles (ascending by open time). Any candle opening after
+   * the wall was last confirmed alive whose wick traded past `w.price` (beyond
+   * `sweepSlack`) swept the wall so it will not resurrect on a pullback.
    */
   candles?: readonly WallSweepCandle[]
   /** Basis slack for post-snapshot wick sweeps (default WALL_SWEEP_BASIS_SLACK = 0.0005). */
   sweepSlack?: number
+  /**
+   * Timestamp (ms) of the CoinGlass snapshot that still reported `state = 1`.
+   * Untouched orders keep their old `currentTime`, so sweeps older than
+   * `snapshotAt - 45 s` would already have removed the wall on CoinGlass.
+   */
+  snapshotAt?: number
 }
 
 function barOpenMs(t: string | number): number {
@@ -213,14 +221,19 @@ export function isWallCrossed(
   return false
 }
 
-/** True when a candle opening at/after `w.currentTime` traded past `w.price`. */
+/** True when a candle opening after the wall was last confirmed alive traded past `w.price`. */
 export function isWallSweptAfterSnapshot(
   w: { side: string; price: number; currentTime?: number },
   candles: readonly WallSweepCandle[] | undefined,
   sweepSlack: number = WALL_SWEEP_BASIS_SLACK,
+  snapshotAt?: number,
 ): boolean {
-  const seenAt = w.currentTime
-  if (!candles?.length || typeof seenAt !== 'number' || !Number.isFinite(seenAt) || seenAt <= 0) return false
+  const wallCurMs = toEpochMs(w.currentTime)
+  const snapFloorMs = typeof snapshotAt === 'number' && Number.isFinite(snapshotAt) && snapshotAt > 0
+    ? toEpochMs(snapshotAt) - SNAPSHOT_SWEEP_WINDOW_MS
+    : 0
+  const seenAt = Math.max(wallCurMs, snapFloorMs)
+  if (!candles?.length || seenAt <= 0) return false
   const askCeil = w.price * (1 + sweepSlack)
   const bidFloor = w.price * (1 - sweepSlack)
   // Candles are ascending; walk from the tail and stop as soon as open < seenAt.
@@ -243,7 +256,7 @@ export function dropCrossedWalls<T extends { side: string; price: number; curren
   const opts: DropCrossedWallsOptions = typeof optsOrTol === 'number' ? { tol: optsOrTol } : optsOrTol
   const tol = opts.tol ?? WALL_CROSS_TOLERANCE
   const sweepSlack = opts.sweepSlack ?? WALL_SWEEP_BASIS_SLACK
-  return walls.filter(w => !isWallCrossed(w, price, tol) && !isWallSweptAfterSnapshot(w, opts.candles, sweepSlack))
+  return walls.filter(w => !isWallCrossed(w, price, tol) && !isWallSweptAfterSnapshot(w, opts.candles, sweepSlack, opts.snapshotAt))
 }
 
 function toEpochMs(t: number | undefined): number {

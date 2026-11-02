@@ -160,4 +160,30 @@ describe('CoinGlass pull cache / dedupe / 429 cooldown', () => {
     await c.getLargeOrders('BTCUSDT')
     expect(c.stats).toBe(1)
   })
+
+  it('marketType:spot filters before top-N slicing so dense perp asks never starve spot asks', async () => {
+    const c = new Scripted()
+    c.reply = async sym => {
+      if (sym === 'Binance_ETHUSDT') {
+        const perpAsks = Array.from({ length: 25 }, (_, i) => ({
+          id: `perp-s-${i}`, side: 1, price: 2270 + i * 0.05, currentUsd: 900_000, state: 1,
+        }))
+        const spotAsks = Array.from({ length: 6 }, (_, i) => ({
+          id: `spot-s-${i}`, side: 1, price: 2274 + i * 0.5, currentUsd: 700_000, state: 1,
+        }))
+        const spotBids = [{ id: 'spot-b-0', side: 2, price: 2268.5, currentUsd: 680_000, state: 1 }]
+        return [
+          { instrument: { exName: 'Binance', contractType: 'PERPETUAL', type: 1 }, list: perpAsks },
+          { instrument: { exName: 'OKX', type: 10, instrumentId: 'ETH-USDT' }, list: [...spotAsks, ...spotBids] },
+        ]
+      }
+      return []
+    }
+    const unfiltered = await c.getLargeOrders('ETHUSDT', { top: 40, currentPrice: 2269.99, statistics: false })
+    expect(unfiltered.walls.filter(w => w.market === 'spot' && w.side === 'sell')).toHaveLength(0)
+
+    const spotOnly = await c.getLargeOrders('ETHUSDT', { top: 80, marketType: 'spot', currentPrice: 2269.99, statistics: false })
+    expect(spotOnly.walls.filter(w => w.side === 'sell')).toHaveLength(6)
+    expect(spotOnly.walls.filter(w => w.side === 'buy')).toHaveLength(1)
+  })
 })

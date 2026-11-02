@@ -87,7 +87,7 @@ export function apply(ctx: Context): void {
         const symbol = typeof body['symbol'] === 'string' ? body['symbol'].trim() : ''
         if (!symbol) throw new Error('symbol must be a non-empty string')
         const hours = typeof body['hours'] === 'number' && Number.isFinite(body['hours']) ? body['hours'] : 72
-        const top = typeof body['top'] === 'number' && Number.isFinite(body['top']) ? Math.min(80, Math.max(1, Math.trunc(body['top']))) : 40
+        const top = typeof body['top'] === 'number' && Number.isFinite(body['top']) ? Math.min(200, Math.max(1, Math.trunc(body['top']))) : 40
         const venue = typeof body['venue'] === 'string' ? body['venue'] : undefined
         const marketType: 'all' | 'spot' | 'perp' | undefined = body['marketType'] === 'spot' || body['marketType'] === 'perp' || body['marketType'] === 'all' ? body['marketType'] : undefined
         const currentPrice = typeof body['currentPrice'] === 'number' && Number.isFinite(body['currentPrice']) ? body['currentPrice'] : undefined

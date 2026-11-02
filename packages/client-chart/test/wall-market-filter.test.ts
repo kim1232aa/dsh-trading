@@ -98,6 +98,22 @@ describe('crossed & swept walls (price traded through while venue snapshot is ca
     // Live price 2273 is back below 2275.35 and above 2270, yet both swept zombies stay hidden.
     expect(dropCrossedWalls([ask, bid], 2273, { candles: postSweep })).toEqual([])
   })
+
+  it('does not falsely sweep a 43-min-old untouched wall when a fresh snapshotAt confirmed state=1', () => {
+    const tOrder = Date.parse('2026-11-02T16:18:24.000Z')
+    const tFreshSnap = Date.parse('2026-11-02T17:02:50.000Z')
+    const untouchedSpotAsk = { id: 'bitget-spot-ask', side: 'sell', price: 2277.04, currentTime: tOrder }
+    const candles = [
+      // 25 min ago Binance wicked to 2279 while Bitget spot did not fill 2277.04;
+      // CoinGlass just returned state=1 at 17:02:50.
+      { time: '2026-11-02T16:35:00.000Z', high: 2279.5, low: 2270.0 },
+      { time: '2026-11-02T17:02:00.000Z', high: 2271.2, low: 2268.0 },
+    ]
+    expect(dropCrossedWalls([untouchedSpotAsk], 2269.99, { candles, snapshotAt: tFreshSnap })).toHaveLength(1)
+    // A wick inside the last 45 s window still drops a swept wall immediately.
+    const recentSweep = [...candles, { time: '2026-11-02T17:02:30.000Z', high: 2279.0, low: 2272.0 }]
+    expect(dropCrossedWalls([untouchedSpotAsk], 2273.0, { candles: recentSweep, snapshotAt: tFreshSnap })).toEqual([])
+  })
 })
 
 describe('wall resting duration (formatWallAge / wallAgeSeconds)', () => {
