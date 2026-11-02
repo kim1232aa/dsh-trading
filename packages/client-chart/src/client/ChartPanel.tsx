@@ -386,6 +386,9 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
       {hist || target?.topAccountRatio != null ? (
         <span title="本数据源大户样本的多头账户数÷空头账户数；按账户计数，不按仓量加权，不能直接推断资金去向。">大户账户比<span style={VALUE}>{show(target?.topAccountRatio, n => n.toFixed(2))}</span></span>
       ) : null}
+      {data?.netPositionDelta1h != null ? (
+        <span title={`基于大户持仓占比与总持仓量计算的1h大户净头寸变化（币数）。多头变动: ${data.topLongDelta1h != null ? (data.topLongDelta1h > 0 ? '+' : '') + Math.round(data.topLongDelta1h) : '—'}，空头变动: ${data.topShortDelta1h != null ? (data.topShortDelta1h > 0 ? '+' : '') + Math.round(data.topShortDelta1h) : '—'}`}>大户净头寸1h<span style={VALUE}>{`${data.netPositionDelta1h > 0 ? '+' : ''}${compact.format(data.netPositionDelta1h)}`}</span></span>
+      ) : null}
       {hist || target?.takerBuySellRatio != null ? (
         <span title="主动买/卖量比（成交口径）">主动买卖<span style={VALUE}>{show(target?.takerBuySellRatio, n => n.toFixed(2))}</span></span>
       ) : null}

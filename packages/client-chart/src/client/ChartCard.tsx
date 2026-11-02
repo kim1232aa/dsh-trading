@@ -1569,9 +1569,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
       const barMs = n >= 2 ? lastMs - Date.parse(data.candles[n - 2]!.time) : 0
       const width = chart.getSize('candle_pane', 'main' as never)?.width ?? 0
       const gutter = futureGutterPx(primitives, lastMs, barMs, chart.getBarSpace().bar, width)
-      const current = chart.getOffsetRightDistance()
       if (gutter !== undefined) {
-        if (!futureGutterSet.current || Math.abs(current - gutter) > 30) {
+        if (!futureGutterSet.current) {
           chart.setOffsetRightDistance(gutter)
           futureGutterSet.current = true
         }
@@ -1707,7 +1706,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
     } else if (typeof ids === 'string' && ids) {
       wallOverlayIds.current.push(ids)
     }
-  }, [settings, largeWalls, wallMarket, seriesKey, data.candles.length, wallPriceKey, axisSettings.coordType])
+  }, [settings, largeWalls, wallMarket, seriesKey, wallPriceKey, axisSettings.coordType])
 
   // Live tail: push the newest bar into the existing plot. klinecharts updates
   // the last bar in place, or appends when the timestamp has moved on, so the

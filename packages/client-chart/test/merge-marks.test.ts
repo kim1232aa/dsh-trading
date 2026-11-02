@@ -8,8 +8,9 @@
  * below it disagree, which is the exact failure this feature exists to prevent.
  */
 import { describe, expect, it } from 'vitest'
-import { combineMarks, mergeMarks, readMarks, recallMarks, rememberMarks } from '../src/client/market-client.js'
+import { combineMarks, mergeMarks, mergeTail, readMarks, recallMarks, rememberMarks, withCandles } from '../src/client/market-client.js'
 import type { ChartMarks } from '../src/client/market-client.js'
+import { annotationDigest } from '../src/client/payload.js'
 import type { ChartPayload } from '../src/client/payload.js'
 
 const bar = (time: string, low: number, high: number) =>
@@ -354,5 +355,44 @@ describe('combineMarks & cross-timeframe path clipping', () => {
     expect(pts[0]?.time).toBe('2026-08-18T00:00:00.000Z')
     expect(pts[0]?.price).toBeCloseTo(130, 5)
     expect(pts[1]).toEqual({ time: '2026-08-20T00:00:00.000Z', price: 170 })
+  })
+
+  it('keeps cross-timeframe path points and annotationDigest strictly stable across rolling candle ticks', () => {
+    // When watching a lower timeframe (e.g. 1m) while marks are from a higher timeframe (e.g. 30m),
+    // new candle ticks appended at the tail must NOT generate rolling synthetic timestamps or
+    // change annotationDigest, which would re-trigger overlay rebuilds and viewport resets.
+    const crossTfScriptPath = {
+      type: 'path' as const,
+      points: [
+        { time: '2026-08-19T00:00:00.000Z', price: 140, note: 'B1' },
+        { time: '2026-08-20T00:00:00.000Z', price: 160, note: 'L2' },
+        { time: '2026-08-22T00:00:00.000Z', price: 180, note: 'R1 (future)' },
+      ],
+      label: '剧本线',
+      role: 'other' as const,
+      sources: ['analog'],
+    }
+    const marks = marksOf({ timeframe: '30m', annotations: [crossTfScriptPath] })
+    let payload = chart({ timeframes: [{ timeframe: '1m', candles: CANDLES, indicators: null, annotations: [] }] })
+
+    const r1 = mergeMarks(payload, marks)
+    expect(r1.applied).toBe(true)
+    const digest1 = annotationDigest(r1.payload.timeframes[0]?.annotations, r1.payload.scenarios)
+    const pts1 = (r1.payload.timeframes[0]?.annotations?.[0] as { points: { time: string; price: number; note?: string }[] }).points
+
+    // Simulate 3 new 1m candles arriving at the tail
+    const nextCandles = [
+      bar('2026-08-20T00:01:00.000Z', 135, 195),
+      bar('2026-08-20T00:02:00.000Z', 136, 196),
+      bar('2026-08-20T00:03:00.000Z', 137, 197),
+    ]
+    payload = withCandles(payload, mergeTail(payload.timeframes[0]!.candles, nextCandles))
+    const r2 = mergeMarks(payload, marks)
+    const digest2 = annotationDigest(r2.payload.timeframes[0]?.annotations, r2.payload.scenarios)
+    const pts2 = (r2.payload.timeframes[0]?.annotations?.[0] as { points: { time: string; price: number; note?: string }[] }).points
+
+    expect(digest2).toBe(digest1)
+    expect(pts2).toEqual(pts1)
+    expect(pts2).toEqual(crossTfScriptPath.points)
   })
 })

@@ -431,6 +431,9 @@ export interface PanelDerivatives {
   oiChangePct1h?: number | null
   oiChangePct4h?: number | null
   oiChangePct24h?: number | null
+  netPositionDelta1h?: number | null
+  topLongDelta1h?: number | null
+  topShortDelta1h?: number | null
   priceChangePct1h?: number | null
   priceChangePct4h?: number | null
   priceChangePct24h?: number | null
@@ -678,12 +681,12 @@ export const PATH_FORWARD_BARS = 150
 function clipPathToWindow(
   pts: readonly ParsedPathPoint[],
   firstMs: number,
-  lastMs: number,
 ): PathPoint[] {
   if (pts.length < 2) return []
-  const allInside = pts.every((p, idx) =>
-    p.t >= firstMs && p.t <= lastMs && (idx === 0 || p.t > pts[idx - 1]!.t))
-  if (allInside) return pts.map(stripT)
+  // If no point sits before firstMs, keep all authored vertices without clipping.
+  const allAfterStart = pts.every((p, idx) =>
+    p.t >= firstMs && (idx === 0 || p.t > pts[idx - 1]!.t))
+  if (allAfterStart) return pts.map(stripT)
 
   const out: ParsedPathPoint[] = []
   // Only an original vertex keeps its note; an interpolated window edge has none.
@@ -703,19 +706,19 @@ function clipPathToWindow(
     const a = pts[i]!
     const b = pts[i + 1]!
     if (b.t <= a.t) continue
-    if (b.t < firstMs || a.t > lastMs) continue
+    if (b.t < firstMs) continue
 
     const t0 = Math.max(firstMs, a.t)
-    const t1 = Math.min(lastMs, b.t)
+    const t1 = b.t
     if (t1 < t0) continue
 
     const p0 = t0 === a.t ? a.price : a.price + (b.price - a.price) * ((t0 - a.t) / (b.t - a.t))
-    const p1 = t1 === b.t ? b.price : a.price + (b.price - a.price) * ((t1 - a.t) / (b.t - a.t))
+    const p1 = b.price
     const s0 = t0 === a.t ? a.time : new Date(t0).toISOString()
-    const s1 = t1 === b.t ? b.time : new Date(t1).toISOString()
+    const s1 = b.time
 
     pushPt(s0, t0, p0, t0 === a.t ? a.note : undefined)
-    if (t1 > t0) pushPt(s1, t1, p1, t1 === b.t ? b.note : undefined)
+    pushPt(s1, t1, p1, b.note)
   }
   return out.length >= 2 ? out.map(stripT) : []
 }
@@ -814,9 +817,9 @@ export function mergeMarks(payload: ChartPayload, marks: ChartMarks): MergeMarks
           dropped += 1
         }
       } else {
-        // Cross-timeframe: clip segments crossing [firstMs, lastMs] so higher-timeframe
-        // trendlines stay visible on lower-timeframe views when their active leg fits.
-        const clipped = clipPathToWindow(parsed, firstMs, lastMs + forwardMs)
+        // Cross-timeframe: clip segments crossing firstMs so higher-timeframe
+        // trendlines stay visible on lower-timeframe views without moving future endpoints.
+        const clipped = clipPathToWindow(parsed, firstMs)
         const ok = clipped.length >= 2 && clipped.every(pt => inBand(pt.price, role, lo, hi, true))
         if (ok) kept.push({ ...a, points: clipped })
         else dropped += 1
