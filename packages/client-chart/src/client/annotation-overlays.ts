@@ -26,6 +26,23 @@ function visibleSegmentEnd(a: Coordinate, b: Coordinate, bounds: Bounding): Coor
   return { x: a.x + dx * end, y: a.y + dy * end }
 }
 
+/** "MM-DD HH:mm" of a vertex in the chart's timezone; UTC when the zone is unknown. */
+export function vertexTimeText(timestamp: number, timezone: string | undefined): string {
+  if (!Number.isFinite(timestamp)) return ''
+  const fmt = (timeZone: string): string => {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(new Date(timestamp))
+    const get = (type: string): string => parts.find(p => p.type === type)?.value ?? ''
+    return `${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`
+  }
+  try {
+    return fmt(timezone !== undefined && timezone !== '' ? timezone : 'UTC')
+  } catch {
+    return fmt('UTC')
+  }
+}
+
 /** Shared by production registration and callback regression tests. */
 export function createAnnotationOverlays(family: string, measureText: MeasureText): OverlayTemplate[] {
   const textStyle = {
@@ -125,7 +142,7 @@ export function createAnnotationOverlays(family: string, measureText: MeasureTex
   }, {
     // Finish supplied paths immediately; they must never enter interactive drawing.
     name: 'tm_polyline', totalStep: 2, lock: true,
-    createPointFigures: ({ coordinates, bounding, overlay }) => {
+    createPointFigures: ({ coordinates, bounding, overlay, chart }) => {
       if (coordinates.length < 2 || coordinates.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))) return []
       const ext = (overlay.extendData ?? {}) as Record<string, unknown>
       const color = typeof ext['color'] === 'string' ? ext['color'] : '#888888'
@@ -140,6 +157,30 @@ export function createAnnotationOverlays(family: string, measureText: MeasureTex
           figures.push(...caption(ext['label'], color, anchor, bounding))
           break
         }
+      }
+      // Timed vertex captions (event scripts): a dot on the vertex plus
+      // "MM-DD HH:mm note" in the chart timezone. A vertex above/below the pane
+      // keeps its caption pinned to that edge with an arrow, so a projected
+      // target outside the candle range is still readable without squashing Y.
+      const notes = Array.isArray(ext['vertexNotes']) ? ext['vertexNotes'] as unknown[] : []
+      if (notes.length > 0) {
+        let timezone: string | undefined
+        try { timezone = (chart as { getTimezone?: () => string } | undefined)?.getTimezone?.() } catch { timezone = undefined }
+        coordinates.forEach((pt, i) => {
+          const note = notes[i]
+          if (typeof note !== 'string' || note === '') return
+          if (pt.x < 0 || pt.x > bounding.width) return
+          const ts = overlay.points?.[i]?.timestamp
+          const when = typeof ts === 'number' ? vertexTimeText(ts, timezone) : ''
+          const text = when !== '' ? `${when} ${note}` : note
+          if (pt.y >= 0 && pt.y <= bounding.height) {
+            figures.push({ type: 'circle', attrs: { x: pt.x, y: pt.y, r: 3 }, styles: { style: 'fill', color }, ignoreEvent: true })
+            figures.push(...caption(text, color, pt, bounding, LABEL_LANE_WIDTH + 40))
+          } else {
+            const edge = pt.y < 0 ? '↑ ' : '↓ '
+            figures.push(...caption(edge + text, color, { x: pt.x, y: pt.y < 0 ? 0 : bounding.height }, bounding, LABEL_LANE_WIDTH + 40))
+          }
+        })
       }
       return figures
     },

@@ -142,7 +142,7 @@ function kpThemeExt(dark: boolean, settings: IndicatorSettings): { up: string; d
 export type DrawPrimitive =
   | { kind: 'hline'; price: number; label?: string; color?: string; dashed?: boolean }
   | { kind: 'region'; low: number; high: number; label?: string; color?: string; startTime?: string; availableAt?: string }
-  | { kind: 'polyline'; points: { time: string; price: number }[]; label?: string; color?: string; dashed?: boolean }
+  | { kind: 'polyline'; points: { time: string; price: number }[]; label?: string; color?: string; dashed?: boolean; notes?: string[] }
 
 export type AnnotationRendererContext = {
   /** Bumped only on breaking changes to DrawPrimitive/this context. */
@@ -213,13 +213,19 @@ registerAnnotationRenderer('zone', (a, ctx) => {
 registerAnnotationRenderer('path', (a, ctx) => {
   const raw = a['points']
   if (!Array.isArray(raw)) return []
+  const notes: string[] = []
   const points = raw.flatMap((p) => {
-    const time = typeof p === 'object' && p !== null ? str((p as Record<string, unknown>)['time']) : undefined
-    const price = typeof p === 'object' && p !== null ? num((p as Record<string, unknown>)['price']) : undefined
-    return time !== undefined && price !== undefined ? [{ time, price }] : []
+    const rec = typeof p === 'object' && p !== null ? p as Record<string, unknown> : undefined
+    const time = rec !== undefined ? str(rec['time']) : undefined
+    const price = rec !== undefined ? num(rec['price']) : undefined
+    if (time === undefined || price === undefined) return []
+    notes.push(rec !== undefined ? str(rec['note']) ?? '' : '')
+    return [{ time, price }]
   })
   if (points.length < 2) return []
-  return [{ kind: 'polyline', points, dashed: true, color: roleColor(a['role'], ctx.palette), ...str(a['label']) !== undefined ? { label: str(a['label'])! } : {} }]
+  return [{ kind: 'polyline', points, dashed: true, color: roleColor(a['role'], ctx.palette),
+    ...str(a['label']) !== undefined ? { label: str(a['label'])! } : {},
+    ...notes.some(n => n !== '') ? { notes } : {} }]
 })
 
 /* ------------------------------------------------------------------ */
@@ -1221,10 +1227,37 @@ function drawPrimitive(chart: Pick<Chart, 'createOverlay'>, prim: DrawPrimitive,
     chart.createOverlay({
       name: 'tm_polyline', lock: true,
       points: prim.points.map(p => ({ timestamp: Date.parse(p.time), value: p.price })),
-      extendData: { color: prim.color, dashed: prim.dashed ?? false, label: prim.label ?? '' },
+      extendData: { color: prim.color, dashed: prim.dashed ?? false, label: prim.label ?? '',
+        ...prim.notes !== undefined ? { vertexNotes: prim.notes } : {} },
     })
   }
 }
+
+/**
+ * Right gutter (px) that keeps a projected path's future vertices on screen:
+ * bars between the last candle and the furthest vertex, plus a little air,
+ * capped so candles keep most of the pane. undefined = no future vertex.
+ */
+export function futureGutterPx(
+  primitives: readonly DrawPrimitive[], lastBarMs: number, barMs: number, barSpacePx: number, paneWidth: number,
+): number | undefined {
+  if (!(barMs > 0) || !(barSpacePx > 0) || !Number.isFinite(lastBarMs)) return undefined
+  let furthest = lastBarMs
+  for (const prim of primitives) {
+    if (prim.kind !== 'polyline') continue
+    for (const p of prim.points) {
+      const t = Date.parse(p.time)
+      if (Number.isFinite(t) && t > furthest) furthest = t
+    }
+  }
+  if (furthest <= lastBarMs) return undefined
+  const bars = Math.ceil((furthest - lastBarMs) / barMs) + 4
+  const cap = paneWidth > 0 ? paneWidth * 0.45 : Infinity
+  return Math.max(DEFAULT_RIGHT_GUTTER_PX, Math.min(bars * barSpacePx, cap))
+}
+
+/** klinecharts' own default right offset. */
+const DEFAULT_RIGHT_GUTTER_PX = 80
 
 /** One payload candle as a klinecharts row. */
 function toKLine(c: { time: string; open: number; high: number; low: number; close: number; volume: number }): KLineData {
@@ -1310,6 +1343,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
   onChartReadyRef.current = onChartReady
   const wallOverlayIds = useRef<string[]>([])
   const annotationOverlayIds = useRef<string[]>([])
+  const futureGutterSet = useRef(false)
   /** Chip indicators currently mounted on the canvas: chip id → pane id. */
   const mountedChips = useRef(new Map<string, string>())
   const historyRef = useRef(history)
@@ -1522,6 +1556,25 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     const laneByIndex = new Map(anchored.map((x, k) => [x.i, lanes[k]!]))
     primitives.forEach((prim, i) => drawPrimitive(sink, prim, laneByIndex.get(i) ?? 0))
     annotationOverlayIds.current = created
+    // A projected script runs past the last candle: open enough right gutter to
+    // show it, and give the default back once no path needs it.
+    try {
+      const n = data.candles.length
+      const lastMs = Date.parse(data.candles[n - 1]!.time)
+      const barMs = n >= 2 ? lastMs - Date.parse(data.candles[n - 2]!.time) : 0
+      const width = chart.getSize('candle_pane', 'main' as never)?.width ?? 0
+      const gutter = futureGutterPx(primitives, lastMs, barMs, chart.getBarSpace().bar, width)
+      const current = chart.getOffsetRightDistance()
+      if (gutter !== undefined) {
+        if (Math.abs(current - gutter) > 1) chart.setOffsetRightDistance(gutter)
+        futureGutterSet.current = true
+      } else if (futureGutterSet.current) {
+        chart.setOffsetRightDistance(DEFAULT_RIGHT_GUTTER_PX)
+        futureGutterSet.current = false
+      }
+    } catch (error) {
+      console.warn('[client-chart] future gutter failed', error)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seriesKey, dark, axisSettings.coordType])
 

@@ -77,11 +77,12 @@ export type ChartZoneAnnotation = {
 
 /**
  * A time-anchored point sequence: pattern necklines, measured moves, ABCD
- * harmonics, wave counts. Times must fall inside the drawn candle window.
+ * harmonics, wave counts, projected event scripts. Times start inside the drawn
+ * candle window and may project past its last bar; `note` captions a vertex.
  */
 export type ChartPathAnnotation = {
   type: 'path'
-  points: { time: string; price: number }[]
+  points: { time: string; price: number; note?: string }[]
   label: string
   role: AnnotationRole
   sources: string[]

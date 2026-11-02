@@ -463,6 +463,9 @@ export function apply(ctx: Context, config: Config): void {
   const MAX_SCENARIOS = 6
   const MAX_SOURCES = 6
   const MAX_PATH_POINTS = 12
+  /** Scripted/projected paths may run this many bars past the last candle. */
+  const PATH_FORWARD_BARS = 150
+  const MAX_POINT_NOTE = 40
 
   /** Strip control characters and cap length: model-authored text lands in a
    * durable log and is rendered by arbitrary ecosystem renderers. */
@@ -509,7 +512,7 @@ export function apply(ctx: Context, config: Config): void {
       },
       paths: {
         type: 'array',
-        description: 'Time-anchored point sequences: pattern necklines, ABCD legs, measured moves. Times must be bar-open times inside the drawn window (small forward projection allowed).',
+        description: 'Time-anchored point sequences: pattern necklines, ABCD legs, measured moves, projected event scripts. Times must be bar-open times inside the drawn window; projected points may run up to max(10% of the window, 150 bars) past the last bar and are drawn into the future. Give a point a note to caption it on the chart with its time.',
         items: {
           type: 'object',
           additionalProperties: false,
@@ -521,6 +524,7 @@ export function apply(ctx: Context, config: Config): void {
                 properties: {
                   time: { type: 'string', required: true, description: 'ISO-8601 UTC bar-open time.' },
                   price: { type: 'number', required: true },
+                  note: { type: 'string', description: 'Optional vertex caption (max 40 chars), drawn at this point prefixed with its time in the chart timezone, e.g. "L2 映射低点 1935".' },
                 },
               },
             },
@@ -589,7 +593,10 @@ export function apply(ctx: Context, config: Config): void {
       const lastClose = candles[candles.length - 1]!.close
       const firstMs = Date.parse(candles[0]!.time)
       const lastMs = Date.parse(candles[candles.length - 1]!.time)
-      const forwardMs = Math.max(0, (lastMs - firstMs) * 0.1)
+      // A projected path (measured move, event script) may run ahead of the last bar:
+      // the larger of 10% of the window or PATH_FORWARD_BARS bars of its own spacing.
+      const barMs = candles.length >= 2 ? lastMs - Date.parse(candles[candles.length - 2]!.time) : 0
+      const forwardMs = Math.max(0, (lastMs - firstMs) * 0.1, Number.isFinite(barMs) ? barMs * PATH_FORWARD_BARS : 0)
       const range = `actual ${timeframe} window is low ${lo} \u2026 high ${hi} over the last ${candles.length} bars`
       const checkPrice = (price: number, what: string, role: AnnotationRole): void => {
         // Projection roles get a wider band: 1.618/2.618 extensions legitimately
@@ -653,10 +660,12 @@ export function apply(ctx: Context, config: Config): void {
         const mapped = points.map((p) => {
           const t = Date.parse(p.time)
           if (!Number.isFinite(t) || t < firstMs || t > lastMs + forwardMs) {
-            throw new Error(`path '${label}' point time ${p.time} is outside the drawn window ${candles[0]!.time} \u2026 ${candles[candles.length - 1]!.time} (small forward projection allowed). Use bar-open times you actually read.`)
+            throw new Error(`path '${label}' point time ${p.time} is outside the drawn window ${candles[0]!.time} \u2026 ${candles[candles.length - 1]!.time} (forward projection up to ${new Date(lastMs + forwardMs).toISOString()} allowed). Use bar-open times you actually read.`)
           }
           checkPrice(p.price, `path '${label}' point at`, role)
-          return { time: p.time, price: p.price }
+          const rawNote = (p as { note?: unknown }).note
+          const note = typeof rawNote === 'string' ? clean(rawNote, MAX_POINT_NOTE) : ''
+          return note !== '' ? { time: p.time, price: p.price, note } : { time: p.time, price: p.price }
         })
         annotations.push({
           type: 'path', points: mapped, label, role,

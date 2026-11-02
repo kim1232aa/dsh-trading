@@ -517,25 +517,37 @@ function inBand(price: unknown, role: unknown, lo: number, hi: number, isCrossTf
  * forward-projected vertices onto the final candle (which creates vertical kinks)
  * and allows higher-timeframe trendlines to remain visible on lower-timeframe views.
  */
+type PathPoint = { time: string; price: number; note?: string }
+type ParsedPathPoint = PathPoint & { t: number }
+
+const stripT = (p: ParsedPathPoint): PathPoint =>
+  p.note !== undefined ? { time: p.time, price: p.price, note: p.note } : { time: p.time, price: p.price }
+
+/** Scripted/projected paths may run this many bars past the last candle (mirrors annotate_chart). */
+export const PATH_FORWARD_BARS = 150
+
 function clipPathToWindow(
-  pts: readonly { time: string; t: number; price: number }[],
+  pts: readonly ParsedPathPoint[],
   firstMs: number,
   lastMs: number,
-): { time: string; price: number }[] {
+): PathPoint[] {
   if (pts.length < 2) return []
   const allInside = pts.every((p, idx) =>
     p.t >= firstMs && p.t <= lastMs && (idx === 0 || p.t > pts[idx - 1]!.t))
-  if (allInside) return pts.map(p => ({ time: p.time, price: p.price }))
+  if (allInside) return pts.map(stripT)
 
-  const out: { time: string; t: number; price: number }[] = []
-  const pushPt = (time: string, t: number, price: number): void => {
+  const out: ParsedPathPoint[] = []
+  // Only an original vertex keeps its note; an interpolated window edge has none.
+  const pushPt = (time: string, t: number, price: number, note?: string): void => {
     const rounded = Number(price.toPrecision(8)) || 0
     const prev = out[out.length - 1]
+    const keep = note ?? (prev !== undefined && Math.abs(prev.t - t) < 1 ? prev.note : undefined)
+    const pt: ParsedPathPoint = keep !== undefined ? { time, t, price: rounded, note: keep } : { time, t, price: rounded }
     if (prev !== undefined && Math.abs(prev.t - t) < 1) {
-      out[out.length - 1] = { time, t, price: rounded }
+      out[out.length - 1] = pt
       return
     }
-    out.push({ time, t, price: rounded })
+    out.push(pt)
   }
 
   for (let i = 0; i < pts.length - 1; i++) {
@@ -553,10 +565,10 @@ function clipPathToWindow(
     const s0 = t0 === a.t ? a.time : new Date(t0).toISOString()
     const s1 = t1 === b.t ? b.time : new Date(t1).toISOString()
 
-    pushPt(s0, t0, p0)
-    if (t1 > t0) pushPt(s1, t1, p1)
+    pushPt(s0, t0, p0, t0 === a.t ? a.note : undefined)
+    if (t1 > t0) pushPt(s1, t1, p1, t1 === b.t ? b.note : undefined)
   }
-  return out.length >= 2 ? out.map(p => ({ time: p.time, price: p.price })) : []
+  return out.length >= 2 ? out.map(stripT) : []
 }
 
 /**
@@ -603,7 +615,8 @@ export function mergeMarks(payload: ChartPayload, marks: ChartMarks): MergeMarks
   }
   const firstMs = Date.parse(candles[0]!.time)
   const lastMs = Date.parse(candles[candles.length - 1]!.time)
-  const forwardMs = (lastMs - firstMs) * 0.1
+  const barMs = candles.length >= 2 ? lastMs - Date.parse(candles[candles.length - 2]!.time) : 0
+  const forwardMs = Math.max((lastMs - firstMs) * 0.1, Number.isFinite(barMs) && barMs > 0 ? barMs * PATH_FORWARD_BARS : 0)
 
   let dropped = 0
   const isCrossTf = tf.timeframe !== marks.timeframe
@@ -623,7 +636,7 @@ export function mergeMarks(payload: ChartPayload, marks: ChartMarks): MergeMarks
       else dropped += 1
     } else if (a.type === 'path') {
       const points = Array.isArray(record['points']) ? record['points'] : []
-      const parsed: { time: string; t: number; price: number }[] = []
+      const parsed: ParsedPathPoint[] = []
       let validRaw = points.length >= 2
       for (const p of points) {
         if (typeof p !== 'object' || p === null) { validRaw = false; break }
@@ -634,24 +647,27 @@ export function mergeMarks(payload: ChartPayload, marks: ChartMarks): MergeMarks
           validRaw = false
           break
         }
-        parsed.push({ time: pt['time'] as string, t, price })
+        const note = typeof pt['note'] === 'string' ? pt['note'] : undefined
+        parsed.push(note !== undefined ? { time: pt['time'] as string, t, price, note } : { time: pt['time'] as string, t, price })
       }
       if (!validRaw) {
         dropped += 1
       } else if (!isCrossTf) {
-        // A path on the same timeframe is dropped WHOLE or not at all when out of bounds.
+        // A path on the same timeframe is dropped WHOLE or not at all when out of bounds,
+        // and drawn exactly as authored: its projected (future) vertices are the claim,
+        // so they are never clipped to the last candle. klinecharts 10 extrapolates
+        // timestamps past the last bar from the chart period.
         const ok = parsed.every(pt =>
           inBand(pt.price, role, lo, hi, false) && pt.t >= firstMs && pt.t <= lastMs + forwardMs)
         if (ok) {
-          const clamped = clipPathToWindow(parsed, firstMs, lastMs)
-          kept.push(clamped.length >= 2 ? { ...a, points: clamped } : a)
+          kept.push(a)
         } else {
           dropped += 1
         }
       } else {
         // Cross-timeframe: clip segments crossing [firstMs, lastMs] so higher-timeframe
         // trendlines stay visible on lower-timeframe views when their active leg fits.
-        const clipped = clipPathToWindow(parsed, firstMs, lastMs)
+        const clipped = clipPathToWindow(parsed, firstMs, lastMs + forwardMs)
         const ok = clipped.length >= 2 && clipped.every(pt => inBand(pt.price, role, lo, hi, true))
         if (ok) kept.push({ ...a, points: clipped })
         else dropped += 1

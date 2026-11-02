@@ -175,6 +175,25 @@ describe('mergeMarks — the range gate', () => {
     expect(r.dropped).toBe(1)
   })
 
+  it('keeps a projected script path whole — future vertices and notes are not clipped', () => {
+    const script = {
+      type: 'path' as const, label: 'script', role: 'other', sources: ['s'],
+      points: [
+        { time: '2026-08-19T00:00:00.000Z', price: 170, note: 'B1' },
+        { time: '2026-08-25T00:00:00.000Z', price: 120, note: 'L2 1935' },
+        { time: '2026-09-10T00:00:00.000Z', price: 150 },
+      ],
+    }
+    const r = mergeMarks(chart(), marksOf({ annotations: [script] }))
+    expect(r.kept).toBe(1)
+    const drawn = r.payload.timeframes[0]!.annotations!.find(a => a.type === 'path') as unknown as typeof script
+    expect(drawn.points).toEqual(script.points)
+
+    // Beyond 150 bars of projection is still out of the window: dropped whole.
+    const tooFar = { ...script, points: [script.points[0]!, { time: '2027-06-01T00:00:00.000Z', price: 150 }] }
+    expect(mergeMarks(chart(), marksOf({ annotations: [tooFar] })).kept).toBe(0)
+  })
+
   it('passes an unknown annotation type through unmodified', () => {
     // The annotation array is an open envelope; stripping unknown types would
     // break the third-party renderer seam.

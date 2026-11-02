@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Coordinate, OverlayCreateFiguresCallbackParams, OverlayFigure, TextAttrs } from 'klinecharts'
-import { createAnnotationOverlays } from '../src/client/annotation-overlays.js'
+import { createAnnotationOverlays, vertexTimeText } from '../src/client/annotation-overlays.js'
 
 const measure = vi.fn((text: string) => Array.from(text).reduce((width, ch) =>
   width + (ch === 'W' ? 14 : ch === 'i' ? 3 : ch.codePointAt(0)! > 255 ? 11 : 6), 0))
@@ -161,5 +161,47 @@ describe('production annotation overlay callbacks', () => {
     expect(templates.map(t => [t.name, t.totalStep, t.lock])).toEqual([
       ['tm_hline', 2, true], ['tm_region', 3, true], ['tm_polyline', 2, true],
     ])
+  })
+})
+
+describe('timed vertex captions on scripted paths', () => {
+  const t0 = Date.parse('2026-11-03T04:00:00.000Z')
+  const t1 = Date.parse('2026-11-03T11:00:00.000Z')
+  function renderNotes(coordinates: Coordinate[], vertexNotes: string[], timezone = 'Asia/Shanghai'): OverlayFigure[] {
+    const template = templates.find(t => t.name === 'tm_polyline')!
+    const result = template.createPointFigures!({
+      coordinates, bounding: { width: 1000, height: 500, left: 0, right: 1000, top: 0, bottom: 500 },
+      overlay: { points: [{ timestamp: t0, value: 1 }, { timestamp: t1, value: 2 }], extendData: { label: '剧本', color: '#00ff00', dashed: true, vertexNotes } },
+      chart: { getTimezone: () => timezone },
+    } as unknown as OverlayCreateFiguresCallbackParams)
+    return Array.isArray(result) ? result : [result]
+  }
+  const texts = (figures: OverlayFigure[]) => figures.filter(f => f.type === 'text').map(f => (f.attrs as TextAttrs).text)
+
+  it('formats the vertex time in the chart timezone', () => {
+    expect(vertexTimeText(t0, 'Asia/Shanghai')).toBe('11-03 12:00')
+    expect(vertexTimeText(t0, 'UTC')).toBe('11-03 04:00')
+    expect(vertexTimeText(t0, 'Not/AZone')).toBe('11-03 04:00')
+  })
+
+  it('draws a dot and a "time note" caption on each noted vertex, keeping the line intact', () => {
+    const coords = [{ x: 200, y: 200 }, { x: 800, y: 300 }]
+    const figures = renderNotes(coords, ['2102', 'L2 1935'])
+    expect(figures[0]!.attrs.coordinates).toEqual(coords)
+    expect(figures.filter(f => f.type === 'circle')).toHaveLength(2)
+    expect(texts(figures)).toEqual(expect.arrayContaining(['11-03 12:00 2102', '11-03 19:00 L2 1935']))
+  })
+
+  it('pins a vertex outside the pane to that edge with an arrow instead of dropping it', () => {
+    const figures = renderNotes([{ x: 200, y: 200 }, { x: 800, y: 700 }], ['', 'L2 1935'])
+    expect(figures.filter(f => f.type === 'circle')).toHaveLength(0)
+    const edge = figures.filter(f => f.type === 'text').find(f => String((f.attrs as TextAttrs).text).startsWith('↓'))
+    expect(edge).toBeDefined()
+    expect((edge!.attrs as TextAttrs).y).toBeLessThanOrEqual(500)
+  })
+
+  it('skips vertices off the side of the pane', () => {
+    const figures = renderNotes([{ x: 200, y: 200 }, { x: 1400, y: 300 }], ['a', 'b'])
+    expect(texts(figures).some(t => String(t).includes(' b'))).toBe(false)
   })
 })

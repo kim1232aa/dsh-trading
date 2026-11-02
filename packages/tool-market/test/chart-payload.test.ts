@@ -228,6 +228,30 @@ describe('annotate_chart validation gate', () => {
     }, {})).rejects.toThrow(/outside the drawn window/)
   })
 
+  it('accepts a projected script up to 150 bars past the last bar and keeps cleaned vertex notes', async () => {
+    const lastMs = Date.parse(candles[candles.length - 1]!.time)
+    const ahead = (bars: number) => new Date(lastMs + bars * 86_400_000).toISOString()
+    const value = await tool().execute({
+      symbol: 'DEMO', timeframe: '1d',
+      paths: [{ points: [
+        { time: candles[300]!.time, price: inRange, note: 'B1 top' },
+        { time: ahead(40), price: inRange * 0.9, note: '  L2\u0007 mapped low  ' },
+        { time: ahead(140), price: inRange * 0.95 },
+      ], label: 'script', sources: ['Bybit 2025 analog'] }],
+    }, {}) as never
+    const meta = tool().output.presentationMeta!({}, value) as { timeframes: { annotations: { points: { time: string; note?: string }[] }[] }[] }
+    const pts = meta.timeframes[0]!.annotations[0]!.points
+    expect(pts.map(p => p.time)).toEqual([candles[300]!.time, ahead(40), ahead(140)])
+    expect(pts[0]!.note).toBe('B1 top')
+    expect(pts[1]!.note).toBe('L2 mapped low')
+    expect('note' in pts[2]!).toBe(false)
+
+    await expect(tool().execute({
+      symbol: 'DEMO', timeframe: '1d',
+      paths: [{ points: [{ time: candles[300]!.time, price: inRange }, { time: ahead(200), price: inRange }], label: 'too far', sources: ['s'] }],
+    }, {})).rejects.toThrow(/forward projection up to/)
+  })
+
   it('rejects zones thinner than 0.05% of price and empty calls', async () => {
     await expect(tool().execute({
       symbol: 'DEMO', timeframe: '1d',
