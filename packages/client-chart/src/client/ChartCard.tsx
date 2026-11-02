@@ -1287,7 +1287,7 @@ export function planChipSync(active: readonly string[], mounted: ReadonlyMap<str
   return { add: [...want].filter(id => !have.has(id)), remove: [...have].filter(id => !want.has(id)) }
 }
 
-function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSettings, onEditParams, derivatives, largeWalls, wallMarket = 'all', onCrosshairHover, history, baseHeight = CHART_HEIGHT, fill = false, onChartReady, drawBarOpen = true }: {
+function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, axisSettings, onEditParams, derivatives, largeWalls, wallMarket = 'all', onCrosshairHover, history, baseHeight = CHART_HEIGHT, fill = false, onChartReady, drawBarOpen = true }: {
   data: ChartTimeframeData
   /** Older-bar paging for klinecharts loadMore; absent on agent cards. */
   history?: ChartHistory | undefined
@@ -1310,6 +1310,11 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
    * canvas down twice a second.
    */
   seriesKey: string
+  /**
+   * Identity of the agent marks & scenarios. Updated independently of the chart
+   * instance so new annotations redraw overlays without tearing the canvas down.
+   */
+  marksKey: string
   baseHeight?: number
   /** Take the height the parent flex column leaves, instead of a fixed plot height. */
   fill?: boolean
@@ -1566,8 +1571,10 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       const gutter = futureGutterPx(primitives, lastMs, barMs, chart.getBarSpace().bar, width)
       const current = chart.getOffsetRightDistance()
       if (gutter !== undefined) {
-        if (Math.abs(current - gutter) > 1) chart.setOffsetRightDistance(gutter)
-        futureGutterSet.current = true
+        if (!futureGutterSet.current || Math.abs(current - gutter) > 30) {
+          chart.setOffsetRightDistance(gutter)
+          futureGutterSet.current = true
+        }
       } else if (futureGutterSet.current) {
         chart.setOffsetRightDistance(DEFAULT_RIGHT_GUTTER_PX)
         futureGutterSet.current = false
@@ -1576,7 +1583,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       console.warn('[client-chart] future gutter failed', error)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seriesKey, dark, axisSettings.coordType])
+  }, [marksKey, dark, axisSettings.coordType])
 
   // Param edits or derivatives update: re-run calc in place; no canvas rebuild.
   useEffect(() => {
@@ -2824,7 +2831,8 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
   const keyEdge = he !== null && he.prepended === firstTime ? he.edge : firstTime
   if (he !== null && he.prepended !== firstTime) historyEdge.current = null
   rawTfEdge.current = keyEdge
-  const seriesKey = `${payload.provider}|${payload.symbol}|${tf.timeframe}|${keyEdge}|${annotationDigest(tf.annotations, scenarios)}`
+  const seriesKey = `${payload.provider}|${payload.symbol}|${tf.timeframe}|${keyEdge}`
+  const marksKey = annotationDigest(tf.annotations, scenarios)
 
   const root: CSSProperties = fill
     ? { ...shell, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }
@@ -2912,6 +2920,7 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
         dark={dark}
         active={activeList}
         seriesKey={seriesKey}
+        marksKey={marksKey}
         settings={settings}
         axisSettings={axisSettings}
         derivatives={derivatives}
