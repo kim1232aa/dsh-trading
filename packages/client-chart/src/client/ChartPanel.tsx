@@ -24,7 +24,7 @@ import type { ChartHistory } from './ChartCard.js'
 import { derivativesForTime } from './market-client.js'
 import { getLatestChart, subscribeLatestChart } from './latest.js'
 import { decideFollow } from './follow.js'
-import { combineMarks, filterWallsByMarket, isSpotWallMarket, mergeMarks, mergeTail, PANEL_TIMEFRAMES, postureColor, readMarks, recallMarks, rememberMarks, timeframesForSource, withCandles } from './market-client.js'
+import { combineMarks, dropCrossedWalls, filterWallsByMarket, formatWallAge, isSpotWallMarket, mergeMarks, mergeTail, PANEL_TIMEFRAMES, postureColor, readMarks, recallMarks, rememberMarks, timeframesForSource, wallAgeSeconds, withCandles } from './market-client.js'
 import type { ChartMarks, MarketClient, PanelDerivatives, PanelLargeOrders, PanelMoneyFlow, WallMarketFilter } from './market-client.js'
 import type { ChartPayload } from './payload.js'
 import type { FundamentalsPackage, Orderbook } from '@dsh-trading/market-data'
@@ -465,16 +465,10 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
  * Large order walls summary strip (CoinGlass capi).
  * Displays: 买墙/卖墙堵数、合计名义价值、最近强支撑/阻力价格、最近刷新时间与手动刷新按钮。
  */
-function formatWallAge(startTime: number, currentTime?: number): string {
-  const end = currentTime && currentTime > startTime ? currentTime : Date.now()
-  const sec = Math.max(0, Math.floor((end - startTime) / 1000))
-  if (sec < 60) return `${sec}秒`
-  const min = Math.floor(sec / 60)
-  if (min < 60) return `${min}分${sec % 60}秒`
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr}小时${min % 60}分`
-  const day = Math.floor(hr / 24)
-  return `${day}天${hr % 24}小时`
+function wallAgeStyle(sec: number | null): CSSProperties {
+  if (sec !== null && sec >= 3600) return { textAlign: 'right', color: '#e3b341', fontSize: 10, fontWeight: 600 }
+  if (sec !== null && sec >= 600) return { textAlign: 'right', color: '#c9d1d9', fontSize: 10 }
+  return { textAlign: 'right', color: '#8b949e', fontSize: 10 }
 }
 
 function marketBadgeText(market?: string): string {
@@ -492,6 +486,7 @@ function wallErrorText(error: string): string {
 function LargeWallsStrip({
   wallsData,
   currentPrice,
+  candles,
   marketFilter,
   onMarketFilter,
   onRefresh,
@@ -499,6 +494,7 @@ function LargeWallsStrip({
 }: {
   wallsData: PanelLargeOrders | null
   currentPrice?: number | undefined
+  candles?: readonly { time: string | number; high: number; low: number }[] | undefined
   marketFilter: WallMarketFilter
   onMarketFilter: (next: WallMarketFilter) => void
   onRefresh?: () => void
@@ -522,7 +518,13 @@ function LargeWallsStrip({
   }
   const walls = wallsData.walls ?? []
 
-  const filteredWalls = filterWallsByMarket(walls, marketFilter)
+  // Crossed or wick-swept walls are already gone on the venue; CoinGlass
+  // refreshes each venue in ~30 s batches.
+  const filteredWalls = dropCrossedWalls(
+    filterWallsByMarket(walls, marketFilter),
+    currentPrice,
+    candles ? { candles } : undefined,
+  )
   const staleAge = wallsData.updatedAt ? Math.max(0, Math.round((Date.now() - wallsData.updatedAt) / 1000)) : 0
   const staleNote = wallsData.stale || error
     ? `⚠ 延迟 ${staleAge >= 60 ? `${Math.round(staleAge / 60)}分` : `${staleAge}秒`}${error ? `（${wallErrorText(error)}）` : '（CoinGlass 限流）'}`
@@ -588,19 +590,25 @@ function LargeWallsStrip({
         </span>
         <span style={{ color: '#3ddc97' }}>
           买墙: <span style={VALUE}>{buys.length}堵 ($${fmtUsd(totalBuyUsd)})</span>
-          {nearestBuy ? (
-            <span style={{ opacity: 0.9, marginLeft: 4 }}>
-              [近撑 @{nearestBuy.price} {nearestBuy.exchange}{marketBadgeText(nearestBuy.market)}]
-            </span>
-          ) : null}
+          {nearestBuy ? (() => {
+            const age = formatWallAge(nearestBuy, Date.now(), true)
+            return (
+              <span style={{ opacity: 0.9, marginLeft: 4 }}>
+                [近撑 @{nearestBuy.price} {nearestBuy.exchange}{marketBadgeText(nearestBuy.market)}{age ? ` · 挂${age}` : ''}]
+              </span>
+            )
+          })() : null}
         </span>
         <span style={{ color: '#f47067' }}>
           卖墙: <span style={VALUE}>{sells.length}堵 ($${fmtUsd(totalSellUsd)})</span>
-          {nearestSell ? (
-            <span style={{ opacity: 0.9, marginLeft: 4 }}>
-              [近阻 @{nearestSell.price} {nearestSell.exchange}{marketBadgeText(nearestSell.market)}]
-            </span>
-          ) : null}
+          {nearestSell ? (() => {
+            const age = formatWallAge(nearestSell, Date.now(), true)
+            return (
+              <span style={{ opacity: 0.9, marginLeft: 4 }}>
+                [近阻 @{nearestSell.price} {nearestSell.exchange}{marketBadgeText(nearestSell.market)}{age ? ` · 挂${age}` : ''}]
+              </span>
+            )
+          })() : null}
         </span>
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <button
@@ -681,8 +689,8 @@ function LargeWallsStrip({
                   <span style={{ textAlign: 'right', color: '#f47067' }}>
                     {dist !== null ? `${dist >= 0 ? '+' : ''}${dist.toFixed(2)}%` : '—'}
                   </span>
-                  <span style={{ textAlign: 'right', color: '#8b949e', fontSize: 10 }}>
-                    {formatWallAge(w.startTime, w.currentTime)}
+                  <span style={wallAgeStyle(wallAgeSeconds(w))} title={wallAgeSeconds(w) !== null && wallAgeSeconds(w)! >= 3600 ? '长时挂单（≥1小时）' : '挂单持续时长'}>
+                    {formatWallAge(w) || '—'}
                   </span>
                 </div>
               )
@@ -711,8 +719,8 @@ function LargeWallsStrip({
                   <span style={{ textAlign: 'right', color: '#3ddc97' }}>
                     {dist !== null ? `${dist >= 0 ? '+' : ''}${dist.toFixed(2)}%` : '—'}
                   </span>
-                  <span style={{ textAlign: 'right', color: '#8b949e', fontSize: 10 }}>
-                    {formatWallAge(w.startTime, w.currentTime)}
+                  <span style={wallAgeStyle(wallAgeSeconds(w))} title={wallAgeSeconds(w) !== null && wallAgeSeconds(w)! >= 3600 ? '长时挂单（≥1小时）' : '挂单持续时长'}>
+                    {formatWallAge(w) || '—'}
                   </span>
                 </div>
               )
@@ -989,6 +997,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
   const [largeWallsError, setLargeWallsError] = useState<string | null>(null)
   const wallPriceRef = useRef<number | undefined>(undefined)
   const [largeWallsOn, setLargeWallsOn] = useState(() => peekSettings()['LARGE_WALLS']?.visible ?? false)
+  const [wallParamsKey, setWallParamsKey] = useState(() => (peekSettings()['LARGE_WALLS']?.params ?? []).join(','))
   const [wallMarket, setWallMarket] = useState<WallMarketFilter>('all')
   const [hoveredTime, setHoveredTime] = useState<number | null>(null)
   const followTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -1028,9 +1037,12 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
     return () => { active = false }
   }, [market])
 
-  // 大单墙 toggle lives in 指标参数; mirror it here so we only poll when on.
+  // 大单墙 toggle & params live in 指标参数; mirror both so toggling or editing
+  // thresholds immediately re-pulls instead of waiting for the next 20 s tick.
   useEffect(() => subscribeSettings(() => {
-    setLargeWallsOn(peekSettings()['LARGE_WALLS']?.visible ?? false)
+    const cfg = peekSettings()['LARGE_WALLS']
+    setLargeWallsOn(cfg?.visible ?? false)
+    setWallParamsKey((cfg?.params ?? []).join(','))
   }), [])
 
   // Adopt whatever the agent last DREW, separately from what it last fetched.
@@ -1108,12 +1120,18 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
     setPanelLargeWalls(cur => (cur && cur.symbol === symbol ? cur : null))
     setLargeWallsError(null)
     let active = true
-    let busy = false
-    const controller = new AbortController()
+    let inFlight: AbortController | null = null
+    let seq = 0
     const pull = (manual = false): void => {
-      if (busy) return
+      if (!manual && inFlight !== null) return
       if (!manual && typeof document !== 'undefined' && document.hidden) return
-      busy = true
+      // A manual click preempts any slow background request; each request also
+      // gets a 25 s deadline so a stalled RPC cannot wedge the 20 s timer.
+      inFlight?.abort()
+      const ctl = new AbortController()
+      inFlight = ctl
+      const mySeq = ++seq
+      const deadline = setTimeout(() => ctl.abort(), 25_000)
       const currentPrice = wallPriceRef.current
       const minWan = peekSettings()['LARGE_WALLS']?.params?.[0] ?? 100
       const maxDist = (peekSettings()['LARGE_WALLS']?.params?.[1] ?? 20) / 100
@@ -1128,20 +1146,22 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
           minUsd: minWan * 10_000,
           ...(typeof currentPrice === 'number' ? { currentPrice } : {}),
         },
-        controller.signal,
+        ctl.signal,
       ).then(
         snap => {
-          busy = false
-          if (!active) return
+          clearTimeout(deadline)
+          if (inFlight === ctl) inFlight = null
+          if (!active || mySeq !== seq) return
           setPanelLargeWalls(snap)
           setLargeWallsError(null)
         },
         (err: unknown) => {
-          busy = false
-          if (!active || controller.signal.aborted) return
+          clearTimeout(deadline)
+          if (inFlight === ctl) inFlight = null
+          if (!active || mySeq !== seq) return
           // Keep the last good walls on screen (marked stale) instead of
-          // blanking strip + overlay on one refused poll.
-          setLargeWallsError(err instanceof Error ? err.message : String(err))
+          // blanking strip + overlay on one refused or timed-out poll.
+          setLargeWallsError(ctl.signal.aborted ? 'timeout' : (err instanceof Error ? err.message : String(err)))
           setPanelLargeWalls(cur => (cur && cur.symbol === symbol ? { ...cur, stale: true } : cur))
         },
       )
@@ -1154,12 +1174,12 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible)
     return () => {
       active = false
-      controller.abort()
+      inFlight?.abort()
       clearInterval(timer)
       if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible)
       pullLargeWallsRef.current = null
     }
-  }, [largeWallsOn, market, wallSymbol])
+  }, [largeWallsOn, wallParamsKey, market, wallSymbol])
 
 
   const load = useCallback(async (
@@ -1703,6 +1723,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
                 wallsData={panelLargeWalls}
                 error={largeWallsError}
                 currentPrice={payload.timeframes[0]?.candles[payload.timeframes[0].candles.length - 1]?.close}
+                candles={payload.timeframes[0]?.candles}
                 marketFilter={wallMarket}
                 onMarketFilter={setWallMarket}
                 onRefresh={() => pullLargeWallsRef.current?.()}

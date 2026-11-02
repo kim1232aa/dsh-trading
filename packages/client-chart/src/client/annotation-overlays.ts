@@ -89,9 +89,12 @@ export function createAnnotationOverlays(family: string, measureText: MeasureTex
   function laneCaption(ext: Record<string, unknown>, color: string, y: number, bounds: Bounding): OverlayFigure[] {
     const lane = typeof ext['lane'] === 'number' ? ext['lane'] : 0
     if (!Number.isInteger(lane) || lane < 0) return []
-    const right = bounds.width - MARGIN - lane * LABEL_LANE_WIDTH
+    const laneWidth = typeof ext['laneWidth'] === 'number' && Number.isFinite(ext['laneWidth']) && ext['laneWidth'] > LABEL_GAP
+      ? ext['laneWidth']
+      : LABEL_LANE_WIDTH
+    const right = bounds.width - MARGIN - lane * laneWidth
     // Keep neighbouring lanes separate; a narrow pane may have no room for a lane.
-    const available = Math.min(LABEL_LANE_WIDTH - LABEL_GAP, right - MARGIN)
+    const available = Math.min(laneWidth - LABEL_GAP, right - MARGIN)
     return caption(ext['label'], color, { x: right, y }, bounds, available)
   }
 

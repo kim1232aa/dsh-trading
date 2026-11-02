@@ -124,6 +124,23 @@ describe('production annotation overlay callbacks', () => {
     expect(left.x).toBeLessThan(right.x - right.width!)
   })
 
+  it('honours custom laneWidth so large-wall labels fit resting duration without truncation', () => {
+    const template = templates.find(t => t.name === 'tm_hline')!
+    const label = 'OKX合约 卖 $77.5万 (+0.3%) · 挂3时12分'
+    const run = (lane: number) => {
+      const res = template.createPointFigures!({
+        coordinates: [{ x: 0, y: 200 }],
+        bounding: { width: 1000, height: 500, left: 0, right: 1000, top: 0, bottom: 500 },
+        overlay: { extendData: { label, lane, laneWidth: 255, color: '#f47067', dashed: true } },
+      } as OverlayCreateFiguresCallbackParams)
+      return caption(Array.isArray(res) ? res : [res])!
+    }
+    const l0 = run(0)
+    const l1 = run(1)
+    expect(l0.text).toBe(label)
+    expect(l1.x).toBeLessThan(l0.x - l0.width!)
+  })
+
   it('hides captions when a pane or lane cannot fit a meaningful label', () => {
     for (const options of [{ width: 22 }, { width: 160, lane: 1 }, { height: 20 }, { lane: -1 }]) {
       const figures = render('tm_hline', [{ x: 0, y: 10 }], options)

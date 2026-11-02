@@ -294,11 +294,11 @@ export class CoinglassCapi {
     this.baseURL = (config.baseURL ?? DEFAULT_BASE_URL).replace(/\/$/, '')
     this.defaultExchange = config.defaultExchange ?? 'Binance'
     this.defaultMarket = config.defaultMarket ?? 'perp'
-    this.timeoutMs = config.timeoutMs ?? 30_000
+    this.timeoutMs = config.timeoutMs ?? 12_000
     this.userAgent = config.userAgent
       ?? 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
     this.primaryTtlMs = config.primaryTtlMs ?? 15_000
-    this.secondaryTtlMs = config.secondaryTtlMs ?? 60_000
+    this.secondaryTtlMs = config.secondaryTtlMs ?? 35_000
     this.now = config.now ?? Date.now
   }
 

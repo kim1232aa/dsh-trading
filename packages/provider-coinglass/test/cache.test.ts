@@ -42,7 +42,7 @@ describe('CoinGlass pull cache / dedupe / 429 cooldown', () => {
     expect(isRateLimitError('429')).toBe(false)
   })
 
-  it('serves repeated polls from cache: primary every 15 s, secondary venues every 60 s', async () => {
+  it('serves repeated polls from cache: primary every 15 s, secondary venues every 35 s', async () => {
     const c = new Scripted()
     await c.getLargeOrders('BTCUSDT')
     expect(c.calls).toEqual(ALL)
@@ -54,7 +54,7 @@ describe('CoinGlass pull cache / dedupe / 429 cooldown', () => {
     expect(c.hits('Binance_BTCUSDT')).toBe(2)
     expect(c.hits('Bybit_BTCUSDT')).toBe(1)
 
-    c.clock += 45_000
+    c.clock += 20_000
     await c.getLargeOrders('BTCUSDT')
     expect(c.hits('Binance_BTCUSDT')).toBe(3)
     expect(c.hits('Bybit_BTCUSDT')).toBe(2)

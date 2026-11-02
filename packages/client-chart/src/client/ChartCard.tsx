@@ -37,7 +37,7 @@ import { publishLatestChart } from './latest.js'
 import { annotationDigest, contentText, readChartPayload } from './payload.js'
 import type { ChartAnnotation, ChartPayload, ChartScenario, ChartTimeframeData } from './payload.js'
 import type { PanelDerivativeBar, PanelDerivatives, PanelLargeOrders } from './market-client.js'
-import { contractOpenInterest, filterWallsByMarket, isSpotWallMarket, matchDerivativeHistory, postureColor } from './market-client.js'
+import { contractOpenInterest, dropCrossedWalls, filterWallsByMarket, formatWallAge, isSpotWallMarket, matchDerivativeHistory, postureColor } from './market-client.js'
 import type { WallMarketFilter } from './market-client.js'
 import { regimeSnapshot } from '../../../tool-market/src/regime.js'
 import { rsiGridStateText } from '../../../tool-market/src/rsi-grid.js'
@@ -1620,10 +1620,19 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     }
   }, [settings, derivatives, data.timeframe, dark])
 
+  // Re-filter crossed/swept walls and refresh the ±% captions as price moves
+  // intra-bar, not only when a new bar opens: one bucket ≈ 0.02% (~$0.45 on ETH),
+  // tight enough to clear crossed 1m walls immediately without rebuilding on 1-tick noise.
+  const wallLastBar = data.candles[data.candles.length - 1]
+  const bucket2bp = (v: number | undefined): number =>
+    typeof v === 'number' && v > 0 ? Math.round(Math.log(v) / 0.0002) : 0
+  const wallPriceKey = `${bucket2bp(wallLastBar?.close)}|${bucket2bp(wallLastBar?.high)}|${bucket2bp(wallLastBar?.low)}`
+
   // CoinGlass 大单墙: horizontal lines, toggled via 指标参数 → 大单墙.
   useEffect(() => {
     const chart = chartRef.current
     if (chart === null) return
+    try { chart.removeOverlay({ groupId: 'tm_large_walls' }) } catch { /* already gone */ }
     for (const id of wallOverlayIds.current) {
       try { chart.removeOverlay({ id }) } catch { /* already gone */ }
     }
@@ -1641,6 +1650,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     if (typeof curP === 'number' && curP > 0) {
       walls = walls.filter(w => Math.abs(w.price - curP) / curP <= maxDistPct)
     }
+    // Hide walls already crossed by curP or swept by a candle opened after the snapshot.
+    walls = dropCrossedWalls(walls, curP, { candles: data.candles })
 
     const buys = walls
       .filter(w => w.side === 'buy')
@@ -1651,6 +1662,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
       .sort((a, b) => a.price - b.price || b.currentUsd - a.currentUsd)
       .slice(0, sideLimit)
     const finalWalls = [...sells, ...buys]
+    if (finalWalls.length === 0) return
 
     const fmt = (n: number): string => {
       const abs = Math.abs(n)
@@ -1662,23 +1674,33 @@ function Kline({ data, scenarios, dark, active, seriesKey, settings, axisSetting
     const lowest = Math.min(...data.candles.map(c => c.low))
     const highest = Math.max(...data.candles.map(c => c.high))
     const lanes = assignLabelLanes(finalWalls.map(w => w.price), lowest, highest, axisSettings.coordType)
-    for (let i = 0; i < finalWalls.length; i++) {
-      const w = finalWalls[i]!
+    const nowMs = Date.now()
+    const overlays = finalWalls.map((w, i) => {
       const color = w.side === 'buy' ? '#3ddc97' : '#f47067'
       const distStr = typeof curP === 'number' && curP > 0
         ? ` (${w.price >= curP ? '+' : ''}${(((w.price - curP) / curP) * 100).toFixed(1)}%)`
         : ''
       const mTag = isSpotWallMarket(w.market) ? '现货' : '合约'
-      const label = `${w.exchange}${mTag} ${w.side === 'buy' ? '买' : '卖'} $${fmt(w.currentUsd)}${distStr}`
-      const id = chart.createOverlay({
+      const age = formatWallAge(w, nowMs, true)
+      const ageStr = age ? ` · 挂${age}` : ''
+      const label = `${w.exchange}${mTag} ${w.side === 'buy' ? '买' : '卖'} $${fmt(w.currentUsd)}${distStr}${ageStr}`
+      return {
         name: 'tm_hline',
+        groupId: 'tm_large_walls',
         lock: true,
         points: [{ value: w.price }],
-        extendData: { color, dashed: true, label, lane: lanes[i] ?? 0 },
-      })
-      if (typeof id === 'string' && id) wallOverlayIds.current.push(id)
+        extendData: { color, dashed: true, label, lane: lanes[i] ?? 0, laneWidth: 255 },
+      }
+    })
+    const ids = chart.createOverlay(overlays)
+    if (Array.isArray(ids)) {
+      for (const id of ids) {
+        if (typeof id === 'string' && id) wallOverlayIds.current.push(id)
+      }
+    } else if (typeof ids === 'string' && ids) {
+      wallOverlayIds.current.push(ids)
     }
-  }, [settings, largeWalls, wallMarket, seriesKey, data.candles.length])
+  }, [settings, largeWalls, wallMarket, seriesKey, data.candles.length, wallPriceKey, axisSettings.coordType])
 
   // Live tail: push the newest bar into the existing plot. klinecharts updates
   // the last bar in place, or appends when the timestamp has moved on, so the

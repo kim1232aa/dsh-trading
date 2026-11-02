@@ -158,6 +158,142 @@ export function filterWallsByMarket<T extends { market?: string | null }>(
   return walls.filter(w => filter === 'spot' ? isSpotWallMarket(w.market) : !isSpotWallMarket(w.market))
 }
 
+/**
+ * Default relative slack before a wall counts as crossed against live price.
+ * Zero means any ask strictly below `price` (which would draw as a red sell
+ * line underneath the candle with a `-0.x%` label) or bid strictly above
+ * `price` is hidden immediately.
+ */
+export const WALL_CROSS_TOLERANCE = 0
+
+/**
+ * Cross-venue / spot-vs-perp basis slack applied when checking whether a bar
+ * that opened AFTER `w.currentTime` swept through the wall on a wick and then
+ * pulled back (~5 bps = $1.1 on ETH at $2270).
+ */
+export const WALL_SWEEP_BASIS_SLACK = 0.0005
+
+export interface WallSweepCandle {
+  time: string | number
+  high: number
+  low: number
+}
+
+export interface DropCrossedWallsOptions {
+  /** Relative slack for the live-price side check (default WALL_CROSS_TOLERANCE = 0). */
+  tol?: number
+  /**
+   * Optional series candles (ascending by open time). Any candle whose open
+   * time is >= `w.currentTime` occurred strictly after CoinGlass last saw the
+   * wall alive; if its wick traded past `w.price` (beyond `sweepSlack`), the
+   * wall was eaten/pulled and will not resurrect on a pullback while cached.
+   */
+  candles?: readonly WallSweepCandle[]
+  /** Basis slack for post-snapshot wick sweeps (default WALL_SWEEP_BASIS_SLACK = 0.0005). */
+  sweepSlack?: number
+}
+
+function barOpenMs(t: string | number): number {
+  return typeof t === 'number' ? t : Date.parse(t)
+}
+
+/**
+ * A resting ask below the last trade, or a bid above it, cannot rest on the
+ * wrong side of the chart's market: price traded through it (filled or pulled)
+ * while CoinGlass has not refreshed that venue yet (~30 s venue batches + TTL).
+ */
+export function isWallCrossed(
+  w: { side: string; price: number },
+  price: number | undefined | null,
+  tol: number = WALL_CROSS_TOLERANCE,
+): boolean {
+  if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return false
+  if (w.side === 'sell') return w.price < price * (1 - tol)
+  if (w.side === 'buy') return w.price > price * (1 + tol)
+  return false
+}
+
+/** True when a candle opening at/after `w.currentTime` traded past `w.price`. */
+export function isWallSweptAfterSnapshot(
+  w: { side: string; price: number; currentTime?: number },
+  candles: readonly WallSweepCandle[] | undefined,
+  sweepSlack: number = WALL_SWEEP_BASIS_SLACK,
+): boolean {
+  const seenAt = w.currentTime
+  if (!candles?.length || typeof seenAt !== 'number' || !Number.isFinite(seenAt) || seenAt <= 0) return false
+  const askCeil = w.price * (1 + sweepSlack)
+  const bidFloor = w.price * (1 - sweepSlack)
+  // Candles are ascending; walk from the tail and stop as soon as open < seenAt.
+  for (let i = candles.length - 1; i >= 0; i--) {
+    const c = candles[i]!
+    const openMs = barOpenMs(c.time)
+    if (!Number.isFinite(openMs) || openMs < seenAt) break
+    if (w.side === 'sell' && c.high > askCeil) return true
+    if (w.side === 'buy' && c.low < bidFloor) return true
+  }
+  return false
+}
+
+/** Walls still intact and on the right side of the last price. Order is preserved. */
+export function dropCrossedWalls<T extends { side: string; price: number; currentTime?: number }>(
+  walls: readonly T[],
+  price: number | undefined | null,
+  optsOrTol: number | DropCrossedWallsOptions = WALL_CROSS_TOLERANCE,
+): T[] {
+  const opts: DropCrossedWallsOptions = typeof optsOrTol === 'number' ? { tol: optsOrTol } : optsOrTol
+  const tol = opts.tol ?? WALL_CROSS_TOLERANCE
+  const sweepSlack = opts.sweepSlack ?? WALL_SWEEP_BASIS_SLACK
+  return walls.filter(w => !isWallCrossed(w, price, tol) && !isWallSweptAfterSnapshot(w, opts.candles, sweepSlack))
+}
+
+function toEpochMs(t: number | undefined): number {
+  if (typeof t !== 'number' || !Number.isFinite(t) || t <= 0) return 0
+  return t < 1e11 ? t * 1000 : t
+}
+
+/** Elapsed resting age in seconds, or null when `startTime` is absent. */
+export function wallAgeSeconds(
+  w: { startTime?: number; currentTime?: number; state?: number },
+  nowMs: number = Date.now(),
+): number | null {
+  const startMs = toEpochMs(w.startTime)
+  if (startMs <= 0) return null
+  const curMs = toEpochMs(w.currentTime)
+  const revoked = w.state === 2 || w.state === 3
+  // Active (state=1) orders are still resting on the book even after a partial
+  // fill updated currentTime; revoked orders ended at currentTime.
+  const endMs = revoked
+    ? (curMs > startMs ? curMs : nowMs)
+    : Math.max(nowMs, curMs)
+  return Math.max(0, Math.floor((endMs - startMs) / 1000))
+}
+
+/**
+ * Human-readable Chinese resting duration for a CoinGlass order wall.
+ * `compact = true` drops noisy sub-minute/sub-hour remainders for chart lines & strip badges.
+ */
+export function formatWallAge(
+  w: { startTime?: number; currentTime?: number; state?: number },
+  nowMs: number = Date.now(),
+  compact = false,
+): string {
+  const sec = wallAgeSeconds(w, nowMs)
+  if (sec === null) return ''
+  if (sec < 60) return `${sec}秒`
+  const min = Math.floor(sec / 60)
+  if (min < 60) return compact ? `${min}分` : `${min}分${sec % 60}秒`
+  const hr = Math.floor(min / 60)
+  const remMin = min % 60
+  if (hr < 24) {
+    if (compact) return remMin === 0 ? `${hr}小时` : `${hr}时${remMin}分`
+    return `${hr}小时${remMin}分`
+  }
+  const day = Math.floor(hr / 24)
+  const remHr = hr % 24
+  if (compact) return remHr === 0 ? `${day}天` : `${day}天${remHr}时`
+  return `${day}天${remHr}小时`
+}
+
 export interface PanelPositionReading {
   id: string
   label: string
