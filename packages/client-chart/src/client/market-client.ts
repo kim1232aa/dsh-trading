@@ -645,15 +645,19 @@ export function combineMarks(
 
 /** Plausibility band, mirroring the producer's own validation. */
 function band(role: unknown, lo: number, hi: number, isCrossTf = false): { floor: number; ceil: number } {
+  const wide = role === 'target' || role === 'invalidation'
   if (isCrossTf) {
-    // When applying higher-timeframe marks onto lower-timeframe charts (e.g. 4H on 1M),
-    // only import levels within reasonable proximity (max 30% range extension).
-    // This prevents far-away macro lines (e.g. 4H SMA200 far above) from stretching
-    // the Y-axis and squashing the low-timeframe candlesticks into a flat strip.
+    // Projection and invalidation targets legitimately span beyond local candle swings;
+    // keep the wide 0.5..2.0 band so projected scripts and target zones remain visible
+    // across lower timeframes without being dropped as out-of-band noise.
+    if (wide) {
+      return { floor: lo * 0.5, ceil: hi * 2.0 }
+    }
+    // For ordinary support/resistance levels, limit proximity to prevent far-away macro lines
+    // from cluttering lower-timeframe views.
     const pad = Math.max((hi - lo) * 0.3, (hi + lo) * 0.015)
     return { floor: lo - pad, ceil: hi + pad }
   }
-  const wide = role === 'target' || role === 'invalidation'
   return wide ? { floor: lo * 0.5, ceil: hi * 2.0 } : { floor: lo * 0.7, ceil: hi * 1.3 }
 }
 

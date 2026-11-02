@@ -89,6 +89,9 @@ export type RegimeDerivatives = {
   oiChangePct1h?: number | null
   oiChangePct4h?: number | null
   oiChangePct24h?: number | null
+  netPositionDelta1h?: number | null
+  topLongDelta1h?: number | null
+  topShortDelta1h?: number | null
   priceChangePct1h?: number | null
   priceChangePct4h?: number | null
   priceChangePct24h?: number | null
@@ -349,12 +352,15 @@ export function renderSnapshot(timeframe: string, s: RegimeSnapshot): string {
     ].filter(Boolean).join(' · ')
     const posture = d.posture ? ` → ${d.posture}` : ''
     const cvd = d.cvd1h != null ? ` | CVD1h ${d.cvd1h > 0 ? '+' : ''}${Number(d.cvd1h.toFixed(2))}币${d.cvdNote ? `(${d.cvdNote})` : ''}` : ''
+    const netPos = d.netPositionDelta1h != null
+      ? ` | 净头寸1h ${d.netPositionDelta1h > 0 ? '+' : ''}${Math.round(d.netPositionDelta1h)}币(多${d.topLongDelta1h != null && d.topLongDelta1h > 0 ? '+' : ''}${Math.round(d.topLongDelta1h ?? 0)}/空${d.topShortDelta1h != null && d.topShortDelta1h > 0 ? '+' : ''}${Math.round(d.topShortDelta1h ?? 0)})`
+      : ''
     const basis = d.basisPct != null ? ` | 基差 ${formatPctCn(d.basisPct, 3)}` : ''
     const liq = d.liquidationSummary ? ` | ${d.liquidationSummary}` : ''
     const crowd = d.crowdVsWhale ? ` | ${d.crowdVsWhale}` : ''
     const taker = d.takerBuySellRatio !== null ? `主动买卖 ${fmt(d.takerBuySellRatio)}` : '主动买卖 –'
     const head = [oiUsdt, oiBase].filter(Boolean).join(' · ')
-    lines.push(`  合约(${d.source}): ${head} | 费率 ${fr}${apr ? ` ${apr}` : ''}${frLabel} | ${ratioBits.join(' · ') || '多空比 –'} | ${taker}${oiHoriz ? ` | ${oiHoriz}${posture}` : ''}${cvd}${basis}${crowd}${liq}`)
+    lines.push(`  合约(${d.source}): ${head} | 费率 ${fr}${apr ? ` ${apr}` : ''}${frLabel} | ${ratioBits.join(' · ') || '多空比 –'} | ${taker}${oiHoriz ? ` | ${oiHoriz}${posture}` : ''}${cvd}${netPos}${basis}${crowd}${liq}`)
   }
   if (s.moneyFlow?.summary) {
     lines.push(`  资金流向: ${s.moneyFlow.summary}`)

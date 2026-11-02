@@ -150,6 +150,13 @@ describe('mergeMarks — the range gate', () => {
     expect(mergeMarks(chart(), marksOf({ annotations: [level(350, 'other')] })).kept).toBe(0)
   })
 
+  it('preserves target and invalidation roles under wider band even across timeframes', () => {
+    // When viewing 5m chart with candle range 100..200, a 15m/4h target level at 350 or 60 must not be dropped by cross-TF clamp.
+    const crossChart = chart({ timeframes: [{ timeframe: '5m', candles: CANDLES, indicators: null, annotations: [] }] })
+    expect(mergeMarks(crossChart, marksOf({ timeframe: '15m', annotations: [level(350, 'target')] })).kept).toBe(1)
+    expect(mergeMarks(crossChart, marksOf({ timeframe: '15m', annotations: [level(350, 'other')] })).kept).toBe(0)
+  })
+
   it('drops a zone when either bound fails, never half-drawn', () => {
     const zone = (low: number, high: number) =>
       ({ type: 'zone' as const, low, high, label: 'z', role: 'other', sources: ['s'] })

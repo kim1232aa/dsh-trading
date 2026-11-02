@@ -223,6 +223,12 @@ export interface Derivatives {
   oiChangePct1h?: number | null
   oiChangePct4h?: number | null
   oiChangePct24h?: number | null
+  /** Net position delta of top traders in base asset coins over 1h (longDelta − shortDelta). Positive = net bull. */
+  netPositionDelta1h?: number | null
+  /** Top trader long position change in base asset coins over 1h. */
+  topLongDelta1h?: number | null
+  /** Top trader short position change in base asset coins over 1h. */
+  topShortDelta1h?: number | null
   /** % change of implied mark (OI-value/OI) over 1h / 4h / 24h. */
   priceChangePct1h?: number | null
   priceChangePct4h?: number | null

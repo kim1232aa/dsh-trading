@@ -361,6 +361,41 @@ export class BinanceProvider implements MarketDataProvider {
         const priceChangePct4h = h4.pxPct
         const priceChangePct24h = h24.pxPct
 
+        const tpRows = topPos.status === 'fulfilled' && Array.isArray(topPos.value) ? topPos.value as Record<string, unknown>[] : undefined
+        const netHorizon = (lookbackMs: number): { netDelta: number | null; longDelta: number | null; shortDelta: number | null } => {
+          const pastOiRow = sampleAtOrBefore(hist, nowMs, lookbackMs)
+          const pastTpRow = sampleAtOrBefore(tpRows ?? [], nowMs, lookbackMs)
+          const pastOi = num(pastOiRow?.['sumOpenInterest'])
+          const curTp = lastArr(topPos)
+          const parsePcts = (r: Record<string, unknown> | null | undefined): { longPct: number | null; shortPct: number | null } => {
+            if (!r) return { longPct: null, shortPct: null }
+            const l = num(r['longAccount'])
+            const s = num(r['shortAccount'])
+            if (l !== null && s !== null) return { longPct: l, shortPct: s }
+            const ratio = num(r['longShortRatio'])
+            if (ratio !== null && ratio > 0) {
+              return { longPct: ratio / (1 + ratio), shortPct: 1 / (1 + ratio) }
+            }
+            return { longPct: null, shortPct: null }
+          }
+          const { longPct: curLongPct, shortPct: curShortPct } = parsePcts(curTp)
+          const { longPct: pastLongPct, shortPct: pastShortPct } = parsePcts(pastTpRow)
+          if (openInterest === null || pastOi === null || curLongPct === null || curShortPct === null || pastLongPct === null || pastShortPct === null) {
+            return { netDelta: null, longDelta: null, shortDelta: null }
+          }
+          const curLongCoins = openInterest * curLongPct
+          const curShortCoins = openInterest * curShortPct
+          const pastLongCoins = pastOi * pastLongPct
+          const pastShortCoins = pastOi * pastShortPct
+          const longDelta = curLongCoins - pastLongCoins
+          const shortDelta = curShortCoins - pastShortCoins
+          return { netDelta: longDelta - shortDelta, longDelta, shortDelta }
+        }
+        const net1h = netHorizon(60 * 60 * 1000)
+        const netPositionDelta1h = net1h.netDelta
+        const topLongDelta1h = net1h.longDelta
+        const topShortDelta1h = net1h.shortDelta
+
         const lsRatio = num(lastArr(ls)?.['longShortRatio'])
         const tpRatio = num(lastArr(topPos)?.['longShortRatio'])
         const taRatio = num(lastArr(topAcc)?.['longShortRatio'])
@@ -395,7 +430,6 @@ export class BinanceProvider implements MarketDataProvider {
           const prevVal = prevItem ? num(prevItem['sumOpenInterestValue']) : null
           const itemTs = num(item['timestamp'])
           const lsRows = ls.status === 'fulfilled' && Array.isArray(ls.value) ? ls.value as Record<string, unknown>[] : undefined
-          const tpRows = topPos.status === 'fulfilled' && Array.isArray(topPos.value) ? topPos.value as Record<string, unknown>[] : undefined
           const taRows = topAcc.status === 'fulfilled' && Array.isArray(topAcc.value) ? topAcc.value as Record<string, unknown>[] : undefined
           const tkRows = taker.status === 'fulfilled' && Array.isArray(taker.value) ? taker.value as Record<string, unknown>[] : undefined
           const lsItem = itemTs !== null ? rowNear(lsRows, itemTs) : undefined
@@ -471,6 +505,9 @@ export class BinanceProvider implements MarketDataProvider {
           oiChangePct1h,
           oiChangePct4h,
           oiChangePct24h,
+          netPositionDelta1h,
+          topLongDelta1h,
+          topShortDelta1h,
           priceChangePct1h,
           priceChangePct4h,
           priceChangePct24h,
@@ -1246,6 +1283,38 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
   const topPositionRatio = num(top[0]?.[1])
   const longShortRatio = num(acc[0]?.[1])
   const topAccountRatio = num(topAcc[0]?.[1])
+
+  let netPositionDelta1h: number | null = null
+  let topLongDelta1h: number | null = null
+  let topShortDelta1h: number | null = null
+  if (liveOi !== null && a1.oi !== null && topPositionRatio !== null && topPositionRatio > 0) {
+    const target1h = nowMs - 60 * 60 * 1000
+    let bestTop1h: [string, string] | undefined
+    let bestDiff = Infinity
+    for (const r of top) {
+      const ts = num(r[0])
+      if (ts === null) continue
+      const diff = Math.abs(ts - target1h)
+      if (diff < bestDiff && diff <= 15 * 60 * 1000) {
+        bestDiff = diff
+        bestTop1h = r
+      }
+    }
+    const pastTp = num(bestTop1h?.[1])
+    if (pastTp !== null && pastTp > 0) {
+      const curL = topPositionRatio / (1 + topPositionRatio)
+      const curS = 1 / (1 + topPositionRatio)
+      const pastL = pastTp / (1 + pastTp)
+      const pastS = 1 / (1 + pastTp)
+      const curLongCoins = liveOi * curL
+      const curShortCoins = liveOi * curS
+      const pastLongCoins = a1.oi * pastL
+      const pastShortCoins = a1.oi * pastS
+      topLongDelta1h = curLongCoins - pastLongCoins
+      topShortDelta1h = curShortCoins - pastShortCoins
+      netPositionDelta1h = topLongDelta1h - topShortDelta1h
+    }
+  }
   const takerBuySellRatio = okxTakerRatioFromRow(taker[0], true)
   // CVD over ~1h from 5m taker bars (newest first).
   let cvd1h: number | null = null
@@ -1357,6 +1426,9 @@ export async function okxDerivatives(rawSymbol: string): Promise<Derivatives> {
     oiChangePct1h,
     oiChangePct4h,
     oiChangePct24h,
+    netPositionDelta1h,
+    topLongDelta1h,
+    topShortDelta1h,
     priceChangePct1h,
     priceChangePct4h,
     priceChangePct24h,
