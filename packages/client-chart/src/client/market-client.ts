@@ -84,6 +84,8 @@ export interface MarketClient {
       maxDistancePct?: number
       status?: 'active' | 'all' | 'revoked'
       balanced?: boolean
+      /** Also return executed large trades at or above this USD size (0/omit = none). */
+      tradesMinUsd?: number
     },
     signal?: AbortSignal,
   ): Promise<PanelLargeOrders | null>
@@ -123,6 +125,19 @@ export interface PanelLargeOrderWall {
   state: number
 }
 
+/** One executed large trade (CoinGlass 大额成交). */
+export interface PanelLargeTrade {
+  id: string | number
+  exchange: string
+  market?: 'spot' | 'perp' | string
+  side: 'buy' | 'sell'
+  price: number
+  usd: number
+  amount: number
+  /** Fill time (ms). */
+  time: number
+}
+
 export interface PanelLargeOrders {
   symbol: string
   cgSymbol: string
@@ -134,6 +149,8 @@ export interface PanelLargeOrders {
   /** Venue queries that failed this round. */
   failedSources?: number
   walls: PanelLargeOrderWall[]
+  /** Executed large trades, oldest first (only when tradesMinUsd was requested). */
+  trades?: PanelLargeTrade[]
 }
 
 /** Pill on the large-wall strip. `all` is the unfiltered book. */
@@ -1001,6 +1018,7 @@ export function createMarketClient(rpc: RpcCaller): MarketClient {
       if (opts?.maxDistancePct !== undefined) body['maxDistancePct'] = opts.maxDistancePct
       if (opts?.status !== undefined) body['status'] = opts.status
       if (opts?.balanced !== undefined) body['balanced'] = opts.balanced
+      if (opts?.tradesMinUsd !== undefined) body['tradesMinUsd'] = opts.tradesMinUsd
       const value = await unwrap(rpc.call(CHANNEL, 'largeOrders', body, signal)) as PanelLargeOrders
       return value
     },

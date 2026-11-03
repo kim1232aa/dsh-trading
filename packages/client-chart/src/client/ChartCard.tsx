@@ -404,10 +404,11 @@ export const EDITABLE: {
   { name: 'VOL_TIER', title: '量比分档量能', pane: 'pane_vol', defaults: [4], defaultVisible: true, params: [period('量比周期')] },
   { name: 'OI_POSTURE', title: '合约OI', pane: 'pane_oi_posture', defaults: [], params: [] },
   { name: 'ENTRY_SIGNAL', title: '多空观察信号(未验证)', defaults: [60, 4], defaultVisible: false, params: [period('ST周期'), { label: 'ST倍数', min: 0.1, max: 20, step: 0.1 }] },
-  { name: 'LARGE_WALLS', title: '大单墙(CoinGlass)', defaults: [100, 20, 8], defaultVisible: false, params: [
+  { name: 'LARGE_WALLS', title: '大单墙(CoinGlass)', defaults: [100, 20, 8, 50], defaultVisible: false, params: [
     { label: '最低金额(万)', min: 0, max: 3000, step: 1 },
     { label: '距离现价(%)', min: 1, max: 100, step: 1 },
     { label: '单边展示条数', min: 2, max: 30, step: 1 },
+    { label: '大额成交最低(万,0=关)', min: 0, max: 3000, step: 1 },
   ] },
 ]
 
@@ -1707,6 +1708,34 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
       wallOverlayIds.current.push(ids)
     }
   }, [settings, largeWalls, wallMarket, seriesKey, wallPriceKey, axisSettings.coordType])
+
+  // CoinGlass 大额成交: executed large trades as dots on their fill bar/price
+  // (buy green, sell red, radius by size). One overlay, rebuilt per poll only.
+  useEffect(() => {
+    const chart = chartRef.current
+    if (chart === null) return
+    try { chart.removeOverlay({ groupId: 'tm_large_trades' }) } catch { /* already gone */ }
+    const p = settings['LARGE_WALLS']
+    const minUsd = (p?.params?.[3] ?? 50) * 10_000
+    if (!p?.visible || minUsd <= 0 || !largeWalls?.trades?.length || data.candles.length === 0) return
+    const firstMs = Date.parse(data.candles[0]!.time)
+    const trades = filterWallsByMarket(largeWalls.trades, wallMarket)
+      .filter(t => t.usd >= minUsd && t.time >= firstMs)
+    if (trades.length === 0) return
+    // ponytail: no hover tooltip per dot; add one (price/$/venue/time) when asked.
+    chart.createOverlay({
+      name: 'tm_dots',
+      groupId: 'tm_large_trades',
+      lock: true,
+      points: trades.map(t => ({ timestamp: t.time, value: t.price })),
+      extendData: {
+        dots: trades.map(t => ({
+          color: t.side === 'buy' ? '#3ddc97' : '#f47067',
+          r: Math.min(9, 2.5 + 1.5 * Math.sqrt(t.usd / minUsd)),
+        })),
+      },
+    })
+  }, [settings, largeWalls, wallMarket, seriesKey])
 
   // Live tail: push the newest bar into the existing plot. klinecharts updates
   // the last bar in place, or appends when the timestamp has moved on, so the

@@ -10,6 +10,7 @@ import type {
   LargeOrderStatistics,
   LargeOrderWall,
   LargeOrdersSnapshot,
+  LargeTrade,
 } from './types.js'
 
 export { renderLargeOrders }
@@ -254,6 +255,34 @@ export function flattenWalls(groups: unknown): LargeOrderWall[] {
   return deduplicateWalls(rows)
 }
 
+/** Most recent executed trades kept per snapshot. */
+const MAX_TRADES = 600
+
+/** Flatten /api/largeOrder venue groups into executed trades. side: 1=sell, 2=buy. */
+export function flattenTrades(groups: unknown): LargeTrade[] {
+  if (!Array.isArray(groups)) return []
+  const out: LargeTrade[] = []
+  const seen = new Set<string>()
+  for (const g of groups as { instrument?: RawGroup['instrument']; list?: Record<string, unknown>[] }[]) {
+    const inst = g.instrument ?? {}
+    const market = normalizeMarketType(inst)
+    for (const o of g.list ?? []) {
+      const side = o['side'] === 1 ? 'sell' : o['side'] === 2 ? 'buy' : null
+      const price = Number(o['price'])
+      const usd = Number(o['volUsd'])
+      const time = Number(o['turnoverTime']) || Number(o['createTime'])
+      if (side === null || !(price > 0) || !(usd > 0) || !(time > 0)) continue
+      const exchange = String(inst.exName ?? o['exchangeName'] ?? '')
+      const id = (o['id'] as string | number | undefined) ?? `${exchange}:${market}:${side}:${price}:${time}`
+      const key = `${exchange}:${market}:${String(id)}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({ id, exchange, market, side, price, usd, amount: Number(o['baseVol']) || 0, time })
+    }
+  }
+  return out.sort((a, b) => a.time - b.time)
+}
+
 function flattenStats(raw: unknown): LargeOrderStatistics[] {
   if (!Array.isArray(raw)) return []
   return (raw as RawStats[]).map(s => {
@@ -320,8 +349,11 @@ export class CoinglassCapi {
    * no request during a 429 cooldown. A refused or failed pull falls back to the
    * last good one (up to STALE_MAX_MS old); callers read its age from `at`.
    */
-  private pullRaw(cgSymbol: string, start: number, end: number, hours: number, ttlMs: number, signal?: AbortSignal): Promise<RawPull> {
-    const key = `${cgSymbol}|${hours}`
+  private pullRaw(
+    cgSymbol: string, start: number, end: number, hours: number, ttlMs: number, signal?: AbortSignal,
+    kind: 'walls' | 'trades' = 'walls',
+  ): Promise<RawPull> {
+    const key = kind === 'walls' ? `${cgSymbol}|${hours}` : `trades|${cgSymbol}|${hours}`
     const t = this.now()
     const cached = this.rawPulls.get(key)
     if (cached && t - cached.at < ttlMs) return Promise.resolve(cached)
@@ -339,7 +371,8 @@ export class CoinglassCapi {
     let pending = this.rawInflight.get(key)
     if (!pending) {
       // Not tied to the caller's signal: other waiters share this request.
-      pending = this.largeTakerOrder(cgSymbol, start, end).then(
+      const request = kind === 'walls' ? this.largeTakerOrder(cgSymbol, start, end) : this.largeOrder(cgSymbol, start, end)
+      pending = request.then(
         (groups): RawPull => {
           this.rawInflight.delete(key)
           const pull = { at: this.now(), groups }
@@ -474,6 +507,13 @@ export class CoinglassCapi {
     const top = opts.top ?? 40
     const end = Math.floor(Date.now() / 1000)
     const start = end - Math.max(1, Math.floor(hours * 3600))
+    // Executed trades: only the Binance route answers (it carries Binance + OKX
+    // spot/perp). Fetched beside the walls; a failure never costs the walls.
+    const tradeHours = 24
+    const tradesPull = opts.tradesMinUsd !== undefined && opts.tradesMinUsd > 0
+      ? this.pullRaw(mapped.cgSymbol, end - tradeHours * 3600, end, tradeHours, this.primaryTtlMs, opts.signal, 'trades')
+        .catch(() => null)
+      : Promise.resolve(null)
     // The primary (Binance-routed) answer already carries Binance + OKX +
     // Coinbase books and refreshes fast; secondary venues refresh slower so a
     // 20 s chart poll costs ~1 request, not 14.
@@ -557,6 +597,20 @@ export class CoinglassCapi {
       selectedWalls = walls.slice(0, top)
     }
 
+    let trades: LargeTrade[] | undefined
+    const tradeRaw = await tradesPull
+    if (tradeRaw !== null) {
+      trades = flattenTrades(tradeRaw.groups).filter(t => t.usd >= opts.tradesMinUsd!)
+      if (opts.venue) {
+        const v = opts.venue.toLowerCase()
+        trades = trades.filter(t => t.exchange.toLowerCase() === v)
+      }
+      if (opts.marketType === 'spot' || opts.marketType === 'perp') {
+        trades = trades.filter(t => t.market === opts.marketType)
+      }
+      if (trades.length > MAX_TRADES) trades = trades.slice(-MAX_TRADES)
+    }
+
     let statistics: LargeOrderStatistics[] = []
     const prices = selectedWalls.map(w => w.price).filter(p => p > 0)
     if (prices.length > 0 && opts.statistics !== false && this.cooldownUntil <= this.now()) {
@@ -591,6 +645,7 @@ export class CoinglassCapi {
       updatedAt: primary.at,
       ...(stale ? { stale: true } : {}),
       ...(failedSources > 0 ? { failedSources } : {}),
+      ...(trades !== undefined ? { trades } : {}),
     }
   }
 }

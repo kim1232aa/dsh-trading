@@ -176,7 +176,7 @@ describe('production annotation overlay callbacks', () => {
 
   it('keeps locked complete overlays out of the interactive drawing slot', () => {
     expect(templates.map(t => [t.name, t.totalStep, t.lock])).toEqual([
-      ['tm_hline', 2, true], ['tm_region', 3, true], ['tm_polyline', 2, true],
+      ['tm_hline', 2, true], ['tm_region', 3, true], ['tm_polyline', 2, true], ['tm_dots', 2, true],
     ])
   })
 })

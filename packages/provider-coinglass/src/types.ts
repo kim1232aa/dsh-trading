@@ -23,6 +23,21 @@ export interface LargeOrderWall {
   currentTime: number
 }
 
+/** One executed large trade (CoinGlass 大额成交, /api/largeOrder). */
+export interface LargeTrade {
+  id: string | number
+  exchange: string
+  market: 'spot' | 'perp'
+  /** Taker side: 'buy' = 大额买入, 'sell' = 大额卖出. */
+  side: 'buy' | 'sell'
+  price: number
+  usd: number
+  /** Base-asset amount. */
+  amount: number
+  /** Fill time (ms). */
+  time: number
+}
+
 export interface LargeOrderStatistics {
   exchange: string
   baseAsset?: string
@@ -53,6 +68,8 @@ export interface LargeOrdersSnapshot {
   stale?: boolean
   /** Venue queries that failed this round; their walls are missing from `walls`. */
   failedSources?: number
+  /** Executed large trades (oldest first); present only when `tradesMinUsd` was requested and the pull succeeded. */
+  trades?: LargeTrade[]
 }
 
 export interface FetchLargeOrdersOptions {
@@ -86,4 +103,6 @@ export interface FetchLargeOrdersOptions {
   balanced?: boolean
   /** Also pull venue statistics (one extra request). Default true; the chart strip does not use them. */
   statistics?: boolean
+  /** Also pull executed large trades (last 24 h) at or above this USD size. Omit/0 = skip. */
+  tradesMinUsd?: number
 }

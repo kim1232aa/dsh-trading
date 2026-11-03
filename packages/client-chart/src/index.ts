@@ -95,6 +95,9 @@ export function apply(ctx: Context): void {
         const minUsd = typeof body['minUsd'] === 'number' && Number.isFinite(body['minUsd']) ? body['minUsd'] : undefined
         const status: 'active' | 'all' | 'revoked' = body['status'] === 'all' || body['status'] === 'revoked' || body['status'] === 'active' ? body['status'] : 'active'
         const balanced = typeof body['balanced'] === 'boolean' ? body['balanced'] : true
+        const tradesMinUsd = typeof body['tradesMinUsd'] === 'number' && Number.isFinite(body['tradesMinUsd']) && body['tradesMinUsd'] > 0
+          ? body['tradesMinUsd']
+          : undefined
 
         if (coinglass && !coinglass.enabled) {
           return { ok: true, value: { symbol, cgSymbol: '', pair: '', orderCount: 0, walls: [] } }
@@ -111,6 +114,7 @@ export function apply(ctx: Context): void {
           ...(currentPrice !== undefined ? { currentPrice } : {}),
           ...(maxDistancePct !== undefined ? { maxDistancePct } : {}),
           ...(minUsd !== undefined ? { minUsd } : {}),
+          ...(tradesMinUsd !== undefined ? { tradesMinUsd } : {}),
         }
         const snap = await (coinglass ? coinglass.getLargeOrders(symbol, opts) : fallbackCoinglass().getLargeOrders(symbol, opts))
         return {
@@ -135,6 +139,7 @@ export function apply(ctx: Context): void {
               currentTime: w.currentTime,
               state: w.state,
             })),
+            ...(snap.trades ? { trades: snap.trades } : {}),
           },
         }
       }

@@ -1143,6 +1143,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
       const minWan = peekSettings()['LARGE_WALLS']?.params?.[0] ?? 100
       const maxDist = (peekSettings()['LARGE_WALLS']?.params?.[1] ?? 20) / 100
       const sideLimit = peekSettings()['LARGE_WALLS']?.params?.[2] ?? 12
+      const tradesMinWan = peekSettings()['LARGE_WALLS']?.params?.[3] ?? 50
       market.getLargeOrders!(
         symbol,
         {
@@ -1152,6 +1153,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
           status: 'active',
           maxDistancePct: maxDist,
           minUsd: minWan * 10_000,
+          tradesMinUsd: tradesMinWan * 10_000,
           ...(typeof currentPrice === 'number' ? { currentPrice } : {}),
         },
         ctl.signal,

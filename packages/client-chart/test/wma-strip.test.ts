@@ -81,7 +81,7 @@ describe('sanitizeSettings', () => {
       RSI_GRID: { params: [7, 30, 60, 10], visible: true },
       REVPOINT: { params: [...REVPOINT_PARAM_DEFAULTS], visible: true },
       ENTRY_SIGNAL: { params: [60, 4], visible: false },
-      LARGE_WALLS: { params: [100, 20, 8], visible: false },
+      LARGE_WALLS: { params: [100, 20, 8, 50], visible: false },
     })
     expect(sanitizeSettings('x')).toEqual(sanitizeSettings(null))
   })
@@ -107,13 +107,14 @@ describe('sanitizeSettings', () => {
     expect(s['OI_POSTURE']?.visible).toBe(true)
   })
   it('LARGE_WALLS defaults to 100万 and clamps out-of-range', () => {
-    expect(sanitizeSettings(null)['LARGE_WALLS']).toEqual({ params: [100, 20, 8], visible: false })
+    expect(sanitizeSettings(null)['LARGE_WALLS']).toEqual({ params: [100, 20, 8, 50], visible: false })
+    // Saved 3-param settings (before 大额成交) gain the new param's default.
     expect(sanitizeSettings({ LARGE_WALLS: { params: [500, 15, 6], visible: true } })['LARGE_WALLS'])
-      .toEqual({ params: [500, 15, 6], visible: true })
-    expect(sanitizeSettings({ LARGE_WALLS: { params: [9999, 20, 8], visible: true } })['LARGE_WALLS'])
-      .toEqual({ params: [100, 20, 8], visible: true })
+      .toEqual({ params: [500, 15, 6, 50], visible: true })
+    expect(sanitizeSettings({ LARGE_WALLS: { params: [9999, 20, 8, 0], visible: true } })['LARGE_WALLS'])
+      .toEqual({ params: [100, 20, 8, 0], visible: true })
     expect(sanitizeSettings({ LARGE_WALLS: { params: [-1, 20, 8], visible: true } })['LARGE_WALLS'])
-      .toEqual({ params: [100, 20, 8], visible: true })
+      .toEqual({ params: [100, 20, 8, 50], visible: true })
   })
 })
 

@@ -10,7 +10,7 @@ import { CoinglassCapi } from './client.js'
 import type { CoinglassClientConfig } from './client.js'
 import type { FetchLargeOrdersOptions, LargeOrdersSnapshot } from './types.js'
 
-export { CoinglassCapi, flattenWalls, isRateLimitError, DEFAULT_BASE_URL } from './client.js'
+export { CoinglassCapi, flattenTrades, flattenWalls, isRateLimitError, DEFAULT_BASE_URL } from './client.js'
 export type { CoinglassClientConfig } from './client.js'
 export { decryptCapiBody, deriveKey0 } from './decrypt.js'
 export type { DecryptContext } from './decrypt.js'
@@ -21,6 +21,7 @@ export type {
   LargeOrderWall,
   LargeOrderStatistics,
   LargeOrdersSnapshot,
+  LargeTrade,
   FetchLargeOrdersOptions,
 } from './types.js'
 

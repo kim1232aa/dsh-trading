@@ -187,5 +187,24 @@ export function createAnnotationOverlays(family: string, measureText: MeasureTex
       }
       return figures
     },
+  }, {
+    // Many timed dots in ONE overlay (CoinGlass 大额成交): extendData.dots[i] styles points[i].
+    name: 'tm_dots', totalStep: 2, lock: true,
+    createPointFigures: ({ coordinates, bounding, overlay }) => {
+      const ext = (overlay.extendData ?? {}) as Record<string, unknown>
+      const dots = Array.isArray(ext['dots']) ? ext['dots'] as { color?: unknown; r?: unknown }[] : []
+      const figures: OverlayFigure[] = []
+      coordinates.forEach((pt, i) => {
+        const d = dots[i]
+        if (d === undefined || !Number.isFinite(pt.x) || !Number.isFinite(pt.y)) return
+        if (pt.x < 0 || pt.x > bounding.width || pt.y < 0 || pt.y > bounding.height) return
+        const color = typeof d.color === 'string' ? d.color : '#888888'
+        const r = typeof d.r === 'number' && d.r > 0 ? d.r : 3
+        figures.push({ type: 'circle', attrs: { x: pt.x, y: pt.y, r },
+          styles: { style: 'stroke_fill', color: `${color}40`, borderColor: color, borderSize: 1.5 }, ignoreEvent: true })
+        figures.push({ type: 'circle', attrs: { x: pt.x, y: pt.y, r: 1.5 }, styles: { style: 'fill', color }, ignoreEvent: true })
+      })
+      return figures
+    },
   }]
 }

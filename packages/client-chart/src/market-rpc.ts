@@ -103,6 +103,17 @@ export interface LargeOrdersResponse {
     currentTime: number
     state: number
   }[]
+  /** Executed large trades (oldest first), when requested via tradesMinUsd. */
+  trades?: {
+    id: string | number
+    exchange: string
+    market: 'spot' | 'perp'
+    side: 'buy' | 'sell'
+    price: number
+    usd: number
+    amount: number
+    time: number
+  }[]
 }
 
 /** The `fundamentals` answer: null when the provider has no financial valuation data. */
