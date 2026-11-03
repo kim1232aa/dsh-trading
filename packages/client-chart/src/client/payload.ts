@@ -161,3 +161,98 @@ export function annotationDigest(
 ): string {
   return JSON.stringify([annotations ?? [], scenarios ?? []])
 }
+
+const CHART_CALL_NAMES = new Set(['market_snapshot', 'get_ohlcv', 'annotate_chart', 'find_supply_demand_zones'])
+
+/**
+ * Fallback payload reconstructed from `block.call.argsRaw` when a settled tool
+ * call was dispatched from inside `run_code`. DSH persists no `presentationMeta`
+ * (`block.meta`) on nested `run_code` calls across session reloads/switches, so
+ * without this fallback only older root-level cards in the transcript republish
+ * on session switch — yanking the chart column back to an earlier symbol.
+ */
+export function readCallFallbackPayload(call: unknown): ChartPayload | null {
+  if (!isRecord(call) || typeof call['name'] !== 'string' || !CHART_CALL_NAMES.has(call['name'])) return null
+  let args: unknown = call['args']
+  if (!isRecord(args) && typeof call['argsRaw'] === 'string') {
+    try { args = JSON.parse(call['argsRaw']) } catch { return null }
+  }
+  if (!isRecord(args) || typeof args['symbol'] !== 'string') return null
+  const symbol = args['symbol'].trim()
+  if (symbol === '') return null
+  const tfRaw = typeof args['timeframe'] === 'string'
+    ? args['timeframe']
+    : (Array.isArray(args['timeframes']) && typeof args['timeframes'][0] === 'string' ? args['timeframes'][0] : '1d')
+  const provider = typeof args['provider'] === 'string' && args['provider'].trim() !== ''
+    ? args['provider'].trim()
+    : (/^(sh|sz|bj)?\d{6}$/i.test(symbol) ? 'cn' : 'binance')
+  const annotations: ChartAnnotation[] = []
+  if (call['name'] === 'annotate_chart') {
+    if (Array.isArray(args['levels'])) {
+      for (const l of args['levels']) {
+        if (isRecord(l) && typeof l['price'] === 'number' && Number.isFinite(l['price']) && typeof l['label'] === 'string') {
+          annotations.push({
+            type: 'level',
+            price: l['price'],
+            label: l['label'],
+            role: typeof l['role'] === 'string' ? l['role'] : 'other',
+            sources: Array.isArray(l['sources']) ? l['sources'].filter((s): s is string => typeof s === 'string') : [],
+            ...(typeof l['confidence'] === 'number' ? { confidence: l['confidence'] } : {}),
+          })
+        }
+      }
+    }
+    if (Array.isArray(args['zones'])) {
+      for (const z of args['zones']) {
+        if (isRecord(z) && typeof z['low'] === 'number' && typeof z['high'] === 'number' && typeof z['label'] === 'string') {
+          annotations.push({
+            type: 'zone',
+            low: z['low'],
+            high: z['high'],
+            label: z['label'],
+            role: typeof z['role'] === 'string' ? z['role'] : 'other',
+            sources: Array.isArray(z['sources']) ? z['sources'].filter((s): s is string => typeof s === 'string') : [],
+            ...(typeof z['confidence'] === 'number' ? { confidence: z['confidence'] } : {}),
+          })
+        }
+      }
+    }
+    if (Array.isArray(args['paths'])) {
+      for (const p of args['paths']) {
+        if (isRecord(p) && Array.isArray(p['points']) && typeof p['label'] === 'string') {
+          const pts = p['points'].filter((pt): pt is Record<string, unknown> =>
+            isRecord(pt) && typeof pt['time'] === 'string' && typeof pt['price'] === 'number' && Number.isFinite(pt['price']))
+          if (pts.length >= 2) {
+            annotations.push({
+              type: 'path',
+              points: pts.map(pt => ({
+                time: pt['time'] as string,
+                price: pt['price'] as number,
+                ...(typeof pt['note'] === 'string' ? { note: pt['note'] } : {}),
+              })),
+              label: p['label'],
+              role: typeof p['role'] === 'string' ? p['role'] : 'other',
+              sources: Array.isArray(p['sources']) ? p['sources'].filter((s): s is string => typeof s === 'string') : [],
+            })
+          }
+        }
+      }
+    }
+  }
+  const scenarios = call['name'] === 'annotate_chart' && Array.isArray(args['scenarios'])
+    ? args['scenarios'].map(readScenario).filter((s): s is ChartScenario => s !== null)
+    : undefined
+  return {
+    kind: 'chart',
+    version: 1,
+    provider,
+    symbol,
+    timeframes: [{
+      timeframe: tfRaw,
+      candles: [],
+      indicators: null,
+      ...(annotations.length > 0 ? { annotations } : {}),
+    }],
+    ...(scenarios !== undefined && scenarios.length > 0 ? { scenarios } : {}),
+  }
+}

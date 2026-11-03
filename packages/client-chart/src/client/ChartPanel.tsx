@@ -1082,7 +1082,8 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
   // must not replace what the user deliberately put on screen. Its DRAWINGS
   // are welcome on top of it, which is what `merged` carries; when they are
   // about a different chart, mergeMarks hands the payload straight back.
-  const payload = merged?.payload ?? own ?? fromAgent
+  const agentSeries = fromAgent !== null && (fromAgent.timeframes[0]?.candles.length ?? 0) > 0 ? fromAgent : null
+  const payload = merged?.payload ?? own ?? agentSeries
 
   // History paging (klinecharts loadMore): only on a series the panel fetched
   // itself. Older bars are merged into `own`, so payload candles == chart data
@@ -1252,11 +1253,16 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
     const decision = decideFollow(
       fromAgent === null
         ? null
-        : { symbol: fromAgent.symbol, timeframe: fromAgent.timeframes[0]?.timeframe },
+        : {
+            symbol: fromAgent.symbol,
+            timeframe: fromAgent.timeframes[0]?.timeframe,
+            hasMarks: readMarks(fromAgent) !== null,
+          },
       {
         width,
         pinned,
         own: own === null ? null : { symbol: own.symbol, timeframe: own.timeframes[0]?.timeframe },
+        marks: active === null ? null : { symbol: active.rawSymbol, timeframe: active.timeframe },
       },
     )
     if (decision.action !== 'load') return
@@ -1268,7 +1274,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
       void load(decision.symbol, decision.timeframe, 'follow')
     }, FOLLOW_SETTLE_MS)
     return () => clearTimeout(followTimer.current)
-  }, [fromAgent, own, pinned, width, load])
+  }, [fromAgent, own, active, pinned, width, load])
 
   // One symbols probe on mount, purely to tell the user what this provider
   // actually carries — a wrong-format symbol is the likeliest first mistake.

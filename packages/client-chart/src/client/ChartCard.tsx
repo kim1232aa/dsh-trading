@@ -34,7 +34,7 @@ import { ChartChrome, applyDisplayToChart, getDisplaySettings } from './ChartChr
 import type { ChromeChip, ChromeIndicator } from './ChartChrome.js'
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 import { publishLatestChart } from './latest.js'
-import { annotationDigest, contentText, readChartPayload } from './payload.js'
+import { annotationDigest, contentText, readCallFallbackPayload, readChartPayload } from './payload.js'
 import type { ChartAnnotation, ChartPayload, ChartScenario, ChartTimeframeData } from './payload.js'
 import type { PanelDerivativeBar, PanelDerivatives, PanelLargeOrders } from './market-client.js'
 import { contractOpenInterest, dropCrossedWalls, filterWallsByMarket, formatWallAge, isSpotWallMarket, matchDerivativeHistory, postureColor } from './market-client.js'
@@ -3027,10 +3027,14 @@ export function ChartCard(props: ToolCallViewProps): JSX.Element {
   const { block, toolName } = props
   const settled = 'kind' in block
   const payload = settled && !block.isError ? readChartPayload(block.meta) : null
+  const publishPayload = useMemo(
+    () => payload ?? (settled && !block.isError ? readCallFallbackPayload((block as { call?: unknown }).call) : null),
+    [payload, settled, block],
+  )
 
   useEffect(() => {
-    if (payload !== null) publishLatestChart(payload)
-  }, [payload])
+    if (publishPayload !== null) publishLatestChart(publishPayload)
+  }, [publishPayload])
 
   if (!settled) {
     return <div style={SHELL}>{toolName} …</div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { contentText, readChartPayload } from '../src/client/payload.js'
+import { contentText, readCallFallbackPayload, readChartPayload } from '../src/client/payload.js'
 
 const candle = { time: '2024-01-01T00:00:00.000Z', open: 1, high: 2, low: 0.5, close: 1.5, volume: 100 }
 
@@ -88,5 +88,32 @@ describe('contentText', () => {
 
   it('returns empty for non-arrays and deep nesting', () => {
     expect(contentText('nope')).toBe('')
+  })
+})
+
+describe('readCallFallbackPayload', () => {
+  it('reconstructs symbol, timeframe, and annotations from nested run_code call argsRaw', () => {
+    const p = readCallFallbackPayload({
+      name: 'annotate_chart',
+      argsRaw: JSON.stringify({
+        symbol: 'ETHUSDT',
+        timeframe: '5m',
+        levels: [{ price: 2244.6, label: '颈线', role: 'support', sources: ['s'] }],
+        zones: [{ low: 2218, high: 2225, label: '买墙区', role: 'support', sources: ['s'] }],
+        paths: [{ points: [{ time: '2026-11-03T00:00:00.000Z', price: 2250 }, { time: '2026-11-03T04:00:00.000Z', price: 2223, note: 'L2' }], label: '剧本', role: 'target', sources: ['s'] }],
+        scenarios: [{ direction: 'bear', stance: 'base', thesis: 't', trigger: 'a', invalidation: 'b', triggerPrice: 2244.6 }],
+      }),
+    })
+    expect(p).not.toBeNull()
+    expect(p?.symbol).toBe('ETHUSDT')
+    expect(p?.provider).toBe('binance')
+    expect(p?.timeframes[0]?.timeframe).toBe('5m')
+    expect(p?.timeframes[0]?.annotations).toHaveLength(3)
+    expect(p?.scenarios).toHaveLength(1)
+  })
+
+  it('rejects non-chart tool calls and malformed args', () => {
+    expect(readCallFallbackPayload({ name: 'web_search', argsRaw: '{}' })).toBeNull()
+    expect(readCallFallbackPayload({ name: 'get_ohlcv', argsRaw: 'not-json' })).toBeNull()
   })
 })

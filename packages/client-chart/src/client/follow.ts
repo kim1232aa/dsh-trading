@@ -12,6 +12,8 @@
 export interface FollowTarget {
   symbol: string
   timeframe: string | undefined
+  /** Whether this card carries annotations/scenarios of its own. */
+  hasMarks?: boolean | undefined
 }
 
 /** What the panel already holds. */
@@ -22,6 +24,8 @@ export interface FollowState {
   pinned: boolean
   /** The series the panel fetched for itself, if any. */
   own: { symbol: string; timeframe: string | undefined } | null
+  /** Active drawings remembered/adopted by the panel, if any. */
+  marks?: { symbol: string; timeframe: string } | null | undefined
 }
 
 /** The panel's next move. */
@@ -55,11 +59,28 @@ function sameSymbol(a: string, b: string): boolean {
  */
 export function decideFollow(target: FollowTarget | null, state: FollowState): FollowDecision {
   if (state.width === 0) return { action: 'none' }
-  if (target === null) return { action: 'none' }
+  const markedSym = state.marks?.symbol?.trim() ?? ''
+  const markedTf = state.marks?.timeframe
+  if (target === null) {
+    if (!state.pinned && state.own === null && markedSym !== '' && markedTf !== undefined && markedTf !== '') {
+      return { action: 'load', symbol: markedSym, timeframe: markedTf }
+    }
+    return { action: 'none' }
+  }
 
   const symbol = target.symbol.trim()
   const timeframe = target.timeframe
   if (symbol === '' || timeframe === undefined) return { action: 'none' }
+
+  // A drawing-less card on another symbol (e.g. a side get_ohlcv(BTCUSDT) check
+  // or an old root card remounting on session switch) must not yank the panel
+  // away from the instrument that owns the active drawings.
+  if (markedSym !== '' && !sameSymbol(symbol, markedSym) && target.hasMarks === false) {
+    if (!state.pinned && state.own === null && markedTf !== undefined && markedTf !== '') {
+      return { action: 'load', symbol: markedSym, timeframe: markedTf }
+    }
+    return { action: 'hold' }
+  }
 
   if (state.own !== null
     && sameSymbol(state.own.symbol, symbol)

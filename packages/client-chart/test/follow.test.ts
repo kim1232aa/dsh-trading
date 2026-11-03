@@ -77,4 +77,37 @@ describe('decideFollow', () => {
     const state = { width: 0, pinned: true, own: { symbol: 'US.MU', timeframe: '1d' } }
     expect(decideFollow(target, state)).toEqual({ action: 'none' })
   })
+
+  it('refuses to yank an unpinned column away from the marked symbol for an unannotated card', () => {
+    // Switching back to a long conversation remounts older root cards (or a side
+    // get_ohlcv(BTCUSDT) check) that carry no annotations while sessionStorage
+    // holds active ETHUSDT marks.
+    const state: FollowState = {
+      width: 800,
+      pinned: false,
+      own: { symbol: 'ETHUSDT', timeframe: '5m' },
+      marks: { symbol: 'ETHUSDT', timeframe: '5m' },
+    }
+    expect(decideFollow({ symbol: 'BTCUSDT', timeframe: '1h', hasMarks: false }, state)).toEqual({ action: 'hold' })
+    expect(decideFollow({ symbol: 'BTCUSDT', timeframe: '1h', hasMarks: true }, state)).toEqual({
+      action: 'load',
+      symbol: 'BTCUSDT',
+      timeframe: '1h',
+    })
+  })
+
+  it('seeds a fresh mount from remembered marks when no annotated card has mounted yet', () => {
+    const state: FollowState = {
+      width: 800,
+      pinned: false,
+      own: null,
+      marks: { symbol: 'ETHUSDT', timeframe: '5m' },
+    }
+    expect(decideFollow(null, state)).toEqual({ action: 'load', symbol: 'ETHUSDT', timeframe: '5m' })
+    expect(decideFollow({ symbol: 'BTCUSDT', timeframe: '1h', hasMarks: false }, state)).toEqual({
+      action: 'load',
+      symbol: 'ETHUSDT',
+      timeframe: '5m',
+    })
+  })
 })
