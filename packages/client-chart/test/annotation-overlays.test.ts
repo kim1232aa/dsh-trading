@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Coordinate, OverlayCreateFiguresCallbackParams, OverlayFigure, TextAttrs } from 'klinecharts'
-import { createAnnotationOverlays, vertexTimeText } from '../src/client/annotation-overlays.js'
+import { createAnnotationOverlays, placeLabels, vertexTimeText } from '../src/client/annotation-overlays.js'
 
 const measure = vi.fn((text: string) => Array.from(text).reduce((width, ch) =>
   width + (ch === 'W' ? 14 : ch === 'i' ? 3 : ch.codePointAt(0)! > 255 ? 11 : 6), 0))
@@ -220,5 +220,41 @@ describe('timed vertex captions on scripted paths', () => {
   it('skips vertices off the side of the pane', () => {
     const figures = renderNotes([{ x: 200, y: 200 }, { x: 1400, y: 300 }], ['a', 'b'])
     expect(texts(figures).some(t => String(t).includes(' b'))).toBe(false)
+  })
+})
+
+describe('大额成交 amount captions', () => {
+  const dotsTemplate = templates.find(t => t.name === 'tm_dots')!
+  const draw = (coordinates: Coordinate[], dots: unknown[], width = 400): OverlayFigure[] =>
+    dotsTemplate.createPointFigures!({
+      coordinates,
+      bounding: { width, height: 200, left: 0, right: 0, top: 0, bottom: 0 },
+      overlay: { extendData: { dots } },
+    } as unknown as OverlayCreateFiguresCallbackParams) as OverlayFigure[]
+  const texts = (f: OverlayFigure[]) => f.filter(x => x.type === 'text').map(x => (x.attrs as TextAttrs).text)
+
+  it('prints the trade size beside its dot', () => {
+    expect(texts(draw([{ x: 50, y: 100 }], [{ color: '#3ddc97', r: 5, label: '76.7万' }]))).toEqual(['76.7万'])
+  })
+
+  it('keeps the bigger trade caption when two collide, both dots stay', () => {
+    const f = draw([{ x: 50, y: 100 }, { x: 54, y: 103 }], [
+      { color: '#3ddc97', r: 4, label: '56.9万' },
+      { color: '#f47067', r: 8, label: '320万' },
+    ])
+    expect(texts(f)).toEqual(['320万'])
+    expect(f.filter(x => x.type === 'circle')).toHaveLength(4)
+  })
+
+  it('drops a caption that would run past the right edge', () => {
+    expect(texts(draw([{ x: 395, y: 100 }], [{ color: '#3ddc97', r: 4, label: '76.7万' }]))).toEqual([])
+  })
+
+  it('placeLabels is greedy by priority and order-stable', () => {
+    expect(placeLabels([
+      { x: 0, y: 0, w: 10, h: 10, priority: 1 },
+      { x: 5, y: 5, w: 10, h: 10, priority: 2 },
+      { x: 20, y: 0, w: 10, h: 10, priority: 0 },
+    ])).toEqual([false, true, true])
   })
 })

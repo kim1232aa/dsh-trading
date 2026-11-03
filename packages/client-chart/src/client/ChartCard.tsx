@@ -1722,7 +1722,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
     const trades = filterWallsByMarket(largeWalls.trades, wallMarket)
       .filter(t => t.usd >= minUsd && t.time >= firstMs)
     if (trades.length === 0) return
-    // ponytail: no hover tooltip per dot; add one (price/$/venue/time) when asked.
+    // ponytail: amount caption only (collisions drop smaller captions); add a hover tooltip with venue/time when asked.
+    const wan = (usd: number): string => usd >= 1e8 ? `${(usd / 1e8).toFixed(2)}亿` : `${(usd / 1e4).toFixed(usd >= 1e7 ? 0 : 1)}万`
     chart.createOverlay({
       name: 'tm_dots',
       groupId: 'tm_large_trades',
@@ -1732,6 +1733,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
         dots: trades.map(t => ({
           color: t.side === 'buy' ? '#3ddc97' : '#f47067',
           r: Math.min(9, 2.5 + 1.5 * Math.sqrt(t.usd / minUsd)),
+          label: wan(t.usd),
         })),
       },
     })

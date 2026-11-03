@@ -26,6 +26,26 @@ function visibleSegmentEnd(a: Coordinate, b: Coordinate, bounds: Bounding): Coor
   return { x: a.x + dx * end, y: a.y + dy * end }
 }
 
+/** Axis-aligned label box; `priority` higher = placed first. */
+export interface LabelBox { x: number; y: number; w: number; h: number; priority: number }
+
+/**
+ * Greedy label placement: highest priority first, a box is kept only when it
+ * overlaps no box already kept. Returns keep-flags in input order.
+ */
+export function placeLabels(boxes: readonly LabelBox[]): boolean[] {
+  const keep = boxes.map(() => false)
+  const placed: LabelBox[] = []
+  const order = boxes.map((_, i) => i).sort((a, b) => boxes[b]!.priority - boxes[a]!.priority)
+  for (const i of order) {
+    const b = boxes[i]!
+    if (placed.some(p => b.x < p.x + p.w && p.x < b.x + b.w && b.y < p.y + p.h && p.y < b.y + b.h)) continue
+    placed.push(b)
+    keep[i] = true
+  }
+  return keep
+}
+
 /** "MM-DD HH:mm" of a vertex in the chart's timezone; UTC when the zone is unknown. */
 export function vertexTimeText(timestamp: number, timezone: string | undefined): string {
   if (!Number.isFinite(timestamp)) return ''
@@ -192,8 +212,11 @@ export function createAnnotationOverlays(family: string, measureText: MeasureTex
     name: 'tm_dots', totalStep: 2, lock: true,
     createPointFigures: ({ coordinates, bounding, overlay }) => {
       const ext = (overlay.extendData ?? {}) as Record<string, unknown>
-      const dots = Array.isArray(ext['dots']) ? ext['dots'] as { color?: unknown; r?: unknown }[] : []
+      const dots = Array.isArray(ext['dots']) ? ext['dots'] as { color?: unknown; r?: unknown; label?: unknown }[] : []
       const figures: OverlayFigure[] = []
+      // Amount captions sit right of their dot; when captions collide the
+      // bigger trade (larger r) wins, the rest keep only their dot.
+      const labels: { box: LabelBox; text: string; color: string }[] = []
       coordinates.forEach((pt, i) => {
         const d = dots[i]
         if (d === undefined || !Number.isFinite(pt.x) || !Number.isFinite(pt.y)) return
@@ -203,6 +226,23 @@ export function createAnnotationOverlays(family: string, measureText: MeasureTex
         figures.push({ type: 'circle', attrs: { x: pt.x, y: pt.y, r },
           styles: { style: 'stroke_fill', color: `${color}40`, borderColor: color, borderSize: 1.5 }, ignoreEvent: true })
         figures.push({ type: 'circle', attrs: { x: pt.x, y: pt.y, r: 1.5 }, styles: { style: 'fill', color }, ignoreEvent: true })
+        if (typeof d.label === 'string' && d.label !== '') {
+          const w = measuredWidth(d.label)
+          const x = pt.x + r + 2
+          if (x + w <= bounding.width) {
+            labels.push({ box: { x, y: pt.y - LABEL_HEIGHT / 2, w, h: LABEL_HEIGHT, priority: r }, text: d.label, color })
+          }
+        }
+      })
+      const keep = placeLabels(labels.map(l => l.box))
+      labels.forEach((l, i) => {
+        if (!keep[i]) return
+        figures.push({
+          type: 'text',
+          attrs: { x: l.box.x, y: l.box.y, text: l.text, width: l.box.w, height: l.box.h, align: 'left', baseline: 'top' },
+          styles: { ...textStyle, color: l.color },
+          ignoreEvent: true,
+        })
       })
       return figures
     },
