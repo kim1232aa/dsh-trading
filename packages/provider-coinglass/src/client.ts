@@ -552,9 +552,10 @@ export class CoinglassCapi {
       walls = walls.filter(w => w.state === 2)
     }
 
-    if (opts.minUsd !== undefined && opts.minUsd > 0) {
-      walls = walls.filter(w => w.currentUsd >= opts.minUsd!)
-    }
+    // Per-book cut before the top-N trim, so many small spot walls cannot crowd perp walls out.
+    const wallMin = (market: string | undefined): number =>
+      (market === 'spot' ? opts.spotMinUsd ?? opts.minUsd : opts.minUsd) ?? 0
+    walls = walls.filter(w => w.currentUsd >= wallMin(w.market))
 
     const hasCurrentPrice = typeof opts.currentPrice === 'number' && Number.isFinite(opts.currentPrice) && opts.currentPrice > 0
     if (hasCurrentPrice) {
@@ -600,7 +601,9 @@ export class CoinglassCapi {
     let trades: LargeTrade[] | undefined
     const tradeRaw = await tradesPull
     if (tradeRaw !== null) {
-      trades = flattenTrades(tradeRaw.groups).filter(t => t.usd >= opts.tradesMinUsd!)
+      const tradeMin = (market: string): number =>
+        (market === 'spot' ? opts.spotTradesMinUsd ?? opts.tradesMinUsd : opts.tradesMinUsd) ?? 0
+      trades = flattenTrades(tradeRaw.groups).filter(t => t.usd >= tradeMin(t.market))
       if (opts.venue) {
         const v = opts.venue.toLowerCase()
         trades = trades.filter(t => t.exchange.toLowerCase() === v)

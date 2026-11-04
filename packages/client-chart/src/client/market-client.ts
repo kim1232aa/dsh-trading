@@ -86,6 +86,9 @@ export interface MarketClient {
       balanced?: boolean
       /** Also return executed large trades at or above this USD size (0/omit = none). */
       tradesMinUsd?: number
+      /** Spot-book overrides of minUsd / tradesMinUsd. */
+      spotMinUsd?: number
+      spotTradesMinUsd?: number
     },
     signal?: AbortSignal,
   ): Promise<PanelLargeOrders | null>
@@ -167,6 +170,42 @@ export function isSpotWallMarket(market: string | undefined | null): boolean {
 }
 
 /** Keep walls that belong to the selected book. Order is preserved. */
+type ByBook<T> = { perp: T; spot: T }
+
+/** 大单墙 display, per book (合约/现货). */
+export interface WallDisplay {
+  wallMin: ByBook<number>
+  tradeMin: ByBook<number>
+  showWalls: ByBook<boolean>
+  showTrades: ByBook<boolean>
+}
+
+/**
+ * LARGE_WALLS params → USD thresholds and switches per book. The index layout
+ * is persisted in localStorage: append only, never reorder.
+ * [0 合约挂单最低万, 1 距离%, 2 单边条数, 3 合约成交最低万, 4 现货挂单最低万,
+ *  5 现货成交最低万, 6 合约挂单, 7 现货挂单, 8 合约成交, 9 现货成交]
+ */
+export function wallDisplay(params: readonly number[] | undefined): WallDisplay {
+  const p = (i: number, d: number): number => params?.[i] ?? d
+  return {
+    wallMin: { perp: p(0, 100) * 1e4, spot: p(4, 30) * 1e4 },
+    tradeMin: { perp: p(3, 50) * 1e4, spot: p(5, 20) * 1e4 },
+    showWalls: { perp: p(6, 1) === 1, spot: p(7, 1) === 1 },
+    showTrades: { perp: p(8, 1) === 1, spot: p(9, 1) === 1 },
+  }
+}
+
+/** Rows whose book is switched on and whose size clears that book's threshold. */
+export function displayedRows<T extends { market?: string | null }>(
+  rows: readonly T[], usd: (r: T) => number, show: ByBook<boolean>, min: ByBook<number>,
+): T[] {
+  return rows.filter(r => {
+    const k = isSpotWallMarket(r.market) ? 'spot' : 'perp'
+    return show[k] && usd(r) >= min[k]
+  })
+}
+
 export function filterWallsByMarket<T extends { market?: string | null }>(
   walls: readonly T[],
   filter: WallMarketFilter,
@@ -1075,6 +1114,8 @@ export function createMarketClient(rpc: RpcCaller): MarketClient {
       if (opts?.status !== undefined) body['status'] = opts.status
       if (opts?.balanced !== undefined) body['balanced'] = opts.balanced
       if (opts?.tradesMinUsd !== undefined) body['tradesMinUsd'] = opts.tradesMinUsd
+      if (opts?.spotMinUsd !== undefined) body['spotMinUsd'] = opts.spotMinUsd
+      if (opts?.spotTradesMinUsd !== undefined) body['spotTradesMinUsd'] = opts.spotTradesMinUsd
       const value = await unwrap(rpc.call(CHANNEL, 'largeOrders', body, signal)) as PanelLargeOrders
       return value
     },

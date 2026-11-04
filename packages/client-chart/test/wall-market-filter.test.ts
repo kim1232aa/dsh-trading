@@ -7,8 +7,7 @@ import {
   isWallCrossed,
   isWallSweptAfterSnapshot,
   WALL_CROSS_TOLERANCE,
-  wallAgeSeconds,
-} from '../src/client/market-client.js'
+  wallAgeSeconds, displayedRows, wallDisplay } from '../src/client/market-client.js'
 
 const wall = (id: string, market?: string) => ({ id, market })
 
@@ -139,5 +138,29 @@ describe('wall resting duration (formatWallAge / wallAgeSeconds)', () => {
     expect(formatWallAge({ startTime: now - (14 * 60 + 25) * 1000 }, now, true)).toBe('14分')
     expect(formatWallAge({ startTime: now - (3 * 3600 + 12 * 60) * 1000 }, now, true)).toBe('3时12分')
     expect(formatWallAge({ startTime: Math.floor((now - 26 * 3_600_000) / 1000) }, now, true)).toBe('1天2时')
+  })
+})
+
+describe('wallDisplay / displayedRows — 合约/现货 separately', () => {
+  const rows = [
+    { id: 'p1', market: 'perp', usd: 800_000 }, { id: 'p2', market: 'perp', usd: 1_500_000 },
+    { id: 's1', market: 'spot', usd: 250_000 }, { id: 's2', market: 'spot', usd: 150_000 }, { id: 's3', market: '10', usd: 400_000 },
+  ]
+  const ids = (params: number[]) => {
+    const d = wallDisplay(params)
+    return displayedRows(rows, r => r.usd, d.showWalls, d.wallMin).map(r => r.id)
+  }
+  it('applies each book its own threshold (defaults 合约100万 / 现货30万)', () => {
+    expect(ids([])).toEqual(['p2', 's3'])
+    expect(ids([50, 20, 8, 50, 20])).toEqual(['p1', 'p2', 's1', 's3'])
+  })
+  it('switches a book off entirely', () => {
+    expect(ids([50, 20, 8, 50, 20, 20, 0, 1])).toEqual(['s1', 's3'])
+    expect(ids([50, 20, 8, 50, 20, 20, 1, 0])).toEqual(['p1', 'p2'])
+  })
+  it('reads trade thresholds and switches from their own slots', () => {
+    const d = wallDisplay([100, 20, 8, 60, 30, 10, 1, 1, 0, 1])
+    expect(d.tradeMin).toEqual({ perp: 600_000, spot: 100_000 })
+    expect(d.showTrades).toEqual({ perp: false, spot: true })
   })
 })

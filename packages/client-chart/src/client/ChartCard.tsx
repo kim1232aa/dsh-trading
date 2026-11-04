@@ -37,7 +37,7 @@ import { publishLatestChart } from './latest.js'
 import { annotationDigest, contentText, readCallFallbackPayload, readChartPayload } from './payload.js'
 import type { ChartAnnotation, ChartPayload, ChartScenario, ChartTimeframeData } from './payload.js'
 import type { PanelDerivativeBar, PanelDerivatives, PanelLargeOrders } from './market-client.js'
-import { contractOpenInterest, dropCrossedWalls, filterWallsByMarket, formatWallAge, isSpotWallMarket, matchDerivativeHistory, postureColor } from './market-client.js'
+import { contractOpenInterest, displayedRows, dropCrossedWalls, filterWallsByMarket, wallDisplay, formatWallAge, isSpotWallMarket, matchDerivativeHistory, postureColor } from './market-client.js'
 import type { WallMarketFilter } from './market-client.js'
 import { regimeSnapshot } from '../../../tool-market/src/regime.js'
 import { rsiGridStateText } from '../../../tool-market/src/rsi-grid.js'
@@ -404,11 +404,18 @@ export const EDITABLE: {
   { name: 'VOL_TIER', title: '量比分档量能', pane: 'pane_vol', defaults: [4], defaultVisible: true, params: [period('量比周期')] },
   { name: 'OI_POSTURE', title: '合约OI', pane: 'pane_oi_posture', defaults: [], params: [] },
   { name: 'ENTRY_SIGNAL', title: '多空观察信号(未验证)', defaults: [60, 4], defaultVisible: false, params: [period('ST周期'), { label: 'ST倍数', min: 0.1, max: 20, step: 0.1 }] },
-  { name: 'LARGE_WALLS', title: '大单墙(CoinGlass)', defaults: [100, 20, 8, 50], defaultVisible: false, params: [
-    { label: '最低金额(万)', min: 0, max: 3000, step: 1 },
+  // Index layout is persisted (see wallDisplay in market-client.ts): append only.
+  { name: 'LARGE_WALLS', title: '大单墙(CoinGlass)', defaults: [100, 20, 8, 50, 30, 20, 1, 1, 1, 1], defaultVisible: false, params: [
+    { label: '合约挂单最低(万)', min: 0, max: 3000, step: 1 },
     { label: '距离现价(%)', min: 1, max: 100, step: 1 },
     { label: '单边展示条数', min: 2, max: 30, step: 1 },
-    { label: '大额成交最低(万,0=关)', min: 0, max: 3000, step: 1 },
+    { label: '合约成交最低(万)', min: 0, max: 3000, step: 1 },
+    { label: '现货挂单最低(万)', min: 0, max: 3000, step: 1 },
+    { label: '现货成交最低(万)', min: 0, max: 3000, step: 1 },
+    boolP('显示合约挂单'),
+    boolP('显示现货挂单'),
+    boolP('显示合约成交'),
+    boolP('显示现货成交'),
   ] },
 ]
 
@@ -1645,15 +1652,14 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
     }
     wallOverlayIds.current = []
     if (!(settings['LARGE_WALLS']?.visible) || !largeWalls?.walls?.length) return
-    const minWan = settings['LARGE_WALLS']?.params?.[0] ?? 100
+    const disp = wallDisplay(settings['LARGE_WALLS']?.params)
     const maxDistPct = (settings['LARGE_WALLS']?.params?.[1] ?? 20) / 100
     const sideLimit = settings['LARGE_WALLS']?.params?.[2] ?? 8
-    const minUsd = minWan * 10_000
 
     const last = data.candles[data.candles.length - 1]
     const curP = last?.close
 
-    let walls = filterWallsByMarket(largeWalls.walls, wallMarket).filter(w => w.currentUsd >= minUsd)
+    let walls = displayedRows(filterWallsByMarket(largeWalls.walls, wallMarket), w => w.currentUsd, disp.showWalls, disp.wallMin)
     if (typeof curP === 'number' && curP > 0) {
       walls = walls.filter(w => Math.abs(w.price - curP) / curP <= maxDistPct)
     }
@@ -1716,11 +1722,11 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
     if (chart === null) return
     try { chart.removeOverlay({ groupId: 'tm_large_trades' }) } catch { /* already gone */ }
     const p = settings['LARGE_WALLS']
-    const minUsd = (p?.params?.[3] ?? 50) * 10_000
-    if (!p?.visible || minUsd <= 0 || !largeWalls?.trades?.length || data.candles.length === 0) return
+    const disp = wallDisplay(p?.params)
+    if (!p?.visible || !largeWalls?.trades?.length || data.candles.length === 0) return
     const firstMs = Date.parse(data.candles[0]!.time)
-    const trades = filterWallsByMarket(largeWalls.trades, wallMarket)
-      .filter(t => t.usd >= minUsd && t.time >= firstMs)
+    const trades = displayedRows(filterWallsByMarket(largeWalls.trades, wallMarket), t => t.usd, disp.showTrades, disp.tradeMin)
+      .filter(t => t.time >= firstMs)
     if (trades.length === 0) return
     // ponytail: amount caption only (collisions drop smaller captions); add a hover tooltip with venue/time when asked.
     const wan = (usd: number): string => usd >= 1e8 ? `${(usd / 1e8).toFixed(2)}亿` : `${(usd / 1e4).toFixed(usd >= 1e7 ? 0 : 1)}万`
@@ -1732,7 +1738,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
       extendData: {
         dots: trades.map(t => ({
           color: t.side === 'buy' ? '#3ddc97' : '#f47067',
-          r: Math.min(9, 2.5 + 1.5 * Math.sqrt(t.usd / minUsd)),
+          // Same scale for both books so spot and perp dots compare by size.
+          r: Math.min(9, 2.5 + 1.5 * Math.sqrt(t.usd / 500_000)),
           label: wan(t.usd),
         })),
       },

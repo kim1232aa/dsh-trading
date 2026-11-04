@@ -24,7 +24,7 @@ import type { ChartHistory } from './ChartCard.js'
 import { derivativesForTime, windowPosture } from './market-client.js'
 import { getLatestChart, subscribeLatestChart } from './latest.js'
 import { decideFollow } from './follow.js'
-import { combineMarks, dropCrossedWalls, filterWallsByMarket, formatWallAge, isSpotWallMarket, mergeMarks, mergeTail, PANEL_TIMEFRAMES, postureColor, readMarks, recallMarks, rememberMarks, timeframesForSource, wallAgeSeconds, withCandles } from './market-client.js'
+import { combineMarks, displayedRows, dropCrossedWalls, filterWallsByMarket, wallDisplay, formatWallAge, isSpotWallMarket, mergeMarks, mergeTail, PANEL_TIMEFRAMES, postureColor, readMarks, recallMarks, rememberMarks, timeframesForSource, wallAgeSeconds, withCandles } from './market-client.js'
 import type { ChartMarks, MarketClient, PanelDerivatives, PanelLargeOrders, PanelMoneyFlow, WallMarketFilter } from './market-client.js'
 import type { ChartPayload } from './payload.js'
 import type { FundamentalsPackage, Orderbook } from '@dsh-trading/market-data'
@@ -530,8 +530,9 @@ function LargeWallsStrip({
 
   // Crossed or wick-swept walls are already gone on the venue; CoinGlass
   // refreshes each venue in ~30 s batches.
+  const disp = wallDisplay(peekSettings()['LARGE_WALLS']?.params)
   const filteredWalls = dropCrossedWalls(
-    filterWallsByMarket(walls, marketFilter),
+    displayedRows(filterWallsByMarket(walls, marketFilter), w => w.currentUsd, disp.showWalls, disp.wallMin),
     currentPrice,
     {
       ...(candles ? { candles } : {}),
@@ -1147,10 +1148,13 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
       const mySeq = ++seq
       const deadline = setTimeout(() => ctl.abort(), 25_000)
       const currentPrice = wallPriceRef.current
-      const minWan = peekSettings()['LARGE_WALLS']?.params?.[0] ?? 100
+      const disp = wallDisplay(peekSettings()['LARGE_WALLS']?.params)
+      // A switched-off book gets an unreachable cut; no trade book on = skip that request.
+      const OFF = Number.MAX_SAFE_INTEGER
+      const cut = (on: boolean, v: number): number => (on ? v : OFF)
+      const anyTrades = disp.showTrades.perp || disp.showTrades.spot
       const maxDist = (peekSettings()['LARGE_WALLS']?.params?.[1] ?? 20) / 100
       const sideLimit = peekSettings()['LARGE_WALLS']?.params?.[2] ?? 12
-      const tradesMinWan = peekSettings()['LARGE_WALLS']?.params?.[3] ?? 50
       market.getLargeOrders!(
         symbol,
         {
@@ -1159,8 +1163,10 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
           marketType: wallMarket,
           status: 'active',
           maxDistancePct: maxDist,
-          minUsd: minWan * 10_000,
-          tradesMinUsd: tradesMinWan * 10_000,
+          minUsd: cut(disp.showWalls.perp, disp.wallMin.perp),
+          spotMinUsd: cut(disp.showWalls.spot, disp.wallMin.spot),
+          tradesMinUsd: anyTrades ? Math.max(1, cut(disp.showTrades.perp, disp.tradeMin.perp)) : 0,
+          spotTradesMinUsd: cut(disp.showTrades.spot, disp.tradeMin.spot),
           ...(typeof currentPrice === 'number' ? { currentPrice } : {}),
         },
         ctl.signal,

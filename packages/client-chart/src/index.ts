@@ -95,6 +95,10 @@ export function apply(ctx: Context): void {
         const minUsd = typeof body['minUsd'] === 'number' && Number.isFinite(body['minUsd']) ? body['minUsd'] : undefined
         const status: 'active' | 'all' | 'revoked' = body['status'] === 'all' || body['status'] === 'revoked' || body['status'] === 'active' ? body['status'] : 'active'
         const balanced = typeof body['balanced'] === 'boolean' ? body['balanced'] : true
+        const num = (k: string): number | undefined =>
+          typeof body[k] === 'number' && Number.isFinite(body[k]) && (body[k] as number) >= 0 ? body[k] as number : undefined
+        const spotMinUsd = num('spotMinUsd')
+        const spotTradesMinUsd = num('spotTradesMinUsd')
         const tradesMinUsd = typeof body['tradesMinUsd'] === 'number' && Number.isFinite(body['tradesMinUsd']) && body['tradesMinUsd'] > 0
           ? body['tradesMinUsd']
           : undefined
@@ -115,6 +119,8 @@ export function apply(ctx: Context): void {
           ...(maxDistancePct !== undefined ? { maxDistancePct } : {}),
           ...(minUsd !== undefined ? { minUsd } : {}),
           ...(tradesMinUsd !== undefined ? { tradesMinUsd } : {}),
+          ...(spotMinUsd !== undefined ? { spotMinUsd } : {}),
+          ...(spotTradesMinUsd !== undefined ? { spotTradesMinUsd } : {}),
         }
         const snap = await (coinglass ? coinglass.getLargeOrders(symbol, opts) : fallbackCoinglass().getLargeOrders(symbol, opts))
         return {

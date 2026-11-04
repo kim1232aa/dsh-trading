@@ -105,4 +105,8 @@ export interface FetchLargeOrdersOptions {
   statistics?: boolean
   /** Also pull executed large trades (last 24 h) at or above this USD size. Omit/0 = skip. */
   tradesMinUsd?: number
+  /** Spot-book override of `minUsd` (walls). Default: `minUsd`. */
+  spotMinUsd?: number
+  /** Spot-book override of `tradesMinUsd`. Default: `tradesMinUsd`. */
+  spotTradesMinUsd?: number
 }

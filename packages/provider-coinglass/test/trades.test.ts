@@ -60,6 +60,12 @@ describe('getLargeOrders tradesMinUsd', () => {
     expect(c.tradeCalls).toHaveLength(1)
   })
 
+  it('cuts spot and perp trades by their own thresholds', async () => {
+    const c = new Stub()
+    const snap = await c.getLargeOrders('ETHUSDT', { statistics: false, tradesMinUsd: 600_000, spotTradesMinUsd: 100_000 })
+    expect(snap.trades?.map(t => t.id)).toEqual(['c', 'a'])
+  })
+
   it('a failed trades pull never costs the walls', async () => {
     const c = new Stub()
     c.failTrades = true
