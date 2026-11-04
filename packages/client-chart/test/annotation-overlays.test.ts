@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Coordinate, OverlayCreateFiguresCallbackParams, OverlayFigure, TextAttrs } from 'klinecharts'
-import { createAnnotationOverlays, placeLabels, vertexTimeText } from '../src/client/annotation-overlays.js'
+import { createAnnotationOverlays, placeLabels, vertexTimeText, hitDots, tradeTimeText } from '../src/client/annotation-overlays.js'
 
 const measure = vi.fn((text: string) => Array.from(text).reduce((width, ch) =>
   width + (ch === 'W' ? 14 : ch === 'i' ? 3 : ch.codePointAt(0)! > 255 ? 11 : 6), 0))
@@ -256,5 +256,20 @@ describe('大额成交 amount captions', () => {
       { x: 5, y: 5, w: 10, h: 10, priority: 2 },
       { x: 20, y: 0, w: 10, h: 10, priority: 0 },
     ])).toEqual([false, true, true])
+  })
+})
+
+describe('大额成交 tooltip helpers', () => {
+  it('hitDots returns dots under the cursor, nearest first', () => {
+    const dots = [{ x: 100, y: 100, r: 4 }, { x: 104, y: 100, r: 4 }, { x: 200, y: 50, r: 9 }, { x: NaN, y: 0, r: 3 }]
+    expect(hitDots(dots, 103, 100)).toEqual([1, 0])
+    expect(hitDots(dots, 210, 50)).toEqual([2])
+    expect(hitDots(dots, 150, 150)).toEqual([])
+  })
+  it('tradeTimeText shows seconds in the chart timezone, UTC fallback', () => {
+    const ms = Date.parse('2026-11-03T16:07:54Z')
+    expect(tradeTimeText(ms, 'Asia/Shanghai')).toBe('11-04 00:07:54')
+    expect(tradeTimeText(ms, undefined)).toBe('11-03 16:07:54')
+    expect(tradeTimeText(ms, 'Not/AZone')).toBe('11-03 16:07:54')
   })
 })

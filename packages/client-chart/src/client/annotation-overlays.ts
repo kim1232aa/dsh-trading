@@ -26,6 +26,27 @@ function visibleSegmentEnd(a: Coordinate, b: Coordinate, bounds: Bounding): Coor
   return { x: a.x + dx * end, y: a.y + dy * end }
 }
 
+/** Indices of dots under (x, y) within radius + slack px, nearest first. */
+export function hitDots(dots: readonly { x: number; y: number; r: number }[], x: number, y: number, slack = 3): number[] {
+  return dots
+    .map((d, i) => ({ i, dist: Math.hypot(d.x - x, d.y - y), r: d.r }))
+    .filter(o => Number.isFinite(o.dist) && o.dist <= o.r + slack)
+    .sort((a, b) => a.dist - b.dist)
+    .map(o => o.i)
+}
+
+/** "MM-DD HH:mm:ss" in the chart timezone; UTC when the zone is unknown or invalid. */
+export function tradeTimeText(ms: number, timezone: string | undefined): string {
+  const fmt = (tz: string): string => {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: tz, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    }).formatToParts(new Date(ms))
+    const v = (t: string): string => parts.find(p => p.type === t)?.value ?? ''
+    return `${v('month')}-${v('day')} ${v('hour')}:${v('minute')}:${v('second')}`
+  }
+  try { return fmt(timezone ?? 'UTC') } catch { return fmt('UTC') }
+}
+
 /** Axis-aligned label box; `priority` higher = placed first. */
 export interface LabelBox { x: number; y: number; w: number; h: number; priority: number }
 

@@ -36,7 +36,7 @@ import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 import { publishLatestChart } from './latest.js'
 import { annotationDigest, contentText, readCallFallbackPayload, readChartPayload } from './payload.js'
 import type { ChartAnnotation, ChartPayload, ChartScenario, ChartTimeframeData } from './payload.js'
-import type { PanelDerivativeBar, PanelDerivatives, PanelLargeOrders } from './market-client.js'
+import type { PanelDerivativeBar, PanelDerivatives, PanelLargeOrders, PanelLargeTrade } from './market-client.js'
 import { contractOpenInterest, displayedRows, dropCrossedWalls, filterWallsByMarket, wallDisplay, formatWallAge, isSpotWallMarket, matchDerivativeHistory, postureColor } from './market-client.js'
 import type { WallMarketFilter } from './market-client.js'
 import { regimeSnapshot } from '../../../tool-market/src/regime.js'
@@ -57,7 +57,7 @@ import { aicoinTdIndicator, aicoinTdMarksIndicator, migrateTdParams, TD_DEFAULTS
 import { volTierIndicator } from './indicators/vol-tier.js'
 import { ohlcOffsetRightForTopLeft } from './indicators/revpoint-layout.js'
 import { detectPricePrecision, formatPrice } from './precision.js'
-import { createAnnotationOverlays } from './annotation-overlays.js'
+import { createAnnotationOverlays, hitDots, tradeTimeText } from './annotation-overlays.js'
 import { registerProOverlays } from './overlays/index.js'
 import { createMainPaneTooltipFold, SUBPLOT_TOOLTIP } from './indicator-tooltip.js'
 
@@ -1355,6 +1355,9 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
   const onChartReadyRef = useRef(onChartReady)
   onChartReadyRef.current = onChartReady
   const wallOverlayIds = useRef<string[]>([])
+  // 大额成交 dots currently drawn, for the hover tooltip.
+  const tradeDotsRef = useRef<{ t: PanelLargeTrade; r: number }[]>([])
+  const [tradeTip, setTradeTip] = useState<{ left: number; top: number; flipX: boolean; flipY: boolean; key: string; tz?: string; rows: PanelLargeTrade[] } | null>(null)
   const annotationOverlayIds = useRef<string[]>([])
   const futureGutterSet = useRef(false)
   /** Chip indicators currently mounted on the canvas: chip id → pane id. */
@@ -1457,8 +1460,33 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
     chart.subscribeAction('onCandleTooltipFeatureClick', onFeatureClick)
     chart.subscribeAction('onIndicatorTooltipFeatureClick', onFeatureClick)
     chart.subscribeAction('onCrosshairChange', (data: unknown) => {
-      const d = data as { kLineData?: { timestamp?: number } } | undefined
+      const d = data as { kLineData?: { timestamp?: number }; paneId?: string; x?: number; y?: number } | undefined
       onHoverRef.current?.(d?.kLineData?.timestamp ?? null)
+      // 大额成交 tooltip: hit-test the drawn dots in pane pixels.
+      const dots = tradeDotsRef.current
+      if (dots.length === 0 || d?.paneId !== 'candle_pane' || typeof d.x !== 'number' || typeof d.y !== 'number') {
+        setTradeTip(cur => (cur === null ? cur : null))
+        return
+      }
+      const px = chart.convertToPixel(dots.map(o => ({ timestamp: o.t.time, value: o.t.price })), { paneId: 'candle_pane' }) as { x?: number; y?: number }[]
+      const hits = hitDots(px.map((p, i) => ({ x: p.x ?? NaN, y: p.y ?? NaN, r: dots[i]!.r })), d.x, d.y)
+      if (hits.length === 0) {
+        setTradeTip(cur => (cur === null ? cur : null))
+        return
+      }
+      const rows = hits.slice(0, 4).map(i => dots[i]!.t)
+      const key = rows.map(t => String(t.id)).join('|')
+      const at = px[hits[0]!]!
+      const b = chart.getSize('candle_pane', 'main' as never)
+      const x = at.x ?? d.x
+      const y = at.y ?? d.y
+      let tz: string | undefined
+      try { tz = chart.getTimezone() } catch { tz = undefined }
+      setTradeTip(cur => (cur?.key === key ? cur : {
+        key, rows, ...(tz !== undefined ? { tz } : {}),
+        left: (b?.left ?? 0) + x, top: (b?.top ?? 0) + y,
+        flipX: b ? x > b.width - 210 : false, flipY: b ? y > b.height - 90 : false,
+      }))
     })
     chart.subscribeAction('onCandleBarClick', (data: unknown) => {
       const d = data as { data?: { timestamp?: number } } | undefined
@@ -1721,6 +1749,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
     const chart = chartRef.current
     if (chart === null) return
     try { chart.removeOverlay({ groupId: 'tm_large_trades' }) } catch { /* already gone */ }
+    tradeDotsRef.current = []
+    setTradeTip(null)
     const p = settings['LARGE_WALLS']
     const disp = wallDisplay(p?.params)
     if (!p?.visible || !largeWalls?.trades?.length || data.candles.length === 0) return
@@ -1728,7 +1758,9 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
     const trades = displayedRows(filterWallsByMarket(largeWalls.trades, wallMarket), t => t.usd, disp.showTrades, disp.tradeMin)
       .filter(t => t.time >= firstMs)
     if (trades.length === 0) return
-    // ponytail: amount caption only (collisions drop smaller captions); add a hover tooltip with venue/time when asked.
+    // Same scale for both books so spot and perp dots compare by size.
+    const radius = (usd: number): number => Math.min(9, 2.5 + 1.5 * Math.sqrt(usd / 500_000))
+    tradeDotsRef.current = trades.map(t => ({ t, r: radius(t.usd) }))
     const wan = (usd: number): string => usd >= 1e8 ? `${(usd / 1e8).toFixed(2)}亿` : `${(usd / 1e4).toFixed(usd >= 1e7 ? 0 : 1)}万`
     chart.createOverlay({
       name: 'tm_dots',
@@ -1738,8 +1770,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
       extendData: {
         dots: trades.map(t => ({
           color: t.side === 'buy' ? '#3ddc97' : '#f47067',
-          // Same scale for both books so spot and perp dots compare by size.
-          r: Math.min(9, 2.5 + 1.5 * Math.sqrt(t.usd / 500_000)),
+          r: radius(t.usd),
           label: wan(t.usd),
         })),
       },
@@ -1981,7 +2012,28 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
   const drawBarW = chartReady > 0 && drawBarOpen ? 52 : 0
   return (
     <div style={{ position: 'relative', width: '100%', overflow: 'visible', ...(fill ? { flex: '1 1 auto', minHeight: FILL_MIN_HEIGHT } : { height: baseHeight + paneCount * PANE_HEIGHT }) }}>
-      <div ref={el} style={{ position: 'absolute', left: drawBarW, right: 0, top: 0, bottom: 0, width: 'auto', height: 'auto' }} />
+      <div ref={el} onMouseLeave={() => setTradeTip(null)} style={{ position: 'absolute', left: drawBarW, right: 0, top: 0, bottom: 0, width: 'auto', height: 'auto' }} />
+      {tradeTip !== null && (
+        <div role="tooltip" aria-label="大额成交" style={{
+          position: 'absolute', zIndex: 6, pointerEvents: 'none', whiteSpace: 'nowrap',
+          left: drawBarW + tradeTip.left + (tradeTip.flipX ? -12 : 12), top: tradeTip.top + (tradeTip.flipY ? -12 : 12),
+          transform: `translate(${tradeTip.flipX ? '-100%' : '0'}, ${tradeTip.flipY ? '-100%' : '0'})`,
+          background: dark ? 'rgba(22,24,28,0.95)' : 'rgba(255,255,255,0.97)', color: dark ? '#e6edf3' : '#1f2328',
+          border: `1px solid ${dark ? '#30363d' : '#d0d7de'}`, borderRadius: 4, padding: '4px 8px', fontSize: 11, lineHeight: 1.6,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+        }}>
+          {tradeTip.rows.map(t => {
+            const color = t.side === 'buy' ? '#3ddc97' : '#f47067'
+            const usd = t.usd >= 1e8 ? `${(t.usd / 1e8).toFixed(2)}亿` : `${(t.usd / 1e4).toFixed(1)}万`
+            return (
+              <div key={String(t.id)}>
+                <span style={{ color, fontWeight: 600 }}>{t.exchange}{isSpotWallMarket(t.market) ? '现货' : '合约'} 大额{t.side === 'buy' ? '买入' : '卖出'}</span>
+                {' '}{t.price} · ${usd} · {t.amount > 0 ? `${Number(t.amount.toFixed(2))} 枚` : '币数未知'} · {tradeTimeText(t.time, tradeTip.tz)}
+              </div>
+            )
+          })}
+        </div>
+      )}
       {chartReady > 0 && drawBarOpen ? <ChartTools chart={chartRef.current} dark={dark} /> : null}
       {vbToasts.length > 0 && (
         <div role="status" aria-label="指标提醒" style={{ position: 'absolute', right: 70, top: 8, zIndex: 5, display: 'flex', flexDirection: 'column', gap: 4, pointerEvents: 'auto' }}>
