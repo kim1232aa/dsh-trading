@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { contractOpenInterest, postureColor } from '../src/client/market-client.js'
+import { contractOpenInterest, postureColor, windowPosture } from '../src/client/market-client.js'
 import type { PanelDerivativeBar } from '../src/client/market-client.js'
 import {
   calcOiPostureRows,
@@ -140,5 +140,24 @@ describe('matchDerivativeHistory on large bars', () => {
     expect(matchDerivativeHistory(hist, h0 - 86_400_000, 86_400_000)).toBeUndefined()
     // default behaviour unchanged
     expect(matchDerivativeHistory(hist, h0)?.openInterest).toBe(0)
+  })
+})
+
+describe('windowPosture — the strip follows the chart timeframe', () => {
+  // 1h: price +0.6% OI +0.4% (强多头). Last 5m: price falling, OI rising (强空头).
+  const bar = (min: number, oi: number, px: number) => ({ time: new Date(Date.UTC(2026, 10, 4, 4, min)).toISOString(), openInterest: oi, openInterestValue: oi * px, longShortRatio: null, takerBuySellRatio: null })
+  const history = [bar(0, 1_000_000, 2240), bar(30, 1_001_000, 2250), bar(55, 1_002_000, 2256)]
+  const live = { time: new Date(Date.UTC(2026, 10, 4, 5, 0)).toISOString(), openInterest: 1_004_000, openInterestValue: 1_004_000 * 2253.4 }
+  it('1h window keeps the provider reading', () => {
+    expect(windowPosture(history, live, 3_600_000)?.label).toBe('强多头')
+  })
+  it('5m window reads the last 5 minutes instead', () => {
+    const p = windowPosture(history, live, 300_000)
+    expect(p?.label).toBe('强空头')
+    expect(p?.pxPct).toBeLessThan(0)
+  })
+  it('returns null without an anchor near the window start', () => {
+    expect(windowPosture([bar(55, 1_002_000, 2256)], live, 3_600_000)).toBeNull()
+    expect(windowPosture(history, { ...live, openInterest: null }, 300_000)).toBeNull()
   })
 })

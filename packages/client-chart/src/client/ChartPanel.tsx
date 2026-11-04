@@ -21,7 +21,7 @@ import type { CSSProperties, FormEvent } from 'react'
 import type { ChartOwnerProps } from '@dsh-trading/client-frame/client'
 import { ChartBody, ChartErrorBoundary, peekSettings, subscribeSettings } from './ChartCard.js'
 import type { ChartHistory } from './ChartCard.js'
-import { derivativesForTime } from './market-client.js'
+import { derivativesForTime, windowPosture } from './market-client.js'
 import { getLatestChart, subscribeLatestChart } from './latest.js'
 import { decideFollow } from './follow.js'
 import { combineMarks, dropCrossedWalls, filterWallsByMarket, formatWallAge, isSpotWallMarket, mergeMarks, mergeTail, PANEL_TIMEFRAMES, postureColor, readMarks, recallMarks, rememberMarks, timeframesForSource, wallAgeSeconds, withCandles } from './market-client.js'
@@ -341,6 +341,13 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
 
   const target = useMemo(() => derivativesForTime(data ?? undefined, hoveredTime, intervalMs), [data, hoveredTime, intervalMs])
   const hist = target !== undefined && 'isHistorical' in target && target.isHistorical === true
+  // Posture over the chart's own bar length (5m chart → 5m Δ), not the provider's fixed 1h.
+  const windowMs = Math.min(86_400_000, Math.max(300_000, intervalMs ?? 3_600_000))
+  const wl = windowMs < 3_600_000 ? `${windowMs / 60_000}m` : `${Math.round(windowMs / 3_600_000)}h`
+  const wp = useMemo(() => (target ? windowPosture(data?.history ?? [], target, windowMs) : null), [data, target, windowMs])
+  const shown = wp !== null && target !== undefined
+    ? { ...target, quadrant: wp.label, quadrantNote: wp.note, posture: null, oiChangePct1h: wp.oiPct, priceChangePct1h: wp.pxPct }
+    : target
 
   if (providerId === 'cn' || data === null) return null
   if (failed !== null && data === undefined) {
@@ -403,28 +410,28 @@ function DerivativesStrip({ market, symbol, providerId, live, onData, hoveredTim
       ) : data && data.source && !data.liquidationSummary ? (
         <span style={{ opacity: 0.7 }} title="本所近1h爆仓暂无">爆仓 –</span>
       ) : null}
-      {hist && (target?.quadrant || target?.posture) ? (
-        <span title={target.quadrantNote ?? '该历史快照相对前一快照的价与持仓变化'}>当根 {target.quadrant ?? target.posture}</span>
+      {hist && (shown?.quadrant || shown?.posture) ? (
+        <span title={shown.quadrantNote ?? '该历史快照相对前一快照的价与持仓变化'}>当根 {shown.quadrant ?? shown.posture}</span>
       ) : null}
-      {hist && !target?.quadrant && !target?.posture ? <span title="该K线无姿态数据">姿态 —</span> : null}
-      {!hist && (target?.quadrant || target?.posture) ? (
+      {hist && !shown?.quadrant && !shown?.posture ? <span title="该K线无姿态数据">姿态 —</span> : null}
+      {!hist && (shown?.quadrant || shown?.posture) ? (
         <span
-          title={`价×仓姿态(按币数Δ)。1h价 ${target.priceChangePct1h != null ? (target.priceChangePct1h > 0 ? '+' : '') + target.priceChangePct1h.toFixed(2) + '%' : '—'} 仓 ${target.oiChangePct1h != null ? (target.oiChangePct1h > 0 ? '+' : '') + target.oiChangePct1h.toFixed(2) + '%' : '—'}；4h仓 ${data?.oiChangePct4h != null ? (data.oiChangePct4h > 0 ? '+' : '') + data.oiChangePct4h.toFixed(2) + '%' : '—'}；24h仓 ${data?.oiChangePct24h != null ? (data.oiChangePct24h > 0 ? '+' : '') + data.oiChangePct24h.toFixed(2) + '%' : '—'}。涨+增仓=新仓推动；涨+减仓=空头回补。${target.quadrantNote ?? target.posture ?? ''}`}
+          title={`价×仓姿态(按币数Δ)。${wl}价 ${shown.priceChangePct1h != null ? (shown.priceChangePct1h > 0 ? '+' : '') + shown.priceChangePct1h.toFixed(2) + '%' : '—'} 仓 ${shown.oiChangePct1h != null ? (shown.oiChangePct1h > 0 ? '+' : '') + shown.oiChangePct1h.toFixed(2) + '%' : '—'}；4h仓 ${data?.oiChangePct4h != null ? (data.oiChangePct4h > 0 ? '+' : '') + data.oiChangePct4h.toFixed(2) + '%' : '—'}；24h仓 ${data?.oiChangePct24h != null ? (data.oiChangePct24h > 0 ? '+' : '') + data.oiChangePct24h.toFixed(2) + '%' : '—'}。涨+增仓=新仓推动；涨+减仓=空头回补。${shown.quadrantNote ?? shown.posture ?? ''}`}
           style={{
             fontWeight: 600,
             padding: '0 4px',
             borderRadius: 3,
-            background: postureColor(target.quadrant ?? target.posture).bg,
-            color: postureColor(target.quadrant ?? target.posture).color,
+            background: postureColor(shown.quadrant ?? shown.posture).bg,
+            color: postureColor(shown.quadrant ?? shown.posture).color,
           }}
         >
-          {target.quadrant ?? target.posture}
-          {target.quadrantNote ? (
-            <span style={{ fontSize: 10, marginLeft: 3, opacity: 0.9 }}>{target.quadrantNote}</span>
+          {shown.quadrant ?? shown.posture}
+          {shown.quadrantNote ? (
+            <span style={{ fontSize: 10, marginLeft: 3, opacity: 0.9 }}>{shown.quadrantNote}</span>
           ) : null}
-          {target.oiChangePct1h !== null && target.oiChangePct1h !== undefined ? (
+          {shown.oiChangePct1h !== null && shown.oiChangePct1h !== undefined ? (
             <span style={{ fontSize: 10, marginLeft: 3, opacity: 0.85 }}>
-              (1h仓{target.oiChangePct1h > 0 ? '+' : ''}{target.oiChangePct1h.toFixed(1)}%{target.priceChangePct1h !== null && target.priceChangePct1h !== undefined ? ` 价${target.priceChangePct1h > 0 ? '+' : ''}${target.priceChangePct1h.toFixed(1)}%` : ''}{data?.oiChangePct4h != null ? ` ·4h仓${data.oiChangePct4h > 0 ? '+' : ''}${data.oiChangePct4h.toFixed(1)}%` : ''}{data?.oiChangePct24h != null ? ` ·24h仓${data.oiChangePct24h > 0 ? '+' : ''}${data.oiChangePct24h.toFixed(1)}%` : ''})
+              ({wl}仓{shown.oiChangePct1h > 0 ? '+' : ''}{shown.oiChangePct1h.toFixed(1)}%{shown.priceChangePct1h !== null && shown.priceChangePct1h !== undefined ? ` 价${shown.priceChangePct1h > 0 ? '+' : ''}${shown.priceChangePct1h.toFixed(1)}%` : ''}{data?.oiChangePct4h != null ? ` ·4h仓${data.oiChangePct4h > 0 ? '+' : ''}${data.oiChangePct4h.toFixed(1)}%` : ''}{data?.oiChangePct24h != null ? ` ·24h仓${data.oiChangePct24h > 0 ? '+' : ''}${data.oiChangePct24h.toFixed(1)}%` : ''})
             </span>
           ) : null}
         </span>

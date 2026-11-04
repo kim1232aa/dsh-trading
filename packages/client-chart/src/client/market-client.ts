@@ -392,6 +392,62 @@ export function derivativesForTime(
   return derivativesAtBar(live, matchDerivativeHistory(live.history ?? [], timestampMs, intervalMs), timestampMs)
 }
 
+const QUADRANT_NOTES: Record<string, string> = {
+  '强多头': '多头真金白银主动开仓推高，趋势健康',
+  '弱反弹 / 轧空': '空头止损平仓推动，容易衰竭',
+  '强空头': '空头主动大举增仓砸盘，下跌动能足',
+  '多头踩踏': '多头爆仓或割肉平仓，属于杀多行情',
+}
+
+/** Price × OI posture measured over one window (the chart's own bar length). */
+export interface WindowPosture {
+  label: string
+  note: string | null
+  oiPct: number
+  pxPct: number
+}
+
+/**
+ * Price × OI posture over `windowMs`, ending at `end` (the live snapshot or a
+ * hovered bar). The provider's label is fixed at 1h, so on a 5m chart it never
+ * moves; this re-measures against the 5m OI history at the chart's own window.
+ * Dead zones scale with the window (1h: price 0.1% / OI 0.3%, same as the provider).
+ * @returns null when the history has no anchor near `end - windowMs`.
+ */
+export function windowPosture(
+  history: readonly PanelDerivativeBar[],
+  end: { time: string; openInterest: number | null; openInterestValue: number | null },
+  windowMs: number,
+): WindowPosture | null {
+  const endMs = Date.parse(end.time)
+  const endOi = end.openInterest
+  const endVal = end.openInterestValue
+  if (!Number.isFinite(endMs) || endOi === null || endVal === null || !(endOi > 0) || !(endVal > 0)) return null
+  const cutoff = endMs - windowMs
+  let past: PanelDerivativeBar | undefined
+  let pastMs = -Infinity
+  for (const h of history) {
+    const t = Date.parse(h.time)
+    if (Number.isFinite(t) && t <= cutoff && t > pastMs) { past = h; pastMs = t }
+  }
+  // ponytail: tolerates a 10-min gap in the 5m history; a longer hole returns null (strip falls back to the provider's 1h label).
+  if (past === undefined || cutoff - pastMs > 600_000) return null
+  const pOi = past.openInterest
+  const pVal = past.openInterestValue
+  if (pOi === null || pVal === null || !(pOi > 0) || !(pVal > 0)) return null
+  const oiPct = (endOi / pOi - 1) * 100
+  const pxPct = ((endVal / endOi) / (pVal / pOi) - 1) * 100
+  const k = Math.min(1, windowMs / 3_600_000)
+  const pz = Math.max(0.02, 0.1 * k)
+  const oz = Math.max(0.05, 0.3 * k)
+  let label: string
+  if (Math.abs(oiPct) < oz) label = '持仓持平'
+  else if (Math.abs(pxPct) < pz) label = oiPct > 0 ? '价平增仓' : '价平减仓'
+  else if (pxPct > 0) label = oiPct > 0 ? '强多头' : '弱反弹 / 轧空'
+  else label = oiPct > 0 ? '强空头' : '多头踩踏'
+  return { label, note: QUADRANT_NOTES[label] ?? null, oiPct, pxPct }
+}
+
 /** What the strip shows while the crosshair sits on a historical bar. */
 export interface HistoricalDerivatives extends Omit<PanelDerivatives, 'history'> {
   isHistorical: true
