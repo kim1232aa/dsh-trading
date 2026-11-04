@@ -55,6 +55,8 @@ import { revPointIndicator, REVPOINT_TABLE_W, REVPOINT_PARAM_DEFAULTS, REVPOINT_
 import { kPatternIndicator, KP_ALERT, KP_ALERTS, KP_BAIDU_BEAR_INDICES, KP_BAIDU_BULL_INDICES, KP_BAIDU_PLOTS, KP_BAIDU_SHOW, KP_BEAR_INDICES, KP_BG_COLOR, KP_BG_ON, KP_BULL_INDICES, KP_COLOR, KP_DEFAULTS, KP_FONT, KP_FORMING, KP_LABEL_MODES, KP_LAST, KP_MODE, KP_PLOTS, KP_SHOW, KP_THEME, kpAlertEvents } from './indicators/aicoin-kpattern.js'
 import { aicoinTdIndicator, aicoinTdMarksIndicator, migrateTdParams, TD_DEFAULTS, TD_MARK_RESERVE, TD_MODES, tdAlertEvents, tdWantsMarks, tdWantsPane } from './indicators/aicoin-td.js'
 import { volTierIndicator } from './indicators/vol-tier.js'
+import { cvdFlowIndicator } from './indicators/cvd-flow.js'
+import type { PanelCvdBar } from './market-client.js'
 import { ohlcOffsetRightForTopLeft } from './indicators/revpoint-layout.js'
 import { detectPricePrecision, formatPrice } from './precision.js'
 import { createAnnotationOverlays, hitDots, tradeTimeText } from './annotation-overlays.js'
@@ -403,6 +405,7 @@ export const EDITABLE: {
   ] },
   { name: 'VOL_TIER', title: '量比分档量能', pane: 'pane_vol', defaults: [4], defaultVisible: true, params: [period('量比周期')] },
   { name: 'OI_POSTURE', title: '合约OI', pane: 'pane_oi_posture', defaults: [], params: [] },
+  { name: 'CVD_FLOW', title: '合约/现货CVD背离(币安)', pane: 'pane_cvd', defaults: [20, 3], defaultVisible: false, params: [period('背离回看根数'), { label: '停涨停跌判定根数', min: 1, max: 20, step: 1 }] },
   { name: 'ENTRY_SIGNAL', title: '多空观察信号(未验证)', defaults: [60, 4], defaultVisible: false, params: [period('ST周期'), { label: 'ST倍数', min: 0.1, max: 20, step: 0.1 }] },
   // Index layout is persisted (see wallDisplay in market-client.ts): append only.
   { name: 'LARGE_WALLS', title: '大单墙(CoinGlass)', defaults: [100, 20, 8, 50, 30, 20, 1, 1, 1, 1], defaultVisible: false, params: [
@@ -965,6 +968,7 @@ function ensureRegistered(): void {
   registerIndicator(dualViewHtfIndicator as never)
   registerIndicator(mtfSRIndicator as never)
   registerIndicator(entrySignalIndicator as never)
+  registerIndicator(cvdFlowIndicator as never)
   registerIndicator(rsiGridIndicator as never)
   registerIndicator(rsiGridCumIndicator as never)
   registerIndicator(rsiGridMarksIndicator as never)
@@ -1295,7 +1299,7 @@ export function planChipSync(active: readonly string[], mounted: ReadonlyMap<str
   return { add: [...want].filter(id => !have.has(id)), remove: [...have].filter(id => !want.has(id)) }
 }
 
-function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, axisSettings, onEditParams, derivatives, largeWalls, wallMarket = 'all', onCrosshairHover, history, baseHeight = CHART_HEIGHT, fill = false, onChartReady, drawBarOpen = true }: {
+function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, axisSettings, onEditParams, derivatives, cvd, largeWalls, wallMarket = 'all', onCrosshairHover, history, baseHeight = CHART_HEIGHT, fill = false, onChartReady, drawBarOpen = true }: {
   data: ChartTimeframeData
   /** Older-bar paging for klinecharts loadMore; absent on agent cards. */
   history?: ChartHistory | undefined
@@ -1303,6 +1307,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
   axisSettings: AxisSettings
   onEditParams: () => void
   derivatives?: PanelDerivatives | null | undefined
+  /** Perp/spot taker delta per bar for CVD_FLOW; panel only. */
+  cvd?: PanelCvdBar[] | null | undefined
   largeWalls?: PanelLargeOrders | null | undefined
   /** Same pill as the wall strip. The overlay must use it or 现货 still draws 合约 lines. */
   wallMarket?: WallMarketFilter
@@ -1348,6 +1354,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
   settingsRef.current = settings
   const derivativesRef = useRef(derivatives)
   derivativesRef.current = derivatives
+  const cvdRef = useRef(cvd)
+  cvdRef.current = cvd
   const onEditRef = useRef(onEditParams)
   onEditRef.current = onEditParams
   const onHoverRef = useRef(onCrosshairHover)
@@ -1432,7 +1440,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
       const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivativesRef.current?.history
         : def.name === 'MTF_SR' || def.name === 'DUAL_VIEW_HTF' ? { sourceTimeframe: data.timeframe, sourceTimeframeSeconds: mtfSourceTimeframeSeconds(data.timeframe) }
         : def.name === 'AICOIN_KPATTERN' ? kpThemeExt(dark, settingsRef.current)
-        : def.name === 'VOL_TIER' ? { dark } : undefined
+        : def.name === 'VOL_TIER' ? { dark }
+        : def.name === 'CVD_FLOW' ? (cvdRef.current ?? undefined) : undefined
       if (def.name === 'AICOIN_TD') { syncAicoinTd(chart, s, dark); continue }
       if (def.pane !== undefined) {
         // Own pane: created only when shown, so a hidden one doesn't leave a blank strip.
@@ -1631,7 +1640,8 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
       const ext = DERIV_HISTORY_INDICATORS.has(def.name) ? derivatives?.history
         : def.name === 'MTF_SR' || def.name === 'DUAL_VIEW_HTF' ? { sourceTimeframe: data.timeframe, sourceTimeframeSeconds: mtfSourceTimeframeSeconds(data.timeframe) }
         : def.name === 'AICOIN_KPATTERN' ? kpThemeExt(dark, settings)
-        : def.name === 'VOL_TIER' ? { dark } : undefined
+        : def.name === 'VOL_TIER' ? { dark }
+        : def.name === 'CVD_FLOW' ? (cvdRef.current ?? undefined) : undefined
       if (def.name === 'AICOIN_TD') { syncAicoinTd(chart, s, dark); continue }
       if (def.pane !== undefined) {
         const exists = hasIndicator(chart, def.pane, def.name)
@@ -1660,7 +1670,7 @@ function Kline({ data, scenarios, dark, active, seriesKey, marksKey, settings, a
       }
       overrideInd(chart, { name: def.name, calcParams: s.params, visible: s.visible, extendData: ext }, 'candle_pane')
     }
-  }, [settings, derivatives, data.timeframe, dark])
+  }, [settings, derivatives, cvd, data.timeframe, dark])
 
   // Re-filter crossed/swept walls and refresh the ±% captions as price moves
   // intra-bar, not only when a new bar opens: one bucket ≈ 0.02% (~$0.45 on ETH),
@@ -2355,7 +2365,7 @@ const CATEGORIES: { id: string; label: string; names?: string[] }[] = [
   { id: 'trend', label: '趋势与通道', names: ['WMA', 'SUPERTREND', 'EVASIVE_ST', 'NW_TREND', 'VB_PRO_READ'] },
   { id: 'pattern', label: '形态与结构', names: ['DUAL_VIEW_HTF', 'AICOIN_KPATTERN', 'OB_BB', 'MTF_SR'] },
   { id: 'oscillator', label: '震荡与网格', names: ['RSI_GRID', 'AICOIN_TD', 'REVPOINT', 'ENTRY_SIGNAL'] },
-  { id: 'deriv', label: '主力与衍生品', names: ['VOL_TIER', 'OI_POSTURE', 'LARGE_WALLS'] },
+  { id: 'deriv', label: '主力与衍生品', names: ['VOL_TIER', 'OI_POSTURE', 'CVD_FLOW', 'LARGE_WALLS'] },
 ]
 
 const HTF_BULLISH_INDICES = [21, 23, 24, 27, 29, 30, 32, 34, 35, 37]
@@ -2799,7 +2809,7 @@ function getInitialActiveChips(): string[] {
   return ['vol']
 }
 
-export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, fill = false, prose = true, derivatives, largeWalls, wallMarket = 'all', onCrosshairHover, history }: {
+export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, fill = false, prose = true, derivatives, cvd, largeWalls, wallMarket = 'all', onCrosshairHover, history }: {
   payload: ChartPayload
   history?: ChartHistory | undefined
   chartHeight?: number
@@ -2807,6 +2817,7 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
   fill?: boolean
   prose?: boolean
   derivatives?: PanelDerivatives | null
+  cvd?: PanelCvdBar[] | null
   largeWalls?: PanelLargeOrders | null
   wallMarket?: WallMarketFilter
   onCrosshairHover?: (timestamp: number | null) => void
@@ -3013,6 +3024,7 @@ export function ChartBody({ payload, chartHeight = CHART_HEIGHT, shell = SHELL, 
         settings={settings}
         axisSettings={axisSettings}
         derivatives={derivatives}
+        cvd={cvd}
         largeWalls={largeWalls}
         wallMarket={wallMarket}
         onCrosshairHover={onCrosshairHover}

@@ -53,6 +53,7 @@ describe('channel identity', () => {
     // Data reads (ohlcv, derivatives, moneyflow, orderbook, fundamentals, symbols, providers) plus view publication.
     // Anything appearing here deserves a second look: this channel is reachable from a browser.
     expect(Object.values(ENDPOINTS).sort()).toEqual([
+      'cvd',
       'derivatives',
       'fundamentals',
       'largeOrders',

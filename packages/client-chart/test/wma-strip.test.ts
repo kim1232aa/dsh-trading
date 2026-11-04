@@ -78,6 +78,7 @@ describe('sanitizeSettings', () => {
       AICOIN_TD: { params: [...TD_DEFAULTS], visible: false },
       VOL_TIER: { params: [4], visible: true },
       OI_POSTURE: { params: [], visible: true },
+      CVD_FLOW: { params: [20, 3], visible: false },
       RSI_GRID: { params: [7, 30, 60, 10], visible: true },
       REVPOINT: { params: [...REVPOINT_PARAM_DEFAULTS], visible: true },
       ENTRY_SIGNAL: { params: [60, 4], visible: false },

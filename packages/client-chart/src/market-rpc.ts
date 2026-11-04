@@ -20,6 +20,7 @@
 
 import type {
   Candle,
+  CvdBar,
   Derivatives,
   FundamentalsPackage,
   InstrumentInfo,
@@ -52,6 +53,7 @@ export const ENDPOINTS = {
   watchlistAdd: 'watchlistAdd',
   watchlistRemove: 'watchlistRemove',
   largeOrders: 'largeOrders',
+  cvd: 'cvd',
 } as const
 
 /** The `providers` answer: list of registered providers and their descriptions. */
@@ -65,6 +67,14 @@ export interface DerivativesResponse {
   providerId: string
   symbol: string
   derivatives: Derivatives | null
+}
+
+/** The `cvd` answer: perp/spot taker delta per bar; null when the provider has none. */
+export interface CvdResponse {
+  providerId: string
+  symbol: string
+  timeframe: string
+  bars: CvdBar[] | null
 }
 
 /** The `moneyflow` answer: null when the provider has no capital flow data (e.g. crypto spot without order flow). */
@@ -365,6 +375,7 @@ export async function serveMarketEndpoint(
   | SymbolsResponse
   | OhlcvResponse
   | DerivativesResponse
+  | CvdResponse
   | MoneyFlowResponse
   | OrderbookResponse
   | LargeOrdersResponse
@@ -435,6 +446,14 @@ export async function serveMarketEndpoint(
     const provider = getProvider(request.symbol, request.providerId)
     const derivatives = provider.getDerivatives === undefined ? null : await provider.getDerivatives(request.symbol)
     return { providerId: provider.id, symbol: request.symbol, derivatives }
+  }
+
+  if (endpoint === ENDPOINTS.cvd) {
+    const request = readOhlcvRequest(payload)
+    if (typeof request === 'string') throw new Error(request)
+    const provider = getProvider(request.symbol, request.providerId)
+    const bars = provider.getCvd === undefined ? null : await provider.getCvd(request.symbol, request.timeframe, request.limit)
+    return { providerId: provider.id, symbol: request.symbol, timeframe: request.timeframe, bars }
   }
 
   if (endpoint === ENDPOINTS.moneyflow) {

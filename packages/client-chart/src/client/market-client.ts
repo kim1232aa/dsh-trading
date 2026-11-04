@@ -67,6 +67,8 @@ export interface MarketClient {
   }): void
   /** Perpetual positioning (OI, funding, long/short). null when the provider has no futures data. */
   getDerivatives(symbol: string, providerId?: string, signal?: AbortSignal): Promise<PanelDerivatives | null>
+  /** Perp + spot taker delta per bar (Binance only). null when the provider has none. */
+  getCvd?(symbol: string, timeframe: string, limit: number, providerId?: string, signal?: AbortSignal): Promise<PanelCvdBar[] | null>
   /** Institutional & retail money flow (CN A-shares & equities). null when not supported. */
   getMoneyFlow(symbol: string, providerId?: string, signal?: AbortSignal): Promise<PanelMoneyFlow | null>
   /** Level 2 orderbook (5-10 levels depth). null when not supported. */
@@ -100,6 +102,20 @@ export interface MarketClient {
   addToWatchlist?(symbol: string, group?: string, notes?: string): Promise<{ ok: boolean; symbol: string }>
   /** Remove a symbol from the custom watchlist. */
   removeFromWatchlist?(symbol: string): Promise<{ ok: boolean; symbol: string }>
+}
+
+/** One bar of perp/spot taker delta (主动买 − 主动卖, coins). */
+export interface PanelCvdBar {
+  time: string
+  perp: number | null
+  spot: number | null
+}
+
+/** Fold a short refresh (forming bar + any new ones) into the loaded series, by bar time. */
+export function mergeCvdBars(cur: readonly PanelCvdBar[], next: readonly PanelCvdBar[]): PanelCvdBar[] {
+  const byTime = new Map(cur.map(b => [b.time, b]))
+  for (const b of next) byTime.set(b.time, b)
+  return [...byTime.values()].sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
 }
 
 /** Institutional and retail order flow for equities. */
@@ -1084,6 +1100,13 @@ export function createMarketClient(rpc: RpcCaller): MarketClient {
         derivatives: PanelDerivatives | null
       }
       return value.derivatives
+    },
+
+    async getCvd(symbol, timeframe, limit, providerId, signal) {
+      const body: Record<string, unknown> = { symbol, timeframe, limit }
+      if (providerId !== undefined) body['providerId'] = providerId
+      const value = await unwrap(rpc.call(CHANNEL, 'cvd', body, signal)) as { bars: PanelCvdBar[] | null }
+      return value.bars
     },
 
     async getMoneyFlow(symbol, providerId, signal) {

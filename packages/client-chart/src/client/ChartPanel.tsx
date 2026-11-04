@@ -20,6 +20,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { CSSProperties, FormEvent } from 'react'
 import type { ChartOwnerProps } from '@dsh-trading/client-frame/client'
 import { ChartBody, ChartErrorBoundary, peekSettings, subscribeSettings } from './ChartCard.js'
+import { mergeCvdBars } from './market-client.js'
+import type { PanelCvdBar } from './market-client.js'
 import type { ChartHistory } from './ChartCard.js'
 import { derivativesForTime, windowPosture } from './market-client.js'
 import { getLatestChart, subscribeLatestChart } from './latest.js'
@@ -88,6 +90,8 @@ const FOLLOW_SETTLE_MS = 400
  * live-tape rate only adds requests; 20 s keeps the overlay current without that.
  */
 const LARGE_WALLS_MS = 20_000
+/** CVD subpane refresh: the forming bar's delta, not the whole series. */
+const CVD_MS = 15_000
 
 /** Consecutive failed refreshes before the badge stops claiming the chart is live. */
 const STALL_AFTER = 3
@@ -1008,6 +1012,8 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
   const [activeGroup, setActiveGroup] = useState<string>('全部')
   const [panelDerivatives, setPanelDerivatives] = useState<PanelDerivatives | null>(null)
   const [panelLargeWalls, setPanelLargeWalls] = useState<PanelLargeOrders | null>(null)
+  const [panelCvd, setPanelCvd] = useState<PanelCvdBar[] | null>(null)
+  const [cvdOn, setCvdOn] = useState(() => peekSettings()['CVD_FLOW']?.visible ?? false)
   const [largeWallsError, setLargeWallsError] = useState<string | null>(null)
   const wallPriceRef = useRef<number | undefined>(undefined)
   const [largeWallsOn, setLargeWallsOn] = useState(() => peekSettings()['LARGE_WALLS']?.visible ?? false)
@@ -1057,6 +1063,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
     const cfg = peekSettings()['LARGE_WALLS']
     setLargeWallsOn(cfg?.visible ?? false)
     setWallParamsKey((cfg?.params ?? []).join(','))
+    setCvdOn(peekSettings()['CVD_FLOW']?.visible ?? false)
   }), [])
 
   // Adopt whatever the agent last DREW, separately from what it last fetched.
@@ -1121,6 +1128,36 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
     wallPriceRef.current = tf0?.candles?.[tf0.candles.length - 1]?.close
   }
   const wallSymbol = payload?.symbol
+  const cvdTf = payload?.timeframes?.[0]?.timeframe
+  const cvdProvider = payload?.provider
+
+  // 合约/现货 CVD: full series once per symbol/timeframe, then only the newest bars.
+  useEffect(() => {
+    if (!cvdOn || !wallSymbol || !cvdTf || !market.getCvd) { setPanelCvd(null); return }
+    const symbol = wallSymbol
+    const tf = cvdTf
+    setPanelCvd(null)
+    const ctl = new AbortController()
+    let loaded = false
+    let busy = false
+    const pull = (): void => {
+      if (busy || (loaded && typeof document !== 'undefined' && document.hidden)) return
+      busy = true
+      market.getCvd!(symbol, tf, loaded ? 3 : 1000, cvdProvider, ctl.signal).then(
+        bars => {
+          busy = false
+          if (ctl.signal.aborted || bars === null) return
+          const full = !loaded
+          loaded = true
+          setPanelCvd(cur => (full || cur === null ? bars : mergeCvdBars(cur, bars)))
+        },
+        () => { busy = false },
+      )
+    }
+    pull()
+    const timer = setInterval(pull, CVD_MS)
+    return () => { ctl.abort(); clearInterval(timer) }
+  }, [cvdOn, market, wallSymbol, cvdTf, cvdProvider])
 
   // Poll CoinGlass large walls only while the overlay is enabled.
   useEffect(() => {
@@ -1832,7 +1869,7 @@ function ChartPanelInner({ width, market }: ChartOwnerProps & ChartPanelInject):
             : payload !== null
               ? (
                 <ChartErrorBoundary>
-                  <ChartBody payload={payload} history={payload === own || payload === merged?.payload ? history : undefined} shell={PANEL_SHELL} fill prose={false} derivatives={panelDerivatives} largeWalls={panelLargeWalls} wallMarket={wallMarket} onCrosshairHover={setHoveredTime} />
+                  <ChartBody payload={payload} history={payload === own || payload === merged?.payload ? history : undefined} shell={PANEL_SHELL} fill prose={false} derivatives={panelDerivatives} cvd={panelCvd} largeWalls={panelLargeWalls} wallMarket={wallMarket} onCrosshairHover={setHoveredTime} />
                 </ChartErrorBoundary>
               )
               : (

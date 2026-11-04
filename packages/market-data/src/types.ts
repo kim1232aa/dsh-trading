@@ -26,6 +26,13 @@ export interface Candle {
   volume: number
 }
 
+/** One bar of taker delta; null when that book has no bar (e.g. no spot market). */
+export interface CvdBar {
+  time: string
+  perp: number | null
+  spot: number | null
+}
+
 /** A tradable instrument as the provider knows it. */
 export interface InstrumentInfo {
   /** Provider-scoped symbol, e.g. `AAPL` or `BTC/USDT`. */
@@ -74,6 +81,8 @@ export interface MarketDataProvider {
   getOhlcv(query: OhlcvQuery): Promise<Candle[]>
   /** Perpetual-futures positioning for one symbol. Optional: spot/equity providers omit it. */
   getDerivatives?(symbol: string): Promise<Derivatives>
+  /** Per-bar taker delta (主动买 − 主动卖, base units) of the perp and spot books. Optional. */
+  getCvd?(symbol: string, timeframe: Timeframe, limit?: number): Promise<CvdBar[]>
   /** Institutional & retail money flow (主力/散户资金流向). Optional: equity/crypto providers. */
   getMoneyFlow?(symbol: string): Promise<MoneyFlow>
   /** Level 2 depth orderbook (买卖盘口). Optional. */

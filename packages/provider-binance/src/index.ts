@@ -10,6 +10,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {
   Candle,
+  CvdBar,
   DerivativeBar,
   Derivatives,
   InstrumentInfo,
@@ -77,6 +78,34 @@ const SPOT_KLINE_HOSTS = [
 ]
 
 const COMMON_QUOTES = ['USDT', 'USDC', 'BUSD', 'FDUSD', 'BTC', 'ETH']
+
+/** Bar open ms → taker delta (2 × takerBuyBase − volume) from raw kline rows. */
+export function takerDeltaOf(rows: unknown): Map<number, number> {
+  const out = new Map<number, number>()
+  if (!Array.isArray(rows)) return out
+  for (const r of rows as unknown[][]) {
+    const t = Number(r[0]), vol = Number(r[5]), buy = Number(r[9])
+    if (Number.isFinite(t) && Number.isFinite(vol) && Number.isFinite(buy)) out.set(t, 2 * buy - vol)
+  }
+  return out
+}
+
+/** First host that answers wins; null when every host failed (e.g. no spot market). */
+async function takerDeltas(hosts: readonly string[], path: string, symbol: string, interval: string, limit: string): Promise<Map<number, number> | null> {
+  for (const host of hosts) {
+    try {
+      const url = new URL(path, host)
+      url.searchParams.set('symbol', symbol)
+      url.searchParams.set('interval', interval)
+      url.searchParams.set('limit', limit)
+      const res = await fetch(url, { signal: AbortSignal.timeout(6_000) })
+      if (res.status === 400) return null // unknown symbol on this book
+      if (!res.ok) continue
+      return takerDeltaOf(await res.json())
+    } catch { /* next host */ }
+  }
+  return null
+}
 
 /**
  * Normalizes user-typed symbols:
@@ -272,6 +301,24 @@ export class BinanceProvider implements MarketDataProvider {
    * fapi.binance.com is intermittently unreachable from some domestic networks
    * while OKX and Gate multi-domain CDNs provide high-availability failover.
    */
+  async getCvd(rawSymbol: string, timeframe: Timeframe, limit = 500): Promise<CvdBar[]> {
+    const interval = TF_MAP[timeframe]
+    if (!interval) throw new Error(`unsupported timeframe: ${timeframe}`)
+    const symbol = normalizeSymbol(rawSymbol)
+    const n = String(Math.min(1000, Math.max(1, Math.trunc(limit))))
+    const perpHosts = !this.futuresURL || this.futuresURL === 'https://fapi.binance.com'
+      ? ['https://www.usnbweb.red', 'https://fapi.binance.com']
+      : [this.futuresURL]
+    const spotHosts = this.baseURL && this.baseURL !== 'https://data-api.binance.vision' ? [this.baseURL] : SPOT_KLINE_HOSTS
+    const [perp, spot] = await Promise.all([
+      takerDeltas(perpHosts, '/fapi/v1/klines', symbol, interval, n),
+      takerDeltas(spotHosts, '/api/v3/klines', symbol, interval, n),
+    ])
+    if (perp === null && spot === null) throw new Error(`Binance CVD: no perp or spot klines for ${symbol}`)
+    const times = [...new Set([...(perp?.keys() ?? []), ...(spot?.keys() ?? [])])].sort((a, b) => a - b)
+    return times.map(t => ({ time: new Date(t).toISOString(), perp: perp?.get(t) ?? null, spot: spot?.get(t) ?? null }))
+  }
+
   async getDerivatives(rawSymbol: string): Promise<Derivatives> {
     const symbol = normalizeSymbol(rawSymbol)
     const binance = (): Promise<Derivatives> => this.binanceDerivatives(symbol)
